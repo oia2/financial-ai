@@ -1,0 +1,21 @@
+# Vendored agent skills.
+# Third-party content installed from skills-lock.json; reinstallable, not project source.
+.agents/skills/
+.claude/skills/
+
+# Machine-local agent settings.
+.claude/settings.local.json
+
+# Environment and secrets — never commit real credentials.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs, build artifacts, temporary files.
+*.log
+logs/
+dist/
+build/
+tmp/

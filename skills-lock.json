@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "context-engineering-collection": {
+      "source": "muratcankoylan/Agent-Skills-for-Context-Engineering",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "229cdb57880516eac5a6736f1259467ea52dede174fb1cfacdca8962311bc99a"
+    }
+  }
+}
