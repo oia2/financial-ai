@@ -366,3 +366,11 @@ Task: "Форматирование под русскую локаль в fronte
 - [X] T094 Внести поле `accrued_interest` в описание позиции в `specs/001-investment-account-state/contracts/backend-api.md`: API отдаёт его и фронтенд им пользуется, в `data-model.md` оно описано, а в контракте отсутствует; добавить пояснение, что НКД включён в `value` per plan: contracts/backend-api.md (contradicts)
 - [X] T095 Актуализировать `AGENTS.md`: Nginx перечислен отдельным компонентом, хотя стал runtime-слоем контейнера frontend; добавить `scripts/check.sh` как единую команду проверки готовности per Constitution IX (partial)
 - [X] T096 [P] Добавить `scripts/` в дерево Project Structure в `specs/001-investment-account-state/plan.md` per plan: Project Structure, Constitution V (partial)
+
+---
+
+## Phase 11: Convergence
+
+**Purpose**: расхождение, найденное третьим прогоном `/speckit-converge` 2026-08-26.
+
+- [ ] T097 Показать возраст данных в состоянии «ошибка синхронизации»: сейчас `CapitalStrip` печатает «Нет обновления» вместо возраста, а баннер даёт только время последней успешной синхронизации, тогда как данные на экране есть. Формулировка пришла из артефакта Open Design, поэтому правку начать с него и перенести в код; добавить тест, проверяющий возраст во всех состояниях, где показаны данные per FR-014, SC-006, US4/AS1 (partial)
