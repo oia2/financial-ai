@@ -238,14 +238,14 @@ T-Bank: общую стоимость, денежные средства с до
 
 **Purpose**: сквозные требования и приёмка
 
-- [ ] T081 [P] Проверить и довести адаптивность раздела в `frontend/src/pages/portfolio/` и `frontend/src/widgets/positions-table/` на мобильных экранах (FR-019)
-- [ ] T082 [P] Измерить и зафиксировать показатели SC-001 (отрисовка < 2 с) и SC-004 (ручное обновление ≤ 5 с), при необходимости оптимизировать запрос в `backend/src/financial_ai/api/routes/portfolio.py`
-- [ ] T083 [P] Провести дизайн-ревью семи состояний раздела против проекта Open Design «Портфель FINANCIAL AI» (SC-007) и зафиксировать результат в `specs/001-investment-account-state/checklists/`
-- [ ] T084 Выполнить все проверочные сценарии из [quickstart.md](./quickstart.md) §4 на поднятом compose и зафиксировать результаты
-- [ ] T085 [P] Выполнить проверку безопасности из [quickstart.md](./quickstart.md) §6: отсутствие токена в логах и ответах, отсутствие полного номера договора, `.env` не отслеживается git (SC-009, FR-022)
-- [ ] T086 [P] Обновить `README.md`: перевести строку «Код» в статусе из «не реализован» в актуальное состояние, сверить команды запуска с фактическими
-- [ ] T087 [P] Устранить расхождение в `AGENTS.md`: добавить `source/Diagramma_koneynerov_FinAI.svg` в репозиторий либо убрать ссылку на отсутствующий файл (Принципы III и V)
-- [ ] T088 Прогнать все quality gates из [quickstart.md](./quickstart.md) §5 до зелёного результата: ruff, mypy, pytest, eslint, prettier, tsc, vitest, `alembic upgrade head` на чистой БД (Принцип IV)
+- [X] T081 [P] Проверить и довести адаптивность раздела в `frontend/src/pages/portfolio/` и `frontend/src/widgets/positions-table/` на мобильных экранах (FR-019)
+- [X] T082 [P] Измерить и зафиксировать показатели SC-001 (отрисовка < 2 с) и SC-004 (ручное обновление ≤ 5 с), при необходимости оптимизировать запрос в `backend/src/financial_ai/api/routes/portfolio.py`
+- [X] T083 [P] Провести дизайн-ревью семи состояний раздела против проекта Open Design «Портфель FINANCIAL AI» (SC-007) и зафиксировать результат в `specs/001-investment-account-state/checklists/`
+- [X] T084 Выполнить все проверочные сценарии из [quickstart.md](./quickstart.md) §4 на поднятом compose и зафиксировать результаты
+- [X] T085 [P] Выполнить проверку безопасности из [quickstart.md](./quickstart.md) §6: отсутствие токена в логах и ответах, отсутствие полного номера договора, `.env` не отслеживается git (SC-009, FR-022)
+- [X] T086 [P] Обновить `README.md`: перевести строку «Код» в статусе из «не реализован» в актуальное состояние, сверить команды запуска с фактическими
+- [X] T087 [P] Устранить расхождение в `AGENTS.md`: добавить `source/Diagramma_koneynerov_FinAI.svg` в репозиторий либо убрать ссылку на отсутствующий файл (Принципы III и V)
+- [X] T088 Прогнать все quality gates из [quickstart.md](./quickstart.md) §5 до зелёного результата: ruff, mypy, pytest, eslint, prettier, tsc, vitest, `alembic upgrade head` на чистой БД (Принцип IV)
 
 ---
 

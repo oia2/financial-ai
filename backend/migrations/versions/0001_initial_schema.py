@@ -29,8 +29,12 @@ def upgrade() -> None:
         sa.Column("masked_id", sa.Text(), nullable=False),
         sa.Column("display_name", sa.Text(), nullable=False),
         sa.Column("currency", sa.String(length=3), server_default="RUB", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint("id = 1", name="ck_investment_account_singleton"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -45,7 +49,9 @@ def upgrade() -> None:
         sa.Column("positions_cost_basis", MONEY, nullable=False),
         sa.Column("unrealized_pnl", MONEY, nullable=False),
         sa.Column("positions_count", sa.Integer(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint("id = 1", name="ck_account_state_singleton"),
         sa.CheckConstraint("positions_count >= 0", name="ck_account_state_positions_count"),
         sa.ForeignKeyConstraint(["account_id"], ["investment_account.id"]),
@@ -82,7 +88,9 @@ def upgrade() -> None:
         sa.Column("failure_reason_code", sa.Text(), nullable=True),
         sa.Column("failure_detail", sa.Text(), nullable=True),
         sa.Column("consecutive_failures", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint("id = 1", name="ck_broker_sync_state_singleton"),
         sa.CheckConstraint(
             "broker_status in ('connected', 'not_configured', 'rejected')",
@@ -96,7 +104,9 @@ def upgrade() -> None:
         "account_refresh_settings",
         sa.Column("id", sa.SmallInteger(), nullable=False),
         sa.Column("interval_seconds", sa.Integer(), server_default="60", nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint("id = 1", name="ck_refresh_settings_singleton"),
         sa.CheckConstraint(
             "interval_seconds between 15 and 3600", name="ck_refresh_settings_interval_range"
