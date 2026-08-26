@@ -12,6 +12,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json vite.config.ts index.html ./
+# public/ содержит статические файлы, которые Vite копирует в dist как есть
+# (иконка вкладки). Без него сборка внутри образа их теряет.
+COPY public ./public
 COPY src ./src
 RUN pnpm build
 

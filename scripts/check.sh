@@ -76,6 +76,11 @@ step "frontend: prettier"         bash -c "cd '$ROOT/frontend' && ./node_modules
 step "frontend: tsc"              bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/tsc --noEmit"
 step "frontend: vitest"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vitest run"
 
+# Сборка отдельно от образа: она проверяет, что в dist попали не только модули,
+# но и статические файлы из public/. Иконка вкладки уже терялась ровно так —
+# Dockerfile копировал src/, но не public/, и сборка при этом проходила.
+step "frontend: сборка и статика" bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vite build >/dev/null && test -f dist/favicon.svg && test -f dist/index.html"
+
 # ---------- сборка образов ----------
 # Собирается всегда, кроме явного --no-docker: неверный тег базового образа
 # ломает только сборку и никакими другими проверками не ловится.

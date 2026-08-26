@@ -363,6 +363,6 @@ Task: "Форматирование под русскую локаль в fronte
 **Purpose**: расхождения, найденные вторым прогоном `/speckit-converge` 2026-08-26.
 Функциональных пробелов нет — все три касаются проектных артефактов, отставших от кода.
 
-- [ ] T094 Внести поле `accrued_interest` в описание позиции в `specs/001-investment-account-state/contracts/backend-api.md`: API отдаёт его и фронтенд им пользуется, в `data-model.md` оно описано, а в контракте отсутствует; добавить пояснение, что НКД включён в `value` per plan: contracts/backend-api.md (contradicts)
-- [ ] T095 Актуализировать `AGENTS.md`: Nginx перечислен отдельным компонентом, хотя стал runtime-слоем контейнера frontend; добавить `scripts/check.sh` как единую команду проверки готовности per Constitution IX (partial)
-- [ ] T096 [P] Добавить `scripts/` в дерево Project Structure в `specs/001-investment-account-state/plan.md` per plan: Project Structure, Constitution V (partial)
+- [X] T094 Внести поле `accrued_interest` в описание позиции в `specs/001-investment-account-state/contracts/backend-api.md`: API отдаёт его и фронтенд им пользуется, в `data-model.md` оно описано, а в контракте отсутствует; добавить пояснение, что НКД включён в `value` per plan: contracts/backend-api.md (contradicts)
+- [X] T095 Актуализировать `AGENTS.md`: Nginx перечислен отдельным компонентом, хотя стал runtime-слоем контейнера frontend; добавить `scripts/check.sh` как единую команду проверки готовности per Constitution IX (partial)
+- [X] T096 [P] Добавить `scripts/` в дерево Project Structure в `specs/001-investment-account-state/plan.md` per plan: Project Structure, Constitution V (partial)
