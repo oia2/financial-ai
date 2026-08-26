@@ -146,7 +146,9 @@ class BrokerSyncState(Base):
     )
 
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=SINGLETON_ID)
-    broker_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="not_configured")
+    broker_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="not_configured"
+    )
     last_attempt_at: Mapped[dt.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

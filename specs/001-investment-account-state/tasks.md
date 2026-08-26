@@ -91,31 +91,31 @@ T-Bank: общую стоимость, денежные средства с до
 
 > Тесты пишутся ПЕРВЫМИ и должны падать до реализации
 
-- [ ] T021 [P] [US1] Контрактный тест `GET /api/portfolio` в `backend/tests/contract/test_portfolio_get.py`: структура ответа по [contracts/backend-api.md](./contracts/backend-api.md), денежные значения — строки, `snapshot: null` при отсутствии синхронизации
-- [ ] T022 [P] [US1] Unit-тесты доменных расчётов в `backend/tests/unit/test_portfolio_calc.py`: доли позиций и денежных средств, % P&L, граничные случаи из спеки — `total_value = 0`, нулевая база P&L (`null`, а не ложный ноль), отрицательное количество, отсутствующая `average_price`
-- [ ] T023 [P] [US1] Unit-тесты маппинга T-Invest в `backend/tests/unit/test_tinvest_mapping.py`: перевод `Quotation` и `MoneyValue` (`units` + `nano`) в `Decimal` на граничных значениях — нулевые, отрицательные, максимальные `nano`, длинная дробная часть; ожидаемые значения задаются как `Decimal`, сравнение с `float` запрещено (SC-002)
-- [ ] T024 [P] [US1] Unit-тесты валидации ответа брокера в `backend/tests/unit/test_broker_validation.py`: несогласованные суммы, отсутствующие обязательные поля и пустой ответ отклоняются до записи в БД (FR-004)
-- [ ] T025 [P] [US1] Unit-тесты сериализации в `backend/tests/unit/test_schema_serialization.py`: `Decimal` отдаётся строкой без потери точности и без экспоненциальной записи; процентные поля отдают `null`, а не ложный ноль, при нулевой базе
-- [ ] T026 [P] [US1] Unit-тесты форматирования в `frontend/tests/format.test.ts`: разделители разрядов русской локали, округление до копеек только при отображении, знак P&L, разбор строковых чисел из API без потери точности (FR-016)
-- [ ] T027 [P] [US1] Интеграционный тест синхронизации в `backend/tests/integration/test_sync_success.py`: успешный ответ фейкового брокера → атомарная запись `account_state` + `portfolio_position` + `broker_sync_state` в одной транзакции (FR-008)
-- [ ] T028 [P] [US1] Тест страницы портфеля в `frontend/tests/portfolio-page.test.tsx` с msw: отображение сводных показателей, таблицы позиций, возраста данных и времени последней синхронизации
+- [X] T021 [P] [US1] Контрактный тест `GET /api/portfolio` в `backend/tests/contract/test_portfolio_get.py`: структура ответа по [contracts/backend-api.md](./contracts/backend-api.md), денежные значения — строки, `snapshot: null` при отсутствии синхронизации
+- [X] T022 [P] [US1] Unit-тесты доменных расчётов в `backend/tests/unit/test_portfolio_calc.py`: доли позиций и денежных средств, % P&L, граничные случаи из спеки — `total_value = 0`, нулевая база P&L (`null`, а не ложный ноль), отрицательное количество, отсутствующая `average_price`
+- [X] T023 [P] [US1] Unit-тесты маппинга T-Invest в `backend/tests/unit/test_tinvest_mapping.py`: перевод `Quotation` и `MoneyValue` (`units` + `nano`) в `Decimal` на граничных значениях — нулевые, отрицательные, максимальные `nano`, длинная дробная часть; ожидаемые значения задаются как `Decimal`, сравнение с `float` запрещено (SC-002)
+- [X] T024 [P] [US1] Unit-тесты валидации ответа брокера в `backend/tests/unit/test_broker_validation.py`: несогласованные суммы, отсутствующие обязательные поля и пустой ответ отклоняются до записи в БД (FR-004)
+- [X] T025 [P] [US1] Unit-тесты сериализации в `backend/tests/unit/test_schema_serialization.py`: `Decimal` отдаётся строкой без потери точности и без экспоненциальной записи; процентные поля отдают `null`, а не ложный ноль, при нулевой базе
+- [X] T026 [P] [US1] Unit-тесты форматирования в `frontend/tests/format.test.ts`: разделители разрядов русской локали, округление до копеек только при отображении, знак P&L, разбор строковых чисел из API без потери точности (FR-016)
+- [X] T027 [P] [US1] Интеграционный тест синхронизации в `backend/tests/integration/test_sync_success.py`: успешный ответ фейкового брокера → атомарная запись `account_state` + `portfolio_position` + `broker_sync_state` в одной транзакции (FR-008)
+- [X] T028 [P] [US1] Тест страницы портфеля в `frontend/tests/portfolio-page.test.tsx` с msw: отображение сводных показателей, таблицы позиций, возраста данных и времени последней синхронизации
 
 ### Implementation for User Story 1
 
-- [ ] T029 [P] [US1] Реализовать `backend/src/financial_ai/domain/models.py`: доменные модели счёта, снимка и позиции на `Decimal`, без `float`
-- [ ] T030 [US1] Реализовать `backend/src/financial_ai/domain/portfolio.py`: расчёт долей, стоимости, абсолютного и процентного P&L, `positions_cost_basis`, возраста данных — по правилам [data-model.md §9](./data-model.md)
-- [ ] T031 [P] [US1] Реализовать `backend/src/financial_ai/broker/protocol.py`: протокол брокер-адаптера (получение счёта и портфеля) и фейковая реализация в `backend/tests/fakes/fake_broker.py` для тестов
-- [ ] T032 [US1] Реализовать `backend/src/financial_ai/broker/tinvest.py`: адаптер `t_tech.invest.AsyncClient` → доменные модели, перевод `Quotation`/`MoneyValue` (`units` + `nano`) в `Decimal` как `units + nano / 1_000_000_000`, маскирование номера договора, выбор единственного счёта (FR-025)
-- [ ] T033 [US1] Реализовать `backend/src/financial_ai/sync/service.py`: `sync_account_state()` — получение состояния, валидация полноты и согласованности (FR-004), атомарная запись по транзакции из [data-model.md §7](./data-model.md)
-- [ ] T034 [US1] Реализовать `backend/src/financial_ai/sync/cli.py`: одноразовый запуск синхронизации (`python -m financial_ai.sync.cli`) — точка независимой проверки этой story до появления планировщика
-- [ ] T035 [US1] Реализовать `backend/src/financial_ai/api/schemas.py`: Pydantic-схемы ответа `GET /api/portfolio`, сериализация `Decimal` в строку, `Cache-Control: no-store`
-- [ ] T036 [US1] Реализовать `backend/src/financial_ai/api/routes/portfolio.py`: `GET /api/portfolio` — чтение сохранённого состояния, сборка блоков `broker`, `snapshot`, `sync` без обращения к брокеру
-- [ ] T037 [P] [US1] Реализовать `frontend/src/entities/portfolio/`: типы ответа API, `usePortfolioQuery`, селекторы состояния раздела
-- [ ] T038 [P] [US1] Реализовать `frontend/src/shared/lib/format.ts`: форматирование денег, количеств и процентов под русскую локаль с разделителями разрядов (FR-016), округление до копеек только при отображении
-- [ ] T039 [US1] Реализовать `frontend/src/widgets/portfolio-summary/`: общая стоимость, денежные средства с долей, P&L в рублях и процентах с визуальным различением знака (FR-013), количество позиций
-- [ ] T040 [US1] Реализовать `frontend/src/widgets/positions-table/`: таблица позиций со столбцами инструмент, количество, средняя цена, текущая цена, стоимость, P&L, доля; отображение по `instrument_uid` при отсутствии тикера и названия
-- [ ] T041 [US1] Реализовать `frontend/src/widgets/freshness/`: возраст данных и точное время последней успешной синхронизации (FR-014)
-- [ ] T042 [US1] Реализовать `frontend/src/pages/portfolio/`: сборка экрана и состояния «загрузка» и «портфель пуст» по утверждённому дизайну
+- [X] T029 [P] [US1] Реализовать `backend/src/financial_ai/domain/models.py`: доменные модели счёта, снимка и позиции на `Decimal`, без `float`
+- [X] T030 [US1] Реализовать `backend/src/financial_ai/domain/portfolio.py`: расчёт долей, стоимости, абсолютного и процентного P&L, `positions_cost_basis`, возраста данных — по правилам [data-model.md §9](./data-model.md)
+- [X] T031 [P] [US1] Реализовать `backend/src/financial_ai/broker/protocol.py`: протокол брокер-адаптера (получение счёта и портфеля) и фейковая реализация в `backend/tests/fakes/fake_broker.py` для тестов
+- [X] T032 [US1] Реализовать `backend/src/financial_ai/broker/tinvest.py`: адаптер `t_tech.invest.AsyncClient` → доменные модели, перевод `Quotation`/`MoneyValue` (`units` + `nano`) в `Decimal` как `units + nano / 1_000_000_000`, маскирование номера договора, выбор единственного счёта (FR-025)
+- [X] T033 [US1] Реализовать `backend/src/financial_ai/sync/service.py`: `sync_account_state()` — получение состояния, валидация полноты и согласованности (FR-004), атомарная запись по транзакции из [data-model.md §7](./data-model.md)
+- [X] T034 [US1] Реализовать `backend/src/financial_ai/sync/cli.py`: одноразовый запуск синхронизации (`python -m financial_ai.sync.cli`) — точка независимой проверки этой story до появления планировщика
+- [X] T035 [US1] Реализовать `backend/src/financial_ai/api/schemas.py`: Pydantic-схемы ответа `GET /api/portfolio`, сериализация `Decimal` в строку, `Cache-Control: no-store`
+- [X] T036 [US1] Реализовать `backend/src/financial_ai/api/routes/portfolio.py`: `GET /api/portfolio` — чтение сохранённого состояния, сборка блоков `broker`, `snapshot`, `sync` без обращения к брокеру
+- [X] T037 [P] [US1] Реализовать `frontend/src/entities/portfolio/`: типы ответа API, `usePortfolioQuery`, селекторы состояния раздела
+- [X] T038 [P] [US1] Реализовать `frontend/src/shared/lib/format.ts`: форматирование денег, количеств и процентов под русскую локаль с разделителями разрядов (FR-016), округление до копеек только при отображении
+- [X] T039 [US1] Реализовать `frontend/src/widgets/portfolio-summary/`: общая стоимость, денежные средства с долей, P&L в рублях и процентах с визуальным различением знака (FR-013), количество позиций
+- [X] T040 [US1] Реализовать `frontend/src/widgets/positions-table/`: таблица позиций со столбцами инструмент, количество, средняя цена, текущая цена, стоимость, P&L, доля; отображение по `instrument_uid` при отсутствии тикера и названия
+- [X] T041 [US1] Реализовать `frontend/src/widgets/freshness/`: возраст данных и точное время последней успешной синхронизации (FR-014)
+- [X] T042 [US1] Реализовать `frontend/src/pages/portfolio/`: сборка экрана и состояния «загрузка» и «портфель пуст» по утверждённому дизайну
 
 **Checkpoint**: US1 полностью работоспособна — состояние счёта читается из T-Bank, сохраняется и корректно отображается. MVP готов к демонстрации.
 

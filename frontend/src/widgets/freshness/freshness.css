@@ -1,0 +1,27 @@
+.freshness {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: right;
+}
+
+.freshness-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.freshness-value {
+  font-size: 20px;
+  font-weight: 560;
+}
+
+.freshness-time {
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .freshness {
+    text-align: left;
+  }
+}

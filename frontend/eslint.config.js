@@ -23,7 +23,13 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       // Денежные значения приходят из API строками и не должны превращаться в number:
       // потеря точности в double запрещена (SC-002).
-      'no-restricted-globals': ['error', { name: 'parseFloat', message: 'Денежные значения из API разбираются как Decimal-строки, см. shared/lib/money.' }],
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'parseFloat',
+          message: 'Денежные значения из API разбираются как Decimal-строки, см. shared/lib/money.',
+        },
+      ],
     },
   },
 );

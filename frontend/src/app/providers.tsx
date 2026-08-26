@@ -11,8 +11,7 @@ export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        retry: (failureCount, error) =>
-          error instanceof ServerUnreachableError && failureCount < 5,
+        retry: (failureCount, error) => error instanceof ServerUnreachableError && failureCount < 5,
         retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 15_000),
         refetchOnWindowFocus: true,
         staleTime: 0,
@@ -22,13 +21,7 @@ export function createQueryClient(): QueryClient {
   });
 }
 
-export function AppProviders({
-  children,
-  client,
-}: {
-  children: ReactNode;
-  client?: QueryClient;
-}) {
+export function AppProviders({ children, client }: { children: ReactNode; client?: QueryClient }) {
   const queryClient = client ?? createQueryClient();
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
