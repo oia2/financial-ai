@@ -12,7 +12,7 @@ import datetime as dt
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, PlainSerializer, StrictInt
 
 
 def _decimal_to_str(value: Decimal) -> str:
@@ -102,4 +102,7 @@ class RefreshIntervalOut(BaseModel):
 
 
 class RefreshIntervalIn(BaseModel):
-    interval_seconds: int
+    # Strict: строка «60» или дробное 60.5 — не целое число секунд и
+    # принимаются быть не должны (US2 AS4). Диапазон проверяется отдельно,
+    # чтобы ответ нёс код interval_out_of_range из контракта.
+    interval_seconds: StrictInt

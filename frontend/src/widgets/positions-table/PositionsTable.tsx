@@ -117,6 +117,10 @@ export function PositionsTable({ positions }: { positions: PositionDto[] }) {
     columns,
     state: { sorting },
     onSortingChange: setSorting,
+    // Идентичность строки — инструмент, а не порядковый номер: при фоновом
+    // обновлении React переиспользует те же узлы, поэтому прокрутка и
+    // выбранная сортировка не сбрасываются (US2 AS2).
+    getRowId: (row) => row.instrument_uid,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });

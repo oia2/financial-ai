@@ -36,7 +36,14 @@
   flex-wrap: wrap;
 }
 
-.account-line {
+.header-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.account-line,
+.auto-refresh {
   margin: 0;
   font-size: 13px;
 }

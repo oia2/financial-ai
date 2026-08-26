@@ -1,3 +1,4 @@
+import { RefreshIntervalSetting } from '@/features/refresh-interval-setting/RefreshIntervalSetting';
 import {
   selectPortfolioState,
   usePortfolioQuery,
@@ -30,8 +31,16 @@ export function PortfolioPage() {
 
         {query.data ? (
           <div className="header-side">
-            <AccountLine data={query.data} />
+            <div className="header-account">
+              <AccountLine data={query.data} />
+              {/* Действующая частота обновления видна пользователю (FR-036). */}
+              <p className="auto-refresh muted">
+                Автообновление каждые{' '}
+                <span className="numeric">{query.data.sync.refresh_interval_seconds} с</span>
+              </p>
+            </div>
             <Freshness snapshot={query.data.snapshot} sync={query.data.sync} />
+            <RefreshIntervalSetting />
           </div>
         ) : null}
       </header>

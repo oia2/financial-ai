@@ -14,16 +14,31 @@ from fastapi import FastAPI
 from financial_ai.config import get_settings
 from financial_ai.db.engine import dispose_engine
 from financial_ai.logging import setup_logging
+from financial_ai.sync.factory import build_sync_service
+from financial_ai.sync.lock import SingleFlight
+from financial_ai.sync.scheduler import SyncScheduler
+from financial_ai.sync.service import SyncResult
 from financial_ai.worker.routes import health
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     # Токен передаётся в фильтр логов: даже если он попадёт в трейсбек SDK,
     # наружу уйдёт ***REDACTED*** (FR-030, SC-009).
     setup_logging(settings.log_level, secrets=[settings.broker_token_value() or ""])
+
+    single_flight: SingleFlight[SyncResult] = SingleFlight()
+    scheduler = SyncScheduler(build_sync_service(), single_flight)
+    application.state.single_flight = single_flight
+    application.state.scheduler = scheduler
+    await scheduler.start()
+
     yield
+
+    # Остановка дожидается текущей синхронизации: транзакция не должна
+    # оборваться на середине.
+    await scheduler.stop()
     await dispose_engine()
 
 

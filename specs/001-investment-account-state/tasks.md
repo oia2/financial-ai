@@ -132,23 +132,23 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T043 [P] [US2] Контрактные тесты настройки в `backend/tests/contract/test_settings.py`: `GET`/`PUT /api/settings/refresh-interval`, границы 15–3600, ответ `422 interval_out_of_range` и сохранение прежнего значения при недопустимом вводе
-- [ ] T044 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_interval.py`: изменение `interval_seconds` в БД применяется к следующему циклу без перезапуска (SC-012)
-- [ ] T045 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_resilience.py`: циклы не накладываются и не накапливаются (FR-033), цикл продолжается после ошибки брокера (FR-032)
-- [ ] T046 [P] [US2] Тест настройки интервала в `frontend/tests/refresh-interval.test.tsx`: ввод вне диапазона отклоняется с объяснением, прежний интервал продолжает действовать, допустимое значение сохраняется
-- [ ] T047 [P] [US2] Unit-тест poll-интервала в `frontend/tests/poll-interval.test.ts`: `clamp(refresh_interval_seconds / 10, 3 c, 30 c)` на границах диапазона 15–3600 и при промежуточных значениях (research §6)
+- [X] T043 [P] [US2] Контрактные тесты настройки в `backend/tests/contract/test_settings.py`: `GET`/`PUT /api/settings/refresh-interval`, границы 15–3600, ответ `422 interval_out_of_range` и сохранение прежнего значения при недопустимом вводе
+- [X] T044 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_interval.py`: изменение `interval_seconds` в БД применяется к следующему циклу без перезапуска (SC-012)
+- [X] T045 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_resilience.py`: циклы не накладываются и не накапливаются (FR-033), цикл продолжается после ошибки брокера (FR-032)
+- [X] T046 [P] [US2] Тест настройки интервала в `frontend/tests/refresh-interval.test.tsx`: ввод вне диапазона отклоняется с объяснением, прежний интервал продолжает действовать, допустимое значение сохраняется
+- [X] T047 [P] [US2] Unit-тест poll-интервала в `frontend/tests/poll-interval.test.ts`: `clamp(refresh_interval_seconds / 10, 3 c, 30 c)` на границах диапазона 15–3600 и при промежуточных значениях (research §6)
 
 ### Implementation for User Story 2
 
-- [ ] T048 [P] [US2] Реализовать `backend/src/financial_ai/db/settings_repo.py`: чтение и обновление `account_refresh_settings` с проверкой диапазона
-- [ ] T049 [US2] Реализовать `backend/src/financial_ai/api/routes/settings.py`: `GET`/`PUT /api/settings/refresh-interval`, возврат границ `min_seconds`/`max_seconds`/`default_seconds`, ошибка `interval_out_of_range`
-- [ ] T050 [US2] Реализовать `backend/src/financial_ai/sync/lock.py`: `asyncio.Lock` вокруг `sync_account_state()`, исключающий параллельные фоновые обращения к брокеру
-- [ ] T051 [US2] Реализовать `backend/src/financial_ai/sync/scheduler.py`: asyncio-цикл — чтение интервала из БД в начале каждого цикла, вызов синхронизации под локом, ожидание с возможностью корректной остановки
-- [ ] T052 [US2] Подключить планировщик в `backend/src/financial_ai/worker/app.py`: запуск в lifespan startup, остановка с дожиданием текущей синхронизации в shutdown; отражение состояния в `GET /internal/health` (`scheduler`, `current_interval_seconds`)
-- [ ] T053 [P] [US2] Реализовать `frontend/src/features/refresh-interval-setting/`: форма ввода целого числа секунд с подсказкой диапазона, валидацией и сообщением об ошибке, мутация `PUT /api/settings/refresh-interval`
-- [ ] T054 [US2] Настроить polling в `frontend/src/entities/portfolio/`: `refetchInterval = clamp(refresh_interval_seconds / 10, 3 c, 30 c)` от значения, пришедшего в ответе API (research §6)
-- [ ] T055 [US2] Отобразить действующий интервал в `frontend/src/widgets/account-menu/` и в шапке раздела (FR-036)
-- [ ] T056 [US2] Обеспечить в `frontend/src/widgets/positions-table/` сохранение выбранной сортировки и позиции прокрутки при фоновом обновлении данных (US2 AS2)
+- [X] T048 [P] [US2] Реализовать `backend/src/financial_ai/db/settings_repo.py`: чтение и обновление `account_refresh_settings` с проверкой диапазона
+- [X] T049 [US2] Реализовать `backend/src/financial_ai/api/routes/settings.py`: `GET`/`PUT /api/settings/refresh-interval`, возврат границ `min_seconds`/`max_seconds`/`default_seconds`, ошибка `interval_out_of_range`
+- [X] T050 [US2] Реализовать `backend/src/financial_ai/sync/lock.py`: `asyncio.Lock` вокруг `sync_account_state()`, исключающий параллельные фоновые обращения к брокеру
+- [X] T051 [US2] Реализовать `backend/src/financial_ai/sync/scheduler.py`: asyncio-цикл — чтение интервала из БД в начале каждого цикла, вызов синхронизации под локом, ожидание с возможностью корректной остановки
+- [X] T052 [US2] Подключить планировщик в `backend/src/financial_ai/worker/app.py`: запуск в lifespan startup, остановка с дожиданием текущей синхронизации в shutdown; отражение состояния в `GET /internal/health` (`scheduler`, `current_interval_seconds`)
+- [X] T053 [P] [US2] Реализовать `frontend/src/features/refresh-interval-setting/`: форма ввода целого числа секунд с подсказкой диапазона, валидацией и сообщением об ошибке, мутация `PUT /api/settings/refresh-interval`
+- [X] T054 [US2] Настроить polling в `frontend/src/entities/portfolio/`: `refetchInterval = clamp(refresh_interval_seconds / 10, 3 c, 30 c)` от значения, пришедшего в ответе API (research §6)
+- [X] T055 [US2] Отобразить действующий интервал в `frontend/src/widgets/account-menu/` и в шапке раздела (FR-036)
+- [X] T056 [US2] Обеспечить в `frontend/src/widgets/positions-table/` сохранение выбранной сортировки и позиции прокрутки при фоновом обновлении данных (US2 AS2)
 
 **Checkpoint**: US1 и US2 работают независимо — данные обновляются сами, частота настраивается
 
