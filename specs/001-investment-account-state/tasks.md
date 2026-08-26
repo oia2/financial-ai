@@ -342,3 +342,16 @@ Task: "Форматирование под русскую локаль в fronte
 - Значение `TBANK_INVEST_READ_TOKEN` не попадает в интерфейс, БД, логи и ответы API
 - Прототип Open Design хранит интервал в `localStorage` и обновляет данные раз в интервал — **в реализацию это не переносится**: интервал хранится на сервере (FR-034), а фронт опрашивает API с `clamp(интервал / 10, 3 c, 30 c)`
 - Дизайн уже обновлён и проверен; отдельной задачи на его правку нет
+
+---
+
+## Phase 9: Convergence
+
+**Purpose**: закрыть расхождения между артефактами фичи и текущим состоянием кода,
+обнаруженные прогоном `/speckit-converge` 2026-08-26.
+
+- [ ] T089 **CRITICAL** Актуализировать статус в `README.md`: строка «Проверка на реальном брокере» и абзац под таблицей утверждают, что T-Bank отклоняет токен, тогда как система синхронизируется успешно (`broker: connected`, 11 позиций) per Constitution IX (contradicts)
+- [ ] T090 Внести в `specs/001-investment-account-state/spec.md` требования на поведение таблицы, реализованное по обновлённому дизайну: пагинация с выбором 10/25/50 строк и сохранением выбора, переключатель подсветки строк по знаку P&L с сохранением состояния между сессиями; добавить acceptance-сценарии к User Story 5 per FR-012, FR-018 (unrequested)
+- [ ] T091 Прогнать на живых данных сценарии quickstart 4.1, 4.2, 4.5, 4.7, 4.8, 4.9, ранее заблокированные отклонённым токеном, и обновить раздел приёмки в `specs/001-investment-account-state/checklists/requirements.md` per US1/AC1, US2, US4, US5, SC-002, SC-005 (contradicts)
+- [ ] T092 Привести раздел Project Structure в `specs/001-investment-account-state/plan.md` в соответствие с кодом: `widgets/{app-header,capital-strip,positions-table,sync-status-banner}`, `features/refresh-now` как хук, добавленные `shared/lib/{plural,preferences}.ts` per plan: Project Structure (partial)
+- [ ] T093 [P] Переименовать каталог `frontend/src/widgets/positions-table/` в `positions-section` вслед за компонентом `PositionsSection`, который теперь включает панель инструментов, пагинацию и примечание per Constitution V (partial)
