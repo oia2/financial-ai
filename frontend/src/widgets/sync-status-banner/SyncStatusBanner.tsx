@@ -47,7 +47,8 @@ export function SyncStatusBanner({
             describeBrokerFailure(sync) +
             (lastSuccess === null
               ? ' Успешной синхронизации ещё не было.'
-              : ` Показано последнее успешно синхронизированное состояние на ${lastSuccess}.`),
+              : ` Показано последнее успешно синхронизированное состояние на ${lastSuccess}` +
+                (age === null ? '.' : ` — ${age}.`)),
           action: 'Повторить запрос к брокеру',
         }
       : {

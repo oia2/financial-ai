@@ -55,15 +55,20 @@ export function CapitalStrip({ snapshot, sync }: { snapshot: SnapshotDto; sync: 
 
         <div className="fact">
           <span className="metric-label">Актуальность</span>
-          <strong className="fact-value">
-            {failed ? 'Нет обновления' : formatAge(snapshot.age_seconds)}
-          </strong>
+          {/*
+            Возраст показывается во всех состояниях, где данные видны, включая
+            сбой брокера: FR-014 и SC-006 требуют его именно там, где цифры
+            на экране могут быть устаревшими.
+          */}
+          <strong className="fact-value">{formatAge(snapshot.age_seconds)}</strong>
           <span className="fact-sub">
             {sync.last_success_at === null
               ? 'Синхронизации ещё не было'
-              : failed || sync.is_stale
-                ? `Последняя успешная синхронизация ${formatTime(sync.last_success_at)}`
-                : `Обновлено ${formatDateTime(sync.last_success_at)}`}
+              : failed
+                ? `Не обновляется · последняя успешная синхронизация ${formatTime(sync.last_success_at)}`
+                : sync.is_stale
+                  ? `Последняя успешная синхронизация ${formatTime(sync.last_success_at)}`
+                  : `Обновлено ${formatDateTime(sync.last_success_at)}`}
           </span>
           <span className="fact-sub">Автообновление каждые {sync.refresh_interval_seconds} с</span>
         </div>

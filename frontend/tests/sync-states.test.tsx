@@ -176,3 +176,48 @@ describe('выбор состояния', () => {
     expect(selectPortfolioState(staleFixture, null, false)).toBe('stale');
   });
 });
+
+describe('возраст данных во всех состояниях с данными (FR-014, SC-006)', () => {
+  const cases: Array<[string, PortfolioDto]> = [
+    ['данные актуальны', portfolioFixture()],
+    ['данные устарели', staleFixture],
+    ['ошибка синхронизации', brokerFailureFixture],
+  ];
+
+  it.each(cases)('показывает возраст: %s', async (_name, fixture) => {
+    respondWith(fixture);
+    renderPage();
+
+    // «Сейчас» — тоже возраст: данные моложе минуты. Возраст может быть
+    // назван и в полосе капитала, и в баннере — достаточно, что он есть.
+    expect(
+      (await screen.findAllByText(/Сейчас|мин назад|ч назад|дн назад/)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('при сбое брокера возраст виден рядом с временем последней синхронизации', async () => {
+    respondWith(brokerFailureFixture);
+    renderPage();
+
+    // Раньше вместо возраста печаталось «Нет обновления» — ровно в состоянии,
+    // где устаревание данных важнее всего.
+    const age = (await screen.findAllByText(/Сейчас|мин назад/)).find((node) =>
+      node.classList.contains('fact-value'),
+    );
+    expect(age).toBeDefined();
+    expect(
+      screen.getByText(/Не обновляется · последняя успешная синхронизация/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Нет обновления')).not.toBeInTheDocument();
+  });
+
+  it('баннер сбоя брокера называет возраст показанных данных', async () => {
+    respondWith(brokerFailureFixture);
+    renderPage();
+
+    const banner = await screen.findByText(
+      /Показано последнее успешно синхронизированное состояние/,
+    );
+    expect(banner).toHaveTextContent(/—\s*(Сейчас|\d+\s*мин назад)/);
+  });
+});

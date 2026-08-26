@@ -79,7 +79,10 @@ step "frontend: vitest"           bash -c "cd '$ROOT/frontend' && ./node_modules
 # Сборка отдельно от образа: она проверяет, что в dist попали не только модули,
 # но и статические файлы из public/. Иконка вкладки уже терялась ровно так —
 # Dockerfile копировал src/, но не public/, и сборка при этом проходила.
-step "frontend: сборка и статика" bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vite build >/dev/null && test -f dist/favicon.svg && test -f dist/index.html"
+step "frontend: сборка и статика" bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vite build >/dev/null && test -f dist/favicon.svg && test -f dist/index.html && python -c \"
+import io, xml.dom.minidom as m
+m.parseString(io.open('dist/favicon.svg', encoding='utf-8').read())
+\""
 
 # ---------- сборка образов ----------
 # Собирается всегда, кроме явного --no-docker: неверный тег базового образа
