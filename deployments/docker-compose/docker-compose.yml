@@ -1,0 +1,81 @@
+name: financial-ai
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-financial_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: ${POSTGRES_DB:-financial_ai}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Проброс наружу нужен для локальных тестов и alembic вне контейнера.
+      # POSTGRES_PORT позволяет разойтись с другой локальной PostgreSQL.
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-financial_ai} -d ${POSTGRES_DB:-financial_ai}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend-api:
+    build:
+      context: ../../backend
+    # Публичный HTTP API. Токен брокера сюда НЕ передаётся: этот сервис
+    # не обращается к T-Bank ни при каких условиях (FR-021, FR-023).
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn financial_ai.api.app:app --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-financial_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-financial_ai}
+      WORKER_INTERNAL_URL: http://backend-worker:8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  backend-worker:
+    build:
+      context: ../../backend
+    # Единственный сервис, которому передаётся токен брокера.
+    command: >
+      uvicorn financial_ai.worker.app:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-financial_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-financial_ai}
+      TBANK_INVEST_READ_TOKEN: ${TBANK_INVEST_READ_TOKEN:-}
+      TBANK_INVEST_TARGET: ${TBANK_INVEST_TARGET:-invest-public-api.tbank.ru:443}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend-api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/internal/health')"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  frontend:
+    build:
+      context: ../../frontend
+    # Внутри контейнера работает nginx: отдаёт статику и проксирует /api.
+    # Отдельного сервиса nginx нет.
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend-api:
+        condition: service_started
+
+volumes:
+  postgres-data:

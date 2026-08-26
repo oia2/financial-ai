@@ -1,0 +1,17 @@
+﻿{
+  "mcpServers": {
+    "open-design": {
+      "type": "stdio",
+      "command": "C:\\Users\\oleg2\\AppData\\Local\\Programs\\Open Design\\Open Design.exe",
+      "args": [
+        "C:\\Users\\oleg2\\AppData\\Local\\Programs\\Open Design\\resources\\app\\prebundled\\daemon\\daemon-cli.mjs",
+        "mcp"
+      ],
+      "env": {
+        "OD_DATA_DIR": "C:\\Users\\oleg2\\AppData\\Roaming\\Open Design\\namespaces\\release-stable-win\\data",
+        "OD_SIDECAR_IPC_PATH": "\\\\.\\pipe\\open-design-release-stable-win-daemon",
+        "ELECTRON_RUN_AS_NODE": "1"
+      }
+    }
+  }
+}

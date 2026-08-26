@@ -41,16 +41,16 @@ description: "Task list for Investment Account State"
 
 **Purpose**: инициализация проектов, инструментов качества и развёртывания
 
-- [ ] T001 Создать структуру каталогов `backend/src/financial_ai/`, `backend/tests/{unit,integration,contract}/`, `frontend/src/`, `frontend/tests/`, `deployments/docker-compose/nginx/` согласно plan.md → Project Structure
-- [ ] T002 Создать `backend/pyproject.toml`: Python 3.12, зависимости (fastapi, pydantic, pydantic-settings, sqlalchemy[asyncio], asyncpg, alembic, httpx, `t-tech-investments==1.49.3`), `extra-index-url = https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple`, конфигурация ruff, mypy и pytest в одном файле
-- [ ] T003 [P] Создать `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`: React 19, TypeScript, TanStack Query, TanStack Table, zod; dev-прокси `/api` на `http://localhost:8001`
-- [ ] T004 [P] Создать конфигурации качества frontend: `frontend/eslint.config.js`, `frontend/.prettierrc`, `frontend/vitest.config.ts` с Testing Library и msw
-- [ ] T005 [P] Создать `backend/Dockerfile`: один образ для `backend-api` и `backend-worker`, команда запуска задаётся в compose, установка зависимостей через uv с индексом T-Bank
-- [ ] T006 [P] Создать `frontend/Dockerfile`: multi-stage — Node 22 собирает статику, runtime `nginx:alpine`
-- [ ] T007 [P] Создать `deployments/docker-compose/nginx/nginx.conf`: отдача статики SPA с fallback на `index.html`, `proxy_pass /api` на `backend-api:8000`, `Cache-Control: no-store` для `/api`
-- [ ] T008 Создать `deployments/docker-compose/docker-compose.yml`: сервисы `frontend`, `backend-api`, `backend-worker`, `postgres` (PostgreSQL 17); `TBANK_INVEST_READ_TOKEN` передаётся **только** в `backend-worker`; конфиг nginx монтируется в `frontend`; healthcheck для каждого сервиса
-- [ ] T009 Создать `deployments/docker-compose/.env.example` с placeholder-значениями, перенести реальное значение из корневого `.env` в `deployments/docker-compose/.env` и удалить корневой `.env`
-- [ ] T010 [P] Создать `backend/tests/conftest.py`: фикстуры тестовой БД, асинхронного клиента и фейкового брокер-адаптера
+- [X] T001 Создать структуру каталогов `backend/src/financial_ai/`, `backend/tests/{unit,integration,contract}/`, `frontend/src/`, `frontend/tests/`, `deployments/docker-compose/nginx/` согласно plan.md → Project Structure
+- [X] T002 Создать `backend/pyproject.toml`: Python 3.12, зависимости (fastapi, pydantic, pydantic-settings, sqlalchemy[asyncio], asyncpg, alembic, httpx, `t-tech-investments==1.49.3`), `extra-index-url = https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple`, конфигурация ruff, mypy и pytest в одном файле
+- [X] T003 [P] Создать `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`: React 19, TypeScript, TanStack Query, TanStack Table, zod; dev-прокси `/api` на `http://localhost:8001`
+- [X] T004 [P] Создать конфигурации качества frontend: `frontend/eslint.config.js`, `frontend/.prettierrc`, `frontend/vitest.config.ts` с Testing Library и msw
+- [X] T005 [P] Создать `backend/Dockerfile`: один образ для `backend-api` и `backend-worker`, команда запуска задаётся в compose, установка зависимостей через uv с индексом T-Bank
+- [X] T006 [P] Создать `frontend/Dockerfile`: multi-stage — Node 22 собирает статику, runtime `nginx:alpine`
+- [X] T007 [P] Создать `deployments/docker-compose/nginx/nginx.conf`: отдача статики SPA с fallback на `index.html`, `proxy_pass /api` на `backend-api:8000`, `Cache-Control: no-store` для `/api`
+- [X] T008 Создать `deployments/docker-compose/docker-compose.yml`: сервисы `frontend`, `backend-api`, `backend-worker`, `postgres` (PostgreSQL 17); `TBANK_INVEST_READ_TOKEN` передаётся **только** в `backend-worker`; конфиг nginx монтируется в `frontend`; healthcheck для каждого сервиса
+- [X] T009 Создать `deployments/docker-compose/.env.example` с placeholder-значениями, перенести реальное значение из корневого `.env` в `deployments/docker-compose/.env` и удалить корневой `.env`
+- [X] T010 [P] Создать `backend/tests/conftest.py`: фикстуры тестовой БД, асинхронного клиента и фейкового брокер-адаптера
 
 **Checkpoint**: проекты инициализированы, `docker compose config` валиден, инструменты качества запускаются
 
@@ -62,16 +62,16 @@ description: "Task list for Investment Account State"
 
 **⚠️ CRITICAL**: ни одна user story не начинается до завершения этой фазы
 
-- [ ] T011 Реализовать `backend/src/financial_ai/config.py` на pydantic-settings: `DATABASE_URL`, `TBANK_INVEST_READ_TOKEN` (опциональный, читается только worker'ом), `WORKER_INTERNAL_URL`; валидация на старте, `repr` без значений секретов
-- [ ] T012 [P] Реализовать `backend/src/financial_ai/logging.py`: структурированное JSON-логирование и фильтр, вырезающий значение токена из сообщений и трейсбеков (FR-030, SC-009)
-- [ ] T013 Реализовать `backend/src/financial_ai/db/engine.py`: async engine, session factory, зависимость для FastAPI
-- [ ] T014 Реализовать `backend/src/financial_ai/db/models.py`: таблицы `investment_account`, `account_state`, `portfolio_position`, `broker_sync_state`, `account_refresh_settings` строго по [data-model.md](./data-model.md) — `NUMERIC(28,9)` для денежных и количественных величин, `TIMESTAMPTZ` для времени, CHECK-ограничения singleton и диапазона интервала
-- [ ] T015 Настроить Alembic: `backend/alembic.ini`, `backend/migrations/env.py`, первая миграция в `backend/migrations/versions/` — создание всех пяти таблиц и seed-строки `account_refresh_settings` со значением 60
-- [ ] T016 [P] Создать `backend/src/financial_ai/api/app.py`: FastAPI-приложение Backend-API, подключение логирования, роутер `backend/src/financial_ai/api/routes/health.py` с `GET /api/health`
-- [ ] T017 [P] Создать `backend/src/financial_ai/worker/app.py`: FastAPI-приложение Worker, роутер `backend/src/financial_ai/worker/routes/health.py` с `GET /internal/health`, возвращающим `broker_token: configured|missing` — **факт наличия, никогда не значение**
-- [ ] T018 [P] Создать `frontend/src/app/`: провайдер `QueryClient`, глобальные стили и CSS-токены из `brand-spec.md` (`--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`), типографика Google Sans Flex / Google Sans Code
-- [ ] T019 [P] Создать `frontend/src/shared/api/client.ts`: HTTP-клиент, различающий транспортную ошибку (нет ответа, 502/503/504) и успешный ответ с телом — основа для FR-037
-- [ ] T020 [P] Написать тесты health-эндпоинтов в `backend/tests/contract/test_health.py`: `GET /api/health` и `GET /internal/health`, проверка отсутствия значения токена в ответе
+- [X] T011 Реализовать `backend/src/financial_ai/config.py` на pydantic-settings: `DATABASE_URL`, `TBANK_INVEST_READ_TOKEN` (опциональный, читается только worker'ом), `WORKER_INTERNAL_URL`; валидация на старте, `repr` без значений секретов
+- [X] T012 [P] Реализовать `backend/src/financial_ai/logging.py`: структурированное JSON-логирование и фильтр, вырезающий значение токена из сообщений и трейсбеков (FR-030, SC-009)
+- [X] T013 Реализовать `backend/src/financial_ai/db/engine.py`: async engine, session factory, зависимость для FastAPI
+- [X] T014 Реализовать `backend/src/financial_ai/db/models.py`: таблицы `investment_account`, `account_state`, `portfolio_position`, `broker_sync_state`, `account_refresh_settings` строго по [data-model.md](./data-model.md) — `NUMERIC(28,9)` для денежных и количественных величин, `TIMESTAMPTZ` для времени, CHECK-ограничения singleton и диапазона интервала
+- [X] T015 Настроить Alembic: `backend/alembic.ini`, `backend/migrations/env.py`, первая миграция в `backend/migrations/versions/` — создание всех пяти таблиц и seed-строки `account_refresh_settings` со значением 60
+- [X] T016 [P] Создать `backend/src/financial_ai/api/app.py`: FastAPI-приложение Backend-API, подключение логирования, роутер `backend/src/financial_ai/api/routes/health.py` с `GET /api/health`
+- [X] T017 [P] Создать `backend/src/financial_ai/worker/app.py`: FastAPI-приложение Worker, роутер `backend/src/financial_ai/worker/routes/health.py` с `GET /internal/health`, возвращающим `broker_token: configured|missing` — **факт наличия, никогда не значение**
+- [X] T018 [P] Создать `frontend/src/app/`: провайдер `QueryClient`, глобальные стили и CSS-токены из `brand-spec.md` (`--bg`, `--surface`, `--fg`, `--muted`, `--border`, `--accent`), типографика Google Sans Flex / Google Sans Code
+- [X] T019 [P] Создать `frontend/src/shared/api/client.ts`: HTTP-клиент, различающий транспортную ошибку (нет ответа, 502/503/504) и успешный ответ с телом — основа для FR-037
+- [X] T020 [P] Написать тесты health-эндпоинтов в `backend/tests/contract/test_health.py`: `GET /api/health` и `GET /internal/health`, проверка отсутствия значения токена в ответе
 
 **Checkpoint**: контейнеры поднимаются, миграции применяются, health-эндпоинты отвечают — можно начинать user stories
 
