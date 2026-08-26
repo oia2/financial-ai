@@ -36,9 +36,9 @@ describe('состояние счёта', () => {
   it('показывает сводные показатели капитала', async () => {
     renderPage();
 
-    expect(await screen.findByText(/402\s?609,00/)).toBeInTheDocument();
-    expect(screen.getByText(/40\s?545,00/)).toBeInTheDocument();
-    expect(screen.getByText(/\+4\s?590,00/)).toBeInTheDocument();
+    expect(await screen.findByText(/402\s?609/)).toBeInTheDocument();
+    expect(screen.getByText(/40\s?545/)).toBeInTheDocument();
+    expect(screen.getByText(/\+4\s?590/)).toBeInTheDocument();
     expect(screen.getByText(/\+1,29% к средней стоимости/)).toBeInTheDocument();
   });
 
@@ -54,7 +54,7 @@ describe('состояние счёта', () => {
     expect(await screen.findByRole('table', { name: 'Позиции' })).toBeInTheDocument();
     expect(screen.getByText('SBER')).toBeInTheDocument();
     expect(screen.getByText('Сбербанк')).toBeInTheDocument();
-    expect(screen.getByText(/362\s?064,00/)).toBeInTheDocument();
+    expect(screen.getByText(/362\s?064/)).toBeInTheDocument();
   });
 
   it('отображает позицию без тикера и названия по идентификатору', async () => {
@@ -174,7 +174,7 @@ describe('цветовая семантика P&L', () => {
   it('положительный P&L окрашен в цвет прибыли', async () => {
     renderPage();
 
-    const value = await screen.findByText(/\+4\s?590,00/);
+    const value = await screen.findByText(/\+4\s?590/);
     expect(value).toHaveClass('fact-value', 'positive');
   });
 
@@ -192,7 +192,7 @@ describe('цветовая семантика P&L', () => {
 
     renderPage();
 
-    const value = await screen.findByText(/−4\s?590,00/);
+    const value = await screen.findByText(/−4\s?590/);
     expect(value).toHaveClass('fact-value', 'negative');
   });
 });

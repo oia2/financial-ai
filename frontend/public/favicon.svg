@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Financial AI">
+  <!--
+    Иконка вкладки. В артефакте Open Design её нет — артефакт описывает один
+    экран, а не идентификацию приложения, — поэтому знак собран из его же
+    словаря: тёмная плашка (--fg), акцентная линия роста (--accent).
+  -->
+  <rect width="32" height="32" rx="8" fill="#121317" />
+  <path
+    d="M7 21.5 13 15l4 4 8-9.5"
+    fill="none"
+    stroke="#3279f9"
+    stroke-width="2.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path d="M20 9h5.5v5.5" fill="none" stroke="#3279f9" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

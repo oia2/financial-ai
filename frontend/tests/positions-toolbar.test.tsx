@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { PositionDto } from '@/entities/portfolio';
 import { formatPositionCount } from '@/shared/lib/plural';
-import { PositionsSection } from '@/widgets/positions-table/PositionsSection';
+import { PositionsSection } from '@/widgets/positions-section/PositionsSection';
 
 function position(uid: string, pnl: string | null = '100'): PositionDto {
   return {
@@ -172,5 +172,24 @@ describe('пагинация', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.getByText('0 позиций')).toBeInTheDocument();
+  });
+});
+
+describe('денежные значения в таблице', () => {
+  it('показывает знак рубля в ценах и стоимости', () => {
+    render(<PositionsSection positions={[position('sber')]} />);
+
+    const cells = screen.getAllByRole('cell').map((cell) => cell.textContent ?? '');
+
+    // В дизайне денежные ячейки содержат «1 002 ₽», а не голое число.
+    expect(cells.filter((text) => text.includes('₽')).length).toBe(4);
+  });
+
+  it('не добавляет знак рубля к количеству и доле', () => {
+    render(<PositionsSection positions={[position('sber')]} />);
+
+    const cells = screen.getAllByRole('cell');
+    expect(cells[1]?.textContent).not.toContain('₽');
+    expect(cells[6]?.textContent).not.toContain('₽');
   });
 });

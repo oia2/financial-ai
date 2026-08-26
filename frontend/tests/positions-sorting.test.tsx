@@ -10,7 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import type { PositionDto } from '@/entities/portfolio';
-import { PositionsSection } from '@/widgets/positions-table/PositionsSection';
+import { PositionsSection } from '@/widgets/positions-section/PositionsSection';
 
 function position(overrides: Partial<PositionDto> & { instrument_uid: string }): PositionDto {
   return {

@@ -15,10 +15,17 @@ function groupThousands(int: string): string {
   return int.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
 }
 
-/** Число с разделителями разрядов и запятой в дробной части. */
+/**
+ * Число с разделителями разрядов и запятой в дробной части.
+ *
+ * Незначащие нули в дробной части отбрасываются: дизайн форматирует суммы
+ * через `Intl.NumberFormat` с `maximumFractionDigits`, то есть «40 545 ₽»,
+ * а не «40 545,00 ₽». Копейки показываются, когда они есть.
+ */
 export function formatNumber(value: string, digits = 2): string {
   const { negative, int, frac } = roundDecimal(value, digits);
-  const body = frac ? `${groupThousands(int)},${frac}` : groupThousands(int);
+  const significant = frac.replace(/0+$/, '');
+  const body = significant ? `${groupThousands(int)},${significant}` : groupThousands(int);
   return negative ? `−${body}` : body;
 }
 
@@ -64,10 +71,13 @@ export function formatQuantity(value: string): string {
   return formatNumber(value, Math.min(frac.length, 6));
 }
 
-/** Цена: копейки значимы, но девять знаков в таблице нечитаемы. */
+/**
+ * Цена в таблице позиций: со знаком валюты, как в дизайне — «1 002 ₽».
+ * `null` означает, что цена неизвестна, и остаётся `null`.
+ */
 export function formatPrice(value: string | null, digits = 2): string | null {
   if (value === null) return null;
-  return formatNumber(value, digits);
+  return formatMoney(value, digits);
 }
 
 /** Возраст данных словами: «Сейчас», «28 мин назад», «2 ч назад». */

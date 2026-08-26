@@ -131,13 +131,14 @@ backend/                              # один Python-пакет, два ко�
 frontend/
 ├── Dockerfile                        # multi-stage: node build → nginx:alpine (runtime)
 ├── package.json, vite.config.ts, tsconfig.json
+├── public/favicon.svg                 # иконка вкладки
 ├── src/                              # Feature-Sliced Design
-│   ├── app/                          # провайдеры, QueryClient, тема из brand-spec.md
+│   ├── app/                          # провайдеры, QueryClient, styles/design.css из артефакта
 │   ├── pages/portfolio/
-│   ├── widgets/{portfolio-summary,positions-table,sync-status-banner,account-menu}/
+│   ├── widgets/{app-header,capital-strip,positions-section,sync-status-banner}/
 │   ├── features/{refresh-now,refresh-interval-setting}/
 │   ├── entities/portfolio/           # типы, queries, селекторы
-│   └── shared/{api,ui,lib,config}/
+│   └── shared/{api,ui,lib}/          # lib: decimal, format, plural, preferences
 └── tests/
 
 deployments/docker-compose/
@@ -146,6 +147,11 @@ deployments/docker-compose/
 ├── .env.example                      # только placeholder-значения
 └── .env                              # реальные значения, не коммитится
 ```
+
+Состав виджетов повторяет композицию утверждённого дизайна (Принцип VIII): шапка с меню
+счёта, полоса капитала, секция позиций и баннер состояния. Ручное обновление вызывается из
+трёх мест, поэтому оформлено хуком `features/refresh-now/useRefreshNow.ts`, а не отдельной
+кнопкой.
 
 **Structure Decision**: Web application. Backend — один Python-пакет `backend/` с двумя
 точками входа, разворачиваемый как два контейнера (обоснование — research §8): границы

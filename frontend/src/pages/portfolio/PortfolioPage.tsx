@@ -6,7 +6,7 @@ import {
 } from '@/entities/portfolio';
 import { AppHeader } from '@/widgets/app-header/AppHeader';
 import { CapitalStrip } from '@/widgets/capital-strip/CapitalStrip';
-import { PositionsSection } from '@/widgets/positions-table/PositionsSection';
+import { PositionsSection } from '@/widgets/positions-section/PositionsSection';
 import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner';
 
 /**

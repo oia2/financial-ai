@@ -22,16 +22,16 @@ const NBSP = ' ';
 
 describe('разделители разрядов', () => {
   it('группирует тысячи неразрывным пробелом', () => {
-    expect(formatNumber('362064')).toBe(`362${NBSP}064,00`);
+    expect(formatNumber('362064')).toBe(`362${NBSP}064`);
     expect(formatNumber('1234567.89')).toBe(`1${NBSP}234${NBSP}567,89`);
   });
 
   it('не группирует числа до тысячи', () => {
-    expect(formatNumber('999.5')).toBe('999,50');
+    expect(formatNumber('999.5')).toBe('999,5');
   });
 
   it('добавляет валюту к денежным значениям', () => {
-    expect(formatMoney('40545')).toBe(`40${NBSP}545,00${NBSP}₽`);
+    expect(formatMoney('40545')).toBe(`40${NBSP}545${NBSP}₽`);
   });
 });
 
@@ -46,8 +46,8 @@ describe('округление до копеек', () => {
   });
 
   it('переносит разряд через девятки', () => {
-    expect(formatNumber('9.999')).toBe('10,00');
-    expect(formatNumber('999.999')).toBe(`1${NBSP}000,00`);
+    expect(formatNumber('9.999')).toBe('10');
+    expect(formatNumber('999.999')).toBe(`1${NBSP}000`);
   });
 
   it('округляет по модулю для отрицательных', () => {
@@ -65,15 +65,15 @@ describe('округление до копеек', () => {
 
 describe('знак P&L', () => {
   it('добавляет плюс к положительным', () => {
-    expect(formatSignedMoney('4590')).toBe(`+4${NBSP}590,00${NBSP}₽`);
+    expect(formatSignedMoney('4590')).toBe(`+4${NBSP}590${NBSP}₽`);
   });
 
   it('сохраняет минус у отрицательных', () => {
-    expect(formatSignedMoney('-4590')).toBe(`−4${NBSP}590,00${NBSP}₽`);
+    expect(formatSignedMoney('-4590')).toBe(`−4${NBSP}590${NBSP}₽`);
   });
 
   it('не добавляет знак к нулю', () => {
-    expect(formatSignedMoney('0')).toBe(`0,00${NBSP}₽`);
+    expect(formatSignedMoney('0')).toBe(`0${NBSP}₽`);
   });
 });
 
@@ -81,7 +81,7 @@ describe('проценты', () => {
   it('переводит долю единицы в проценты', () => {
     expect(formatPercent('0.0129')).toBe('1,29%');
     expect(formatPercent('0.899287', 1)).toBe('89,9%');
-    expect(formatPercent('1')).toBe('100,00%');
+    expect(formatPercent('1')).toBe('100%');
   });
 
   it('сохраняет знак', () => {
