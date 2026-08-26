@@ -222,7 +222,8 @@ scripts/check.sh --no-docker    # быстрый цикл разработки, 
 
 Скрипт прогоняет: `ruff check`, `ruff format --check`, `mypy`, `pytest`,
 `alembic upgrade head` на свежесозданной БД, `eslint`, `prettier --check`,
-`tsc --noEmit`, `vitest` и `docker compose build`.
+`tsc --noEmit`, `vitest`, сборку frontend с проверкой статических файлов
+(`dist/favicon.svg` существует и разбирается как XML) и `docker compose build`.
 
 Запускать проверки по отдельности не нужно и не следует: скрипт существует
 именно потому, что частичные прогоны уже пропускали дефекты — `ruff` по

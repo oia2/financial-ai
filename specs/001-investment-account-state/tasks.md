@@ -383,4 +383,4 @@ Task: "Форматирование под русскую локаль в fronte
 Функциональных пробелов нет; сверка схемы живой БД с `data-model.md` расхождений
 не выявила.
 
-- [ ] T098 [P] Дополнить перечисление шагов гейта в `specs/001-investment-account-state/quickstart.md` §5 и в `README.md`: шаг «frontend: сборка и статика», добавленный в `scripts/check.sh` после пропажи иконки, в обоих документах не упомянут per Constitution IX (partial)
+- [X] T098 [P] Дополнить перечисление шагов гейта в `specs/001-investment-account-state/quickstart.md` §5 и в `README.md`: шаг «frontend: сборка и статика», добавленный в `scripts/check.sh` после пропажи иконки, в обоих документах не упомянут per Constitution IX (partial)
