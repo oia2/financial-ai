@@ -228,18 +228,13 @@ pip install t-tech-investments==1.49.3 \
 Фича не считается завершённой, пока все применимые проверки не проходят.
 
 ```bash
-# backend
-cd backend
-uv run ruff check . && uv run ruff format --check .
-uv run mypy src
-uv run pytest
-
-# frontend
-cd frontend
-pnpm lint && pnpm prettier --check .
-pnpm tsc --noEmit
-pnpm test
+scripts/check.sh                # полный гейт, включая сборку образов
+scripts/check.sh --no-docker    # быстрый цикл разработки, НЕ полный гейт
 ```
+
+Скрипт прогоняет линтеры, форматирование, типы, тесты обоих компонентов,
+миграции на свежесозданной БД и сборку docker-образов. Запускать проверки
+по частям не следует: именно частичные прогоны пропускали дефекты.
 
 ---
 

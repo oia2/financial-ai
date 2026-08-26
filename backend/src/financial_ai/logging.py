@@ -63,6 +63,13 @@ class SecretFilter(logging.Filter):
         return self._scrub(value) if isinstance(value, str) else value
 
 
+_secret_filter = SecretFilter()
+
+
+def get_secret_filter() -> SecretFilter:
+    return _secret_filter
+
+
 class JsonFormatter(logging.Formatter):
     """Однострочный JSON — пригоден для машинного разбора.
 
@@ -74,7 +81,11 @@ class JsonFormatter(logging.Formatter):
 
     def __init__(self, secret_filter: SecretFilter | None = None) -> None:
         super().__init__()
-        self._secret_filter = secret_filter
+        # По умолчанию берётся общий фильтр процесса. Форматтер, созданный без
+        # аргументов, обязан вырезать секреты так же, как настроенный: иначе
+        # достаточно добавить обработчик мимо setup_logging, чтобы токен снова
+        # оказался в журнале.
+        self._secret_filter = secret_filter if secret_filter is not None else _secret_filter
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -91,17 +102,7 @@ class JsonFormatter(logging.Formatter):
             if key.startswith("ctx_"):
                 payload[key[4:]] = value
 
-        line = json.dumps(payload, ensure_ascii=False)
-        if self._secret_filter is not None:
-            line = self._secret_filter.scrub(line)
-        return line
-
-
-_secret_filter = SecretFilter()
-
-
-def get_secret_filter() -> SecretFilter:
-    return _secret_filter
+        return self._secret_filter.scrub(json.dumps(payload, ensure_ascii=False))
 
 
 def setup_logging(level: str = "INFO", secrets: list[str] | None = None) -> None:

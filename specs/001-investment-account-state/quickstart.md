@@ -206,23 +206,20 @@ Worker и успешной синхронизации предупреждени
 ## 5. Проверки качества (Принцип IV Constitution)
 
 ```bash
-# backend
-cd backend
-uv run ruff check . && uv run ruff format --check .
-uv run mypy src
-uv run pytest
-
-# frontend
-cd frontend
-pnpm lint && pnpm prettier --check .
-pnpm tsc --noEmit
-pnpm test
-
-# миграции на чистой БД
-uv run alembic upgrade head
+scripts/check.sh                # полный гейт, включая сборку образов
+scripts/check.sh --no-docker    # быстрый цикл разработки, НЕ полный гейт
 ```
 
-Фича не считается завершённой, пока все перечисленные проверки не проходят.
+Скрипт прогоняет: `ruff check`, `ruff format --check`, `mypy`, `pytest`,
+`alembic upgrade head` на свежесозданной БД, `eslint`, `prettier --check`,
+`tsc --noEmit`, `vitest` и `docker compose build`.
+
+Запускать проверки по отдельности не нужно и не следует: скрипт существует
+именно потому, что частичные прогоны уже пропускали дефекты — `ruff` по
+`src/` и `tests/` не видел `migrations/`, а неверный тег базового образа
+ловится только сборкой.
+
+Фича не считается завершённой, пока `scripts/check.sh` не проходит целиком.
 
 ---
 

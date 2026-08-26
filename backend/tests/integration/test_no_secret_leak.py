@@ -142,3 +142,33 @@ async def test_settings_repr_hides_token(monkeypatch: pytest.MonkeyPatch) -> Non
         assert settings.broker_token_value() == SECRET
     finally:
         get_settings.cache_clear()
+
+
+async def test_formatter_scrubs_even_without_explicit_filter() -> None:
+    """Обработчик, добавленный мимо setup_logging, не должен раскрывать токен.
+
+    Именно так утечка и появилась в первый раз: форматтер без переданного
+    фильтра молча ничего не вырезал.
+    """
+    setup_logging("INFO", secrets=[SECRET])
+
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())  # без аргументов — как сделал бы новый код
+
+    logger = logging.getLogger("test.no-filter")
+    logger.addHandler(handler)
+    try:
+        logger.warning("Токен в сообщении: %s", SECRET)
+        logger.warning("Токен в extra", extra={"ctx_detail": SECRET})
+        try:
+            raise RuntimeError(SECRET)
+        except RuntimeError:
+            logger.exception("Токен в трейсбеке")
+    finally:
+        logger.removeHandler(handler)
+
+    output = stream.getvalue()
+
+    assert SECRET not in output
+    assert output.count("***REDACTED***") >= 3
