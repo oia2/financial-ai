@@ -108,7 +108,7 @@ PostgreSQL 17, Docker Compose, nginx (внутри образа frontend).
 
 ```text
 backend/                      # Python-пакет: backend-api + backend-worker
-├── Dockerfile
+├── Dockerfile                # один образ → два контейнера: backend-api и backend-worker
 ├── pyproject.toml
 ├── migrations/               # Alembic
 ├── src/financial_ai/

@@ -92,7 +92,8 @@ specs/001-investment-account-state/
 
 ```text
 backend/                              # один Python-пакет, два контейнера (research §8)
-├── Dockerfile                        # общий образ; entrypoint выбирает api или worker
+├── Dockerfile                        # один образ, из него запускаются два контейнера:
+│                                     # backend-api и backend-worker (разные команды)
 ├── pyproject.toml                    # зависимости + extra-index-url T-Bank
 ├── uv.lock
 ├── alembic.ini
@@ -295,7 +296,7 @@ FR-008. Backend-API отдаёт данные и статус синхрониз
 
 ```text
 frontend/Dockerfile                   # multi-stage: node build → nginx:alpine
-backend/Dockerfile                    # общий образ backend-api и backend-worker
+backend/Dockerfile                    # один образ → два контейнера: backend-api и backend-worker
 deployments/docker-compose/
 ├── docker-compose.yml
 ├── nginx/nginx.conf
