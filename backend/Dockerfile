@@ -1,7 +1,7 @@
 # Один образ для двух контейнеров: backend-api и backend-worker.
 # Команда запуска задаётся в docker-compose.yml — код у сервисов общий,
 # различаются только точка входа и набор переменных окружения.
-FROM ghcr.io/astral-sh/uv:0.12-python3.12-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
