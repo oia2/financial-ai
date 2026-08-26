@@ -44,7 +44,7 @@ export function CapitalStrip({ snapshot, sync }: { snapshot: SnapshotDto; sync: 
         <div className="fact">
           <span className="metric-label">Текущий P&amp;L</span>
           {/* Знак P&L различается визуально (FR-013). */}
-          <strong className={`fact-value${pnlNegative ? '' : ' positive'}`}>
+          <strong className={`fact-value ${pnlNegative ? 'negative' : 'positive'}`}>
             {formatSignedMoney(snapshot.unrealized_pnl)}
           </strong>
           <span className="fact-sub">

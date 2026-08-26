@@ -2,7 +2,8 @@
  * Стили утверждённого дизайна Open Design, проект «Портфель FINANCIAL AI».
  *
  * Файл перенесён из артефакта `financial-ai-portfolio.html` как есть: это
- * источник истины по композиции, типографике и цветовым токенам (FR-017).
+ * источник истины по композиции, типографике и цветовым токенам (FR-017,
+ * Принцип VIII Constitution).
  *
  * Менять оформление здесь НЕ следует — сначала правится дизайн в Open Design,
  * затем изменение переносится сюда. Разметка компонентов повторяет структуру
@@ -17,6 +18,7 @@
   --border: oklch(0.9229 0.0098 252.81);
   --accent: oklch(0.604 0.2045 261.07);
   --positive: oklch(0.527 0.141 148.39);
+  --negative: oklch(0.56 0.21 28);
   --font-display:
     'Google Sans Flex', 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-body:
@@ -33,8 +35,11 @@
   box-sizing: border-box;
 }
 
+/* Общий масштаб интерфейса: дизайн свёрстан в px, поэтому увеличение
+   задаётся зумом корня, а не пересчётом каждого размера. */
 html {
   color-scheme: light;
+  zoom: 1.1;
 }
 
 body {
@@ -286,8 +291,8 @@ button:focus-visible,
   outline: 0;
 }
 .interval-input[aria-invalid='true'] {
-  border-color: var(--fg);
-  box-shadow: inset 0 -2px 0 var(--fg);
+  border-color: var(--negative);
+  box-shadow: inset 0 -2px 0 var(--negative);
 }
 .interval-unit {
   position: absolute;
@@ -321,7 +326,7 @@ button:focus-visible,
   font-weight: 500;
 }
 .field-error {
-  color: var(--fg);
+  color: var(--negative);
   font-weight: 560;
 }
 .field-error[hidden] {
@@ -458,6 +463,15 @@ h2 {
   }
 }
 
+.banner.broker-error {
+  border-color: color-mix(in oklch, var(--negative) 42%, var(--border));
+  background: color-mix(in oklch, var(--negative) 7%, var(--bg));
+}
+.banner.broker-error svg,
+.banner.broker-error .banner-copy strong {
+  color: var(--negative);
+}
+
 .capital-strip {
   display: grid;
   grid-template-columns: minmax(330px, 0.9fr) minmax(560px, 1.45fr);
@@ -532,6 +546,9 @@ h2 {
 .fact-value.positive {
   color: var(--positive);
 }
+.fact-value.negative {
+  color: var(--negative);
+}
 .fact-sub {
   display: block;
   margin-top: 9px;
@@ -541,6 +558,7 @@ h2 {
 
 .positions-section {
   min-width: 0;
+  padding-bottom: 24px;
 }
 
 .section-toolbar {
@@ -557,17 +575,88 @@ h2 {
   gap: 10px;
 }
 .position-count {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.freshness {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.01em;
+}
+.table-toolbar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.table-highlight-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+  user-select: none;
+}
+.highlight-copy {
+  display: grid;
+  gap: 1px;
   text-align: right;
+}
+.highlight-copy strong {
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0.02em;
+}
+.highlight-copy span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.highlight-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.highlight-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+.highlight-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  content: '';
+  transition:
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+.highlight-input:checked + .highlight-track {
+  border-color: var(--fg);
+  background: var(--fg);
+}
+.highlight-input:checked + .highlight-track::after {
+  background: var(--bg);
+  transform: translateX(16px);
+}
+.highlight-input:focus-visible + .highlight-track {
+  outline: 3px solid color-mix(in oklch, var(--accent) 38%, transparent);
+  outline-offset: 2px;
 }
 
 .table-frame {
@@ -670,6 +759,18 @@ tbody tr {
 tbody tr:hover {
   background: var(--surface);
 }
+tbody tr.pnl-highlight-positive {
+  background: color-mix(in oklab, var(--positive) 9%, var(--bg));
+}
+tbody tr.pnl-highlight-positive:hover {
+  background: color-mix(in oklab, var(--positive) 13%, var(--bg));
+}
+tbody tr.pnl-highlight-negative {
+  background: color-mix(in oklab, var(--negative) 8%, var(--bg));
+}
+tbody tr.pnl-highlight-negative:hover {
+  background: color-mix(in oklab, var(--negative) 12%, var(--bg));
+}
 
 .instrument-cell {
   font-family: var(--font-body);
@@ -689,7 +790,7 @@ tbody tr:hover {
   color: var(--positive);
 }
 .pnl-negative {
-  color: var(--fg);
+  color: var(--negative);
 }
 
 .weight-cell {
@@ -714,11 +815,102 @@ tbody tr:hover {
 }
 
 .table-footnote {
-  max-width: 65ch;
-  margin: 14px 0 0;
+  max-width: none;
+  margin: 0;
+  padding: 4px 0 24px;
   color: var(--muted);
   font-size: 12px;
   letter-spacing: 0.01em;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+}
+.pagination[hidden] {
+  display: none;
+}
+.pagination-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.page-size-control {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.page-size-select {
+  min-width: 68px;
+  height: 44px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.page-size-select:hover {
+  background: var(--surface);
+}
+.page-size-select:focus {
+  border-color: var(--fg);
+  outline: 0;
+}
+.pagination-page {
+  display: inline-flex;
+  min-width: 48px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pagination-actions {
+  display: flex;
+  gap: 6px;
+}
+.pagination-button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+}
+.pagination-button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.pagination-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.42;
+}
+.pagination-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .state-panel {
@@ -964,8 +1156,11 @@ tbody tr:hover {
   .section-toolbar {
     display: block;
   }
-  .freshness {
-    margin-top: 8px;
+  .table-toolbar-meta {
+    justify-content: flex-start;
+    margin-top: 10px;
+  }
+  .highlight-copy {
     text-align: left;
   }
   .table-frame {
@@ -1039,6 +1234,17 @@ tbody tr:hover {
     padding: 0;
     justify-content: flex-start;
     text-align: left;
+  }
+  .pagination {
+    padding: 12px 0 4px;
+  }
+  .pagination-inner {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .table-footnote {
+    max-width: 65ch;
+    white-space: normal;
   }
   .toast {
     right: 16px;

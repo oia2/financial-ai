@@ -4,10 +4,9 @@ import {
   type PortfolioDto,
   type PortfolioViewState,
 } from '@/entities/portfolio';
-import { formatTime } from '@/shared/lib/format';
 import { AppHeader } from '@/widgets/app-header/AppHeader';
 import { CapitalStrip } from '@/widgets/capital-strip/CapitalStrip';
-import { PositionsTable } from '@/widgets/positions-table/PositionsTable';
+import { PositionsSection } from '@/widgets/positions-table/PositionsSection';
 import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner';
 
 /**
@@ -149,28 +148,7 @@ function PortfolioBody({
     <section>
       <CapitalStrip snapshot={data.snapshot} sync={data.sync} />
 
-      <section className="positions-section">
-        <div className="section-toolbar">
-          <div className="section-title-line">
-            <h2>Позиции</h2>
-            <span className="position-count">{data.snapshot.positions_count}</span>
-          </div>
-          <span className="freshness">
-            {data.sync.last_success_at === null
-              ? 'Синхронизации ещё не было'
-              : `Последняя синхронизация ${formatTime(data.sync.last_success_at)}`}
-          </span>
-        </div>
-
-        <PositionsTable positions={data.snapshot.positions} />
-
-        {data.snapshot.positions.length === 0 ? null : (
-          <p className="table-footnote">
-            Стоимость и P&amp;L рассчитаны по последним данным брокера. У облигаций стоимость
-            включает накопленный купонный доход.
-          </p>
-        )}
-      </section>
+      <PositionsSection positions={data.snapshot.positions} />
     </section>
   );
 }

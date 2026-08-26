@@ -169,3 +169,30 @@ describe('точность значений', () => {
     );
   });
 });
+
+describe('цветовая семантика P&L', () => {
+  it('положительный P&L окрашен в цвет прибыли', async () => {
+    renderPage();
+
+    const value = await screen.findByText(/\+4\s?590,00/);
+    expect(value).toHaveClass('fact-value', 'positive');
+  });
+
+  it('отрицательный P&L окрашен в цвет убытка', async () => {
+    const fixture = portfolioFixture();
+    respondWith(
+      portfolioFixture({
+        snapshot: {
+          ...fixture.snapshot!,
+          unrealized_pnl: '-4590.000000000',
+          unrealized_pnl_percent: '-0.0129',
+        },
+      }),
+    );
+
+    renderPage();
+
+    const value = await screen.findByText(/−4\s?590,00/);
+    expect(value).toHaveClass('fact-value', 'negative');
+  });
+});

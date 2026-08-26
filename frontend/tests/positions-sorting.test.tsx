@@ -10,7 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import type { PositionDto } from '@/entities/portfolio';
-import { PositionsTable } from '@/widgets/positions-table/PositionsTable';
+import { PositionsSection } from '@/widgets/positions-table/PositionsSection';
 
 function position(overrides: Partial<PositionDto> & { instrument_uid: string }): PositionDto {
   return {
@@ -55,20 +55,20 @@ async function clickHeader(name: RegExp) {
 
 describe('сортировка позиций', () => {
   it('по умолчанию сортирует по убыванию доли', () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     expect(rowOrder()).toEqual(['BBB', 'CCC', 'AAA']);
   });
 
   it('показывает направление сортировки', () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     const shareHeader = screen.getByRole('columnheader', { name: /Доля/ });
     expect(shareHeader).toHaveAttribute('aria-sort', 'descending');
   });
 
   it('переключает направление при повторном выборе столбца', async () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     await clickHeader(/Доля/);
 
@@ -80,7 +80,7 @@ describe('сортировка позиций', () => {
   });
 
   it('сортирует по стоимости без потери точности на больших значениях', async () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     await clickHeader(/Стоимость/);
 
@@ -89,7 +89,7 @@ describe('сортировка позиций', () => {
   });
 
   it('сортирует по инструменту', async () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     await clickHeader(/Инструмент/);
 
@@ -97,7 +97,7 @@ describe('сортировка позиций', () => {
   });
 
   it('учитывает знак при сортировке по P&L', async () => {
-    render(<PositionsTable positions={positions} />);
+    render(<PositionsSection positions={positions} />);
 
     await clickHeader(/P&L/);
 
@@ -111,7 +111,7 @@ describe('сортировка позиций', () => {
       position({ instrument_uid: 'bbb', quantity: '100', current_price: '10' }),
     ];
 
-    render(<PositionsTable positions={varied} />);
+    render(<PositionsSection positions={varied} />);
 
     await clickHeader(/Количество/);
     expect(rowOrder()).toEqual(['AAA', 'BBB']);
@@ -121,7 +121,7 @@ describe('сортировка позиций', () => {
   });
 
   it('показывает пустое состояние без таблицы', () => {
-    render(<PositionsTable positions={[]} />);
+    render(<PositionsSection positions={[]} />);
 
     expect(screen.getByText('В портфеле пока нет позиций')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
@@ -131,7 +131,7 @@ describe('сортировка позиций', () => {
 describe('облигации с НКД', () => {
   it('поясняет, что стоимость включает накопленный купонный доход', () => {
     render(
-      <PositionsTable
+      <PositionsSection
         positions={[
           position({
             instrument_uid: 'ofz',
@@ -148,7 +148,7 @@ describe('облигации с НКД', () => {
   });
 
   it('не показывает пояснение у обычных позиций', () => {
-    render(<PositionsTable positions={[position({ instrument_uid: 'sber' })]} />);
+    render(<PositionsSection positions={[position({ instrument_uid: 'sber' })]} />);
 
     expect(screen.queryByText(/вкл\. НКД/)).not.toBeInTheDocument();
   });
