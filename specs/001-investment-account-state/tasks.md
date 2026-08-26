@@ -93,25 +93,29 @@ T-Bank: общую стоимость, денежные средства с до
 
 - [ ] T021 [P] [US1] Контрактный тест `GET /api/portfolio` в `backend/tests/contract/test_portfolio_get.py`: структура ответа по [contracts/backend-api.md](./contracts/backend-api.md), денежные значения — строки, `snapshot: null` при отсутствии синхронизации
 - [ ] T022 [P] [US1] Unit-тесты доменных расчётов в `backend/tests/unit/test_portfolio_calc.py`: доли позиций и денежных средств, % P&L, граничные случаи из спеки — `total_value = 0`, нулевая база P&L (`null`, а не ложный ноль), отрицательное количество, отсутствующая `average_price`
-- [ ] T023 [P] [US1] Интеграционный тест синхронизации в `backend/tests/integration/test_sync_success.py`: успешный ответ фейкового брокера → атомарная запись `account_state` + `portfolio_position` + `broker_sync_state` в одной транзакции (FR-008)
-- [ ] T024 [P] [US1] Тест страницы портфеля в `frontend/tests/portfolio-page.test.tsx` с msw: отображение сводных показателей, таблицы позиций, возраста данных и времени последней синхронизации
+- [ ] T023 [P] [US1] Unit-тесты маппинга T-Invest в `backend/tests/unit/test_tinvest_mapping.py`: перевод `Quotation` и `MoneyValue` (`units` + `nano`) в `Decimal` на граничных значениях — нулевые, отрицательные, максимальные `nano`, длинная дробная часть; ожидаемые значения задаются как `Decimal`, сравнение с `float` запрещено (SC-002)
+- [ ] T024 [P] [US1] Unit-тесты валидации ответа брокера в `backend/tests/unit/test_broker_validation.py`: несогласованные суммы, отсутствующие обязательные поля и пустой ответ отклоняются до записи в БД (FR-004)
+- [ ] T025 [P] [US1] Unit-тесты сериализации в `backend/tests/unit/test_schema_serialization.py`: `Decimal` отдаётся строкой без потери точности и без экспоненциальной записи; процентные поля отдают `null`, а не ложный ноль, при нулевой базе
+- [ ] T026 [P] [US1] Unit-тесты форматирования в `frontend/tests/format.test.ts`: разделители разрядов русской локали, округление до копеек только при отображении, знак P&L, разбор строковых чисел из API без потери точности (FR-016)
+- [ ] T027 [P] [US1] Интеграционный тест синхронизации в `backend/tests/integration/test_sync_success.py`: успешный ответ фейкового брокера → атомарная запись `account_state` + `portfolio_position` + `broker_sync_state` в одной транзакции (FR-008)
+- [ ] T028 [P] [US1] Тест страницы портфеля в `frontend/tests/portfolio-page.test.tsx` с msw: отображение сводных показателей, таблицы позиций, возраста данных и времени последней синхронизации
 
 ### Implementation for User Story 1
 
-- [ ] T025 [P] [US1] Реализовать `backend/src/financial_ai/domain/models.py`: доменные модели счёта, снимка и позиции на `Decimal`, без `float`
-- [ ] T026 [US1] Реализовать `backend/src/financial_ai/domain/portfolio.py`: расчёт долей, стоимости, абсолютного и процентного P&L, `positions_cost_basis`, возраста данных — по правилам [data-model.md §9](./data-model.md)
-- [ ] T027 [P] [US1] Реализовать `backend/src/financial_ai/broker/protocol.py`: протокол брокер-адаптера (получение счёта и портфеля) и фейковая реализация в `backend/tests/fakes/fake_broker.py` для тестов
-- [ ] T028 [US1] Реализовать `backend/src/financial_ai/broker/tinvest.py`: адаптер `t_tech.invest.AsyncClient` → доменные модели, перевод `Quotation`/`MoneyValue` (`units` + `nano`) в `Decimal` как `units + nano / 1_000_000_000`, маскирование номера договора, выбор единственного счёта (FR-025)
-- [ ] T029 [US1] Реализовать `backend/src/financial_ai/sync/service.py`: `sync_account_state()` — получение состояния, валидация полноты и согласованности (FR-004), атомарная запись по транзакции из [data-model.md §7](./data-model.md)
-- [ ] T030 [US1] Реализовать `backend/src/financial_ai/sync/cli.py`: одноразовый запуск синхронизации (`python -m financial_ai.sync.cli`) — точка независимой проверки этой story до появления планировщика
-- [ ] T031 [US1] Реализовать `backend/src/financial_ai/api/schemas.py`: Pydantic-схемы ответа `GET /api/portfolio`, сериализация `Decimal` в строку, `Cache-Control: no-store`
-- [ ] T032 [US1] Реализовать `backend/src/financial_ai/api/routes/portfolio.py`: `GET /api/portfolio` — чтение сохранённого состояния, сборка блоков `broker`, `snapshot`, `sync` без обращения к брокеру
-- [ ] T033 [P] [US1] Реализовать `frontend/src/entities/portfolio/`: типы ответа API, `usePortfolioQuery`, селекторы состояния раздела
-- [ ] T034 [P] [US1] Реализовать `frontend/src/shared/lib/format.ts`: форматирование денег, количеств и процентов под русскую локаль с разделителями разрядов (FR-016), округление до копеек только при отображении
-- [ ] T035 [US1] Реализовать `frontend/src/widgets/portfolio-summary/`: общая стоимость, денежные средства с долей, P&L в рублях и процентах с визуальным различением знака (FR-013), количество позиций
-- [ ] T036 [US1] Реализовать `frontend/src/widgets/positions-table/`: таблица позиций со столбцами инструмент, количество, средняя цена, текущая цена, стоимость, P&L, доля; отображение по `instrument_uid` при отсутствии тикера и названия
-- [ ] T037 [US1] Реализовать `frontend/src/widgets/freshness/`: возраст данных и точное время последней успешной синхронизации (FR-014)
-- [ ] T038 [US1] Реализовать `frontend/src/pages/portfolio/`: сборка экрана и состояния «загрузка» и «портфель пуст» по утверждённому дизайну
+- [ ] T029 [P] [US1] Реализовать `backend/src/financial_ai/domain/models.py`: доменные модели счёта, снимка и позиции на `Decimal`, без `float`
+- [ ] T030 [US1] Реализовать `backend/src/financial_ai/domain/portfolio.py`: расчёт долей, стоимости, абсолютного и процентного P&L, `positions_cost_basis`, возраста данных — по правилам [data-model.md §9](./data-model.md)
+- [ ] T031 [P] [US1] Реализовать `backend/src/financial_ai/broker/protocol.py`: протокол брокер-адаптера (получение счёта и портфеля) и фейковая реализация в `backend/tests/fakes/fake_broker.py` для тестов
+- [ ] T032 [US1] Реализовать `backend/src/financial_ai/broker/tinvest.py`: адаптер `t_tech.invest.AsyncClient` → доменные модели, перевод `Quotation`/`MoneyValue` (`units` + `nano`) в `Decimal` как `units + nano / 1_000_000_000`, маскирование номера договора, выбор единственного счёта (FR-025)
+- [ ] T033 [US1] Реализовать `backend/src/financial_ai/sync/service.py`: `sync_account_state()` — получение состояния, валидация полноты и согласованности (FR-004), атомарная запись по транзакции из [data-model.md §7](./data-model.md)
+- [ ] T034 [US1] Реализовать `backend/src/financial_ai/sync/cli.py`: одноразовый запуск синхронизации (`python -m financial_ai.sync.cli`) — точка независимой проверки этой story до появления планировщика
+- [ ] T035 [US1] Реализовать `backend/src/financial_ai/api/schemas.py`: Pydantic-схемы ответа `GET /api/portfolio`, сериализация `Decimal` в строку, `Cache-Control: no-store`
+- [ ] T036 [US1] Реализовать `backend/src/financial_ai/api/routes/portfolio.py`: `GET /api/portfolio` — чтение сохранённого состояния, сборка блоков `broker`, `snapshot`, `sync` без обращения к брокеру
+- [ ] T037 [P] [US1] Реализовать `frontend/src/entities/portfolio/`: типы ответа API, `usePortfolioQuery`, селекторы состояния раздела
+- [ ] T038 [P] [US1] Реализовать `frontend/src/shared/lib/format.ts`: форматирование денег, количеств и процентов под русскую локаль с разделителями разрядов (FR-016), округление до копеек только при отображении
+- [ ] T039 [US1] Реализовать `frontend/src/widgets/portfolio-summary/`: общая стоимость, денежные средства с долей, P&L в рублях и процентах с визуальным различением знака (FR-013), количество позиций
+- [ ] T040 [US1] Реализовать `frontend/src/widgets/positions-table/`: таблица позиций со столбцами инструмент, количество, средняя цена, текущая цена, стоимость, P&L, доля; отображение по `instrument_uid` при отсутствии тикера и названия
+- [ ] T041 [US1] Реализовать `frontend/src/widgets/freshness/`: возраст данных и точное время последней успешной синхронизации (FR-014)
+- [ ] T042 [US1] Реализовать `frontend/src/pages/portfolio/`: сборка экрана и состояния «загрузка» и «портфель пуст» по утверждённому дизайну
 
 **Checkpoint**: US1 полностью работоспособна — состояние счёта читается из T-Bank, сохраняется и корректно отображается. MVP готов к демонстрации.
 
@@ -128,22 +132,23 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T039 [P] [US2] Контрактные тесты настройки в `backend/tests/contract/test_settings.py`: `GET`/`PUT /api/settings/refresh-interval`, границы 15–3600, ответ `422 interval_out_of_range` и сохранение прежнего значения при недопустимом вводе
-- [ ] T040 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_interval.py`: изменение `interval_seconds` в БД применяется к следующему циклу без перезапуска (SC-012)
-- [ ] T041 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_resilience.py`: циклы не накладываются и не накапливаются (FR-033), цикл продолжается после ошибки брокера (FR-032)
-- [ ] T042 [P] [US2] Тест настройки интервала в `frontend/tests/refresh-interval.test.tsx`: ввод вне диапазона отклоняется с объяснением, прежний интервал продолжает действовать, допустимое значение сохраняется
+- [ ] T043 [P] [US2] Контрактные тесты настройки в `backend/tests/contract/test_settings.py`: `GET`/`PUT /api/settings/refresh-interval`, границы 15–3600, ответ `422 interval_out_of_range` и сохранение прежнего значения при недопустимом вводе
+- [ ] T044 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_interval.py`: изменение `interval_seconds` в БД применяется к следующему циклу без перезапуска (SC-012)
+- [ ] T045 [P] [US2] Интеграционный тест в `backend/tests/integration/test_scheduler_resilience.py`: циклы не накладываются и не накапливаются (FR-033), цикл продолжается после ошибки брокера (FR-032)
+- [ ] T046 [P] [US2] Тест настройки интервала в `frontend/tests/refresh-interval.test.tsx`: ввод вне диапазона отклоняется с объяснением, прежний интервал продолжает действовать, допустимое значение сохраняется
+- [ ] T047 [P] [US2] Unit-тест poll-интервала в `frontend/tests/poll-interval.test.ts`: `clamp(refresh_interval_seconds / 10, 3 c, 30 c)` на границах диапазона 15–3600 и при промежуточных значениях (research §6)
 
 ### Implementation for User Story 2
 
-- [ ] T043 [P] [US2] Реализовать `backend/src/financial_ai/db/settings_repo.py`: чтение и обновление `account_refresh_settings` с проверкой диапазона
-- [ ] T044 [US2] Реализовать `backend/src/financial_ai/api/routes/settings.py`: `GET`/`PUT /api/settings/refresh-interval`, возврат границ `min_seconds`/`max_seconds`/`default_seconds`, ошибка `interval_out_of_range`
-- [ ] T045 [US2] Реализовать `backend/src/financial_ai/sync/lock.py`: `asyncio.Lock` вокруг `sync_account_state()`, исключающий параллельные фоновые обращения к брокеру
-- [ ] T046 [US2] Реализовать `backend/src/financial_ai/sync/scheduler.py`: asyncio-цикл — чтение интервала из БД в начале каждого цикла, вызов синхронизации под локом, ожидание с возможностью корректной остановки
-- [ ] T047 [US2] Подключить планировщик в `backend/src/financial_ai/worker/app.py`: запуск в lifespan startup, остановка с дожиданием текущей синхронизации в shutdown; отражение состояния в `GET /internal/health` (`scheduler`, `current_interval_seconds`)
-- [ ] T048 [P] [US2] Реализовать `frontend/src/features/refresh-interval-setting/`: форма ввода целого числа секунд с подсказкой диапазона, валидацией и сообщением об ошибке, мутация `PUT /api/settings/refresh-interval`
-- [ ] T049 [US2] Настроить polling в `frontend/src/entities/portfolio/`: `refetchInterval = clamp(refresh_interval_seconds / 10, 3 c, 30 c)` от значения, пришедшего в ответе API (research §6)
-- [ ] T050 [US2] Отобразить действующий интервал в `frontend/src/widgets/account-menu/` и в шапке раздела (FR-036)
-- [ ] T051 [US2] Обеспечить в `frontend/src/widgets/positions-table/` сохранение выбранной сортировки и позиции прокрутки при фоновом обновлении данных (US2 AS2)
+- [ ] T048 [P] [US2] Реализовать `backend/src/financial_ai/db/settings_repo.py`: чтение и обновление `account_refresh_settings` с проверкой диапазона
+- [ ] T049 [US2] Реализовать `backend/src/financial_ai/api/routes/settings.py`: `GET`/`PUT /api/settings/refresh-interval`, возврат границ `min_seconds`/`max_seconds`/`default_seconds`, ошибка `interval_out_of_range`
+- [ ] T050 [US2] Реализовать `backend/src/financial_ai/sync/lock.py`: `asyncio.Lock` вокруг `sync_account_state()`, исключающий параллельные фоновые обращения к брокеру
+- [ ] T051 [US2] Реализовать `backend/src/financial_ai/sync/scheduler.py`: asyncio-цикл — чтение интервала из БД в начале каждого цикла, вызов синхронизации под локом, ожидание с возможностью корректной остановки
+- [ ] T052 [US2] Подключить планировщик в `backend/src/financial_ai/worker/app.py`: запуск в lifespan startup, остановка с дожиданием текущей синхронизации в shutdown; отражение состояния в `GET /internal/health` (`scheduler`, `current_interval_seconds`)
+- [ ] T053 [P] [US2] Реализовать `frontend/src/features/refresh-interval-setting/`: форма ввода целого числа секунд с подсказкой диапазона, валидацией и сообщением об ошибке, мутация `PUT /api/settings/refresh-interval`
+- [ ] T054 [US2] Настроить polling в `frontend/src/entities/portfolio/`: `refetchInterval = clamp(refresh_interval_seconds / 10, 3 c, 30 c)` от значения, пришедшего в ответе API (research §6)
+- [ ] T055 [US2] Отобразить действующий интервал в `frontend/src/widgets/account-menu/` и в шапке раздела (FR-036)
+- [ ] T056 [US2] Обеспечить в `frontend/src/widgets/positions-table/` сохранение выбранной сортировки и позиции прокрутки при фоновом обновлении данных (US2 AS2)
 
 **Checkpoint**: US1 и US2 работают независимо — данные обновляются сами, частота настраивается
 
@@ -160,18 +165,18 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T052 [P] [US3] Контрактный тест `POST /api/portfolio/refresh` в `backend/tests/contract/test_portfolio_refresh.py`: успех, `status: failed` при ошибке брокера, `503 worker_unavailable` при недоступном worker'е
-- [ ] T053 [P] [US3] Контрактный тест `POST /internal/sync` в `backend/tests/contract/test_worker_sync.py`: 200 с `status: failed` вместо 5xx при ошибке брокера, поля `deduplicated` и `duration_ms`
-- [ ] T054 [P] [US3] Интеграционный тест в `backend/tests/integration/test_sync_dedup.py`: одновременные ручная и фоновая синхронизации → ровно одно обращение к брокеру, второй запрос получает результат первого (FR-029)
-- [ ] T055 [P] [US3] Тест кнопки обновления в `frontend/tests/refresh-now.test.tsx`: индикация загрузки, обновлённые значения и отметка времени, блокировка повторного запуска до завершения
+- [ ] T057 [P] [US3] Контрактный тест `POST /api/portfolio/refresh` в `backend/tests/contract/test_portfolio_refresh.py`: успех, `status: failed` при ошибке брокера, `503 worker_unavailable` при недоступном worker'е
+- [ ] T058 [P] [US3] Контрактный тест `POST /internal/sync` в `backend/tests/contract/test_worker_sync.py`: 200 с `status: failed` вместо 5xx при ошибке брокера, поля `deduplicated` и `duration_ms`
+- [ ] T059 [P] [US3] Интеграционный тест в `backend/tests/integration/test_sync_dedup.py`: одновременные ручная и фоновая синхронизации → ровно одно обращение к брокеру, второй запрос получает результат первого (FR-029)
+- [ ] T060 [P] [US3] Тест кнопки обновления в `frontend/tests/refresh-now.test.tsx`: индикация загрузки, обновлённые значения и отметка времени, блокировка повторного запуска до завершения
 
 ### Implementation for User Story 3
 
-- [ ] T056 [US3] Реализовать `backend/src/financial_ai/worker/routes/sync.py`: `POST /internal/sync` — вызов той же `sync_account_state()`, что использует планировщик, ответ по [contracts/worker-internal-api.md](./contracts/worker-internal-api.md)
-- [ ] T057 [US3] Дополнить `backend/src/financial_ai/sync/lock.py`: PostgreSQL advisory lock поверх `asyncio.Lock` и семантика `deduplicated` — ожидание текущей операции вместо второго обращения к брокеру, ограниченное таймаутом
-- [ ] T058 [US3] Реализовать `POST /api/portfolio/refresh` в `backend/src/financial_ai/api/routes/portfolio.py`: httpx-вызов `WORKER_INTERNAL_URL`, трансляция результата, `503 worker_unavailable` при недоступности worker'а
-- [ ] T059 [P] [US3] Реализовать `frontend/src/features/refresh-now/`: кнопка «Обновить сейчас», индикация выполнения, защита от повторного запуска, инвалидация query после завершения
-- [ ] T060 [US3] Добавить подтверждение успешного обновления в `frontend/src/shared/ui/toast/` и подключить его к сценарию ручного обновления (US3 AS2)
+- [ ] T061 [US3] Реализовать `backend/src/financial_ai/worker/routes/sync.py`: `POST /internal/sync` — вызов той же `sync_account_state()`, что использует планировщик, ответ по [contracts/worker-internal-api.md](./contracts/worker-internal-api.md)
+- [ ] T062 [US3] Дополнить `backend/src/financial_ai/sync/lock.py`: PostgreSQL advisory lock поверх `asyncio.Lock` и семантика `deduplicated` — ожидание текущей операции вместо второго обращения к брокеру, ограниченное таймаутом
+- [ ] T063 [US3] Реализовать `POST /api/portfolio/refresh` в `backend/src/financial_ai/api/routes/portfolio.py`: httpx-вызов `WORKER_INTERNAL_URL`, трансляция результата, `503 worker_unavailable` при недоступности worker'а
+- [ ] T064 [P] [US3] Реализовать `frontend/src/features/refresh-now/`: кнопка «Обновить сейчас», индикация выполнения, защита от повторного запуска, инвалидация query после завершения
+- [ ] T065 [US3] Добавить подтверждение успешного обновления в `frontend/src/shared/ui/toast/` и подключить его к сценарию ручного обновления (US3 AS2)
 
 **Checkpoint**: US1–US3 работают независимо; автоматическое и ручное обновление используют один код синхронизации
 
@@ -188,21 +193,21 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T061 [P] [US4] Unit-тесты классификации ошибок в `backend/tests/unit/test_broker_errors.py`: `broker_unavailable`, `broker_rejected_token`, `rate_limited`, `validation_failed`, `internal_error`
-- [ ] T062 [P] [US4] Интеграционный тест в `backend/tests/integration/test_sync_failure.py`: неуспешная синхронизация обновляет только `broker_sync_state`, сохранённое состояние и позиции не изменяются (FR-008, US4 AS3)
-- [ ] T063 [P] [US4] Unit-тест `is_stale` в `backend/tests/unit/test_staleness.py`: порог `max(3 × интервал, 180 с)` по FR-040, отсутствие снимка не считается устареванием
-- [ ] T064 [P] [US4] Тесты состояний в `frontend/tests/sync-states.test.tsx`: три различимых предупреждения (устаревание, сбой брокера, нет связи с сервером), автоматическое снятие предупреждения после восстановления (FR-039, SC-011)
-- [ ] T065 [P] [US4] Тест в `backend/tests/integration/test_no_secret_leak.py`: значение токена не появляется в ответах API, логах и сообщениях об ошибках при всех классах сбоев (SC-009)
+- [ ] T066 [P] [US4] Unit-тесты классификации ошибок в `backend/tests/unit/test_broker_errors.py`: `broker_unavailable`, `broker_rejected_token`, `rate_limited`, `validation_failed`, `internal_error`
+- [ ] T067 [P] [US4] Интеграционный тест в `backend/tests/integration/test_sync_failure.py`: неуспешная синхронизация обновляет только `broker_sync_state`, сохранённое состояние и позиции не изменяются (FR-008, US4 AS3)
+- [ ] T068 [P] [US4] Unit-тест `is_stale` в `backend/tests/unit/test_staleness.py`: порог `max(3 × интервал, 180 с)` по FR-040, отсутствие снимка не считается устареванием
+- [ ] T069 [P] [US4] Тесты состояний в `frontend/tests/sync-states.test.tsx`: три различимых предупреждения (устаревание, сбой брокера, нет связи с сервером), автоматическое снятие предупреждения после восстановления (FR-039, SC-011)
+- [ ] T070 [P] [US4] Тест в `backend/tests/integration/test_no_secret_leak.py`: значение токена не появляется в ответах API, логах и сообщениях об ошибках при всех классах сбоев (SC-009)
 
 ### Implementation for User Story 4
 
-- [ ] T066 [US4] Реализовать `backend/src/financial_ai/broker/errors.py`: классификация исключений SDK и сетевых ошибок в коды `failure_reason_code`, санитизация диагностики
-- [ ] T067 [US4] Дополнить `backend/src/financial_ai/sync/service.py`: транзакция неуспеха по [data-model.md §8](./data-model.md) — обновление статуса, причины, `consecutive_failures`, перевод `broker_status` в `rejected` при отклонённом токене; `not_configured` при отсутствующем токене
-- [ ] T068 [US4] Дополнить `backend/src/financial_ai/api/routes/portfolio.py` и `schemas.py`: блоки `broker.status`, `sync.status`, `sync.failure_reason_code`, `sync.is_stale`, `sync.stale_after_seconds`, `sync.in_progress`
-- [ ] T069 [P] [US4] Реализовать `frontend/src/widgets/sync-status-banner/`: варианты «Данные временно устарели», «Не удалось обновить портфель» и «Нет связи с сервером Financial AI» по утверждённому дизайну, с действием повтора
-- [ ] T070 [US4] Реализовать в `frontend/src/entities/portfolio/` и `frontend/src/shared/api/client.ts` обработку транспортной ошибки: состояние «нет связи с сервером», автоматические повторы подключения, немедленный повтор по действию пользователя, автоматическое снятие после восстановления (FR-038, FR-039)
-- [ ] T071 [US4] Реализовать в `frontend/src/pages/portfolio/` состояние «Брокер не подключён» для `broker.status` `not_configured` и `rejected`: пояснение о несконфигурированном доступе без раскрытия токена (FR-020, FR-024)
-- [ ] T072 [US4] Подключить логирование причин неуспешной синхронизации в `backend/src/financial_ai/sync/service.py` через фильтр секретов из `logging.py` (FR-030)
+- [ ] T071 [US4] Реализовать `backend/src/financial_ai/broker/errors.py`: классификация исключений SDK и сетевых ошибок в коды `failure_reason_code`, санитизация диагностики
+- [ ] T072 [US4] Дополнить `backend/src/financial_ai/sync/service.py`: транзакция неуспеха по [data-model.md §8](./data-model.md) — обновление статуса, причины, `consecutive_failures`, перевод `broker_status` в `rejected` при отклонённом токене; `not_configured` при отсутствующем токене
+- [ ] T073 [US4] Дополнить `backend/src/financial_ai/api/routes/portfolio.py` и `schemas.py`: блоки `broker.status`, `sync.status`, `sync.failure_reason_code`, `sync.is_stale`, `sync.stale_after_seconds`, `sync.in_progress`
+- [ ] T074 [P] [US4] Реализовать `frontend/src/widgets/sync-status-banner/`: варианты «Данные временно устарели», «Не удалось обновить портфель» и «Нет связи с сервером Financial AI» по утверждённому дизайну, с действием повтора
+- [ ] T075 [US4] Реализовать в `frontend/src/entities/portfolio/` и `frontend/src/shared/api/client.ts` обработку транспортной ошибки: состояние «нет связи с сервером», автоматические повторы подключения, немедленный повтор по действию пользователя, автоматическое снятие после восстановления (FR-038, FR-039)
+- [ ] T076 [US4] Реализовать в `frontend/src/pages/portfolio/` состояние «Брокер не подключён» для `broker.status` `not_configured` и `rejected`: пояснение о несконфигурированном доступе без раскрытия токена (FR-020, FR-024)
+- [ ] T077 [US4] Подключить логирование причин неуспешной синхронизации в `backend/src/financial_ai/sync/service.py` через фильтр секретов из `logging.py` (FR-030)
 
 **Checkpoint**: все причины несвежести данных различимы; сохранённое состояние никогда не затирается сбоем
 
@@ -218,12 +223,12 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T073 [P] [US5] Тест сортировки в `frontend/tests/positions-sorting.test.tsx`: сортировка по каждому столбцу, переключение направления повторным выбором, порядок по умолчанию — убывание доли в портфеле
+- [ ] T078 [P] [US5] Тест сортировки в `frontend/tests/positions-sorting.test.tsx`: сортировка по каждому столбцу, переключение направления повторным выбором, порядок по умолчанию — убывание доли в портфеле
 
 ### Implementation for User Story 5
 
-- [ ] T074 [US5] Подключить TanStack Table в `frontend/src/widgets/positions-table/`: сортировка по всем отображаемым столбцам с переключением направления и индикацией (FR-018)
-- [ ] T075 [US5] Задать сортировку по умолчанию — убывание доли в портфеле — в `frontend/src/widgets/positions-table/`, с корректной обработкой `null` в столбцах P&L и средней цены
+- [ ] T079 [US5] Подключить TanStack Table в `frontend/src/widgets/positions-table/`: сортировка по всем отображаемым столбцам с переключением направления и индикацией (FR-018)
+- [ ] T080 [US5] Задать сортировку по умолчанию — убывание доли в портфеле — в `frontend/src/widgets/positions-table/`, с корректной обработкой `null` в столбцах P&L и средней цены
 
 **Checkpoint**: все пять user stories функционально завершены
 
@@ -233,14 +238,14 @@ T-Bank: общую стоимость, денежные средства с до
 
 **Purpose**: сквозные требования и приёмка
 
-- [ ] T076 [P] Проверить и довести адаптивность раздела в `frontend/src/pages/portfolio/` и `frontend/src/widgets/positions-table/` на мобильных экранах (FR-019)
-- [ ] T077 [P] Измерить и зафиксировать показатели SC-001 (отрисовка < 2 с) и SC-004 (ручное обновление ≤ 5 с), при необходимости оптимизировать запрос в `backend/src/financial_ai/api/routes/portfolio.py`
-- [ ] T078 [P] Провести дизайн-ревью семи состояний раздела против проекта Open Design «Портфель FINANCIAL AI» (SC-007) и зафиксировать результат в `specs/001-investment-account-state/checklists/`
-- [ ] T079 Выполнить все проверочные сценарии из [quickstart.md](./quickstart.md) §4 на поднятом compose и зафиксировать результаты
-- [ ] T080 [P] Выполнить проверку безопасности из [quickstart.md](./quickstart.md) §6: отсутствие токена в логах и ответах, отсутствие полного номера договора, `.env` не отслеживается git (SC-009, FR-022)
-- [ ] T081 [P] Обновить `README.md`: перевести строку «Код» в статусе из «не реализован» в актуальное состояние, сверить команды запуска с фактическими
-- [ ] T082 [P] Устранить расхождение в `AGENTS.md`: добавить `source/Diagramma_koneynerov_FinAI.svg` в репозиторий либо убрать ссылку на отсутствующий файл (Принципы III и V)
-- [ ] T083 Прогнать все quality gates из [quickstart.md](./quickstart.md) §5 до зелёного результата: ruff, mypy, pytest, eslint, prettier, tsc, vitest, `alembic upgrade head` на чистой БД (Принцип IV)
+- [ ] T081 [P] Проверить и довести адаптивность раздела в `frontend/src/pages/portfolio/` и `frontend/src/widgets/positions-table/` на мобильных экранах (FR-019)
+- [ ] T082 [P] Измерить и зафиксировать показатели SC-001 (отрисовка < 2 с) и SC-004 (ручное обновление ≤ 5 с), при необходимости оптимизировать запрос в `backend/src/financial_ai/api/routes/portfolio.py`
+- [ ] T083 [P] Провести дизайн-ревью семи состояний раздела против проекта Open Design «Портфель FINANCIAL AI» (SC-007) и зафиксировать результат в `specs/001-investment-account-state/checklists/`
+- [ ] T084 Выполнить все проверочные сценарии из [quickstart.md](./quickstart.md) §4 на поднятом compose и зафиксировать результаты
+- [ ] T085 [P] Выполнить проверку безопасности из [quickstart.md](./quickstart.md) §6: отсутствие токена в логах и ответах, отсутствие полного номера договора, `.env` не отслеживается git (SC-009, FR-022)
+- [ ] T086 [P] Обновить `README.md`: перевести строку «Код» в статусе из «не реализован» в актуальное состояние, сверить команды запуска с фактическими
+- [ ] T087 [P] Устранить расхождение в `AGENTS.md`: добавить `source/Diagramma_koneynerov_FinAI.svg` в репозиторий либо убрать ссылку на отсутствующий файл (Принципы III и V)
+- [ ] T088 Прогнать все quality gates из [quickstart.md](./quickstart.md) §5 до зелёного результата: ruff, mypy, pytest, eslint, prettier, tsc, vitest, `alembic upgrade head` на чистой БД (Принцип IV)
 
 ---
 
@@ -257,9 +262,9 @@ T-Bank: общую стоимость, денежные средства с до
 
 - **US1 (P1)**: зависит только от Phase 2. Ни от одной другой story не зависит
 - **US2 (P2)**: зависит от Phase 2. Использует `sync_account_state()` из US1 — при параллельной работе синхронизируйтесь по `sync/service.py`
-- **US3 (P2)**: зависит от Phase 2. Использует `sync_account_state()` из US1 и `sync/lock.py` из US2 (T057 расширяет T045)
+- **US3 (P2)**: зависит от Phase 2. Использует `sync_account_state()` из US1 и `sync/lock.py` из US2 (T062 расширяет T050)
 - **US4 (P3)**: зависит от Phase 2. Расширяет `sync/service.py` (US1) и ответ `GET /api/portfolio` (US1); порог устаревания использует интервал из US2
-- **US5 (P3)**: зависит от Phase 2 и таблицы позиций из US1 (T036). Полностью frontend
+- **US5 (P3)**: зависит от Phase 2 и таблицы позиций из US1 (T040). Полностью frontend
 
 Реальный порядок с наименьшим числом конфликтов: **US1 → US2 → US3 → US4 → US5**.
 
@@ -285,8 +290,12 @@ T-Bank: общую стоимость, денежные средства с до
 # Тесты US1 — параллельно:
 Task: "Контрактный тест GET /api/portfolio в backend/tests/contract/test_portfolio_get.py"
 Task: "Unit-тесты доменных расчётов в backend/tests/unit/test_portfolio_calc.py"
+Task: "Unit-тесты маппинга T-Invest в backend/tests/unit/test_tinvest_mapping.py"
+Task: "Unit-тесты валидации ответа брокера в backend/tests/unit/test_broker_validation.py"
+Task: "Unit-тесты сериализации в backend/tests/unit/test_schema_serialization.py"
 Task: "Интеграционный тест синхронизации в backend/tests/integration/test_sync_success.py"
 Task: "Тест страницы портфеля в frontend/tests/portfolio-page.test.tsx"
+Task: "Unit-тесты форматирования в frontend/tests/format.test.ts"
 
 # Независимые модули US1 — параллельно:
 Task: "Доменные модели в backend/src/financial_ai/domain/models.py"
