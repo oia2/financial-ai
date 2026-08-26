@@ -107,6 +107,7 @@ async def save_snapshot(
                 quantity=position.quantity,
                 average_price=position.average_price,
                 current_price=position.current_price,
+                accrued_interest=position.accrued_interest,
                 value=position.value,
                 unrealized_pnl=position.unrealized_pnl,
                 sort_order=order,

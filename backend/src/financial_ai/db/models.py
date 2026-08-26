@@ -124,6 +124,9 @@ class PortfolioPosition(Base):
     quantity: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     average_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     current_price: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    # НКД на одну облигацию; включён в value, но хранится отдельно, чтобы
+    # разницу между «количество × цена» и стоимостью можно было объяснить.
+    accrued_interest: Mapped[Decimal] = mapped_column(MONEY, nullable=False, server_default="0")
     value: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     unrealized_pnl: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 

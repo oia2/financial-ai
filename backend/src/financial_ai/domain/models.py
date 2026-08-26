@@ -40,6 +40,10 @@ class BrokerPosition:
     # None, если брокер не дал цену приобретения (например, внешнее зачисление).
     average_price: Decimal | None
     current_price: Decimal
+    # Накопленный купонный доход на одну облигацию. У остальных инструментов — ноль.
+    # Брокер включает НКД в стоимость позиции, поэтому и мы обязаны его учитывать:
+    # без этого суммы расходятся с итогом брокера (SC-002, SC-003).
+    accrued_interest: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +71,7 @@ class PositionState:
     quantity: Decimal
     average_price: Decimal | None
     current_price: Decimal
+    accrued_interest: Decimal
     value: Decimal
     # None, если неизвестна средняя цена: ложный ноль недопустим.
     unrealized_pnl: Decimal | None

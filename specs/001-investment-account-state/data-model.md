@@ -89,7 +89,8 @@
 | `currency` | `char(3)` | `NOT NULL` | |
 | `quantity` | `numeric(28,9)` | `NOT NULL` | допускает отрицательные значения (короткая позиция) |
 | `average_price` | `numeric(28,9)` | `NULL` | `NULL`, если брокер не дал цену приобретения |
-| `current_price` | `numeric(28,9)` | `NOT NULL` | |
+| `current_price` | `numeric(28,9)` | `NOT NULL` | чистая цена без НКД |
+| `accrued_interest` | `numeric(28,9)` | `NOT NULL DEFAULT 0` | НКД на одну облигацию; включён в `value`, хранится отдельно, чтобы разницу с «количество × цена» можно было объяснить |
 | `value` | `numeric(28,9)` | `NOT NULL` | стоимость позиции |
 | `unrealized_pnl` | `numeric(28,9)` | `NULL` | `NULL`, если неизвестна `average_price` |
 | `sort_order` | `integer` | `NOT NULL` | порядок из ответа брокера, для стабильности вывода |
@@ -215,6 +216,7 @@ COMMIT
 
 | Величина | Формула | Граничный случай |
 |---|---|---|
+| Стоимость позиции | `quantity × (current_price + accrued_interest)` | у необлигаций НКД равен нулю |
 | Доля позиции | `value / total_value` | `total_value = 0` → `0` |
 | Доля денежных средств | `cash / total_value` | `total_value = 0` → `0` |
 | % P&L портфеля | `unrealized_pnl / positions_cost_basis` | база `0` → `null` |

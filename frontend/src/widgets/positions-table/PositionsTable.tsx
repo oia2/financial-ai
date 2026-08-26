@@ -9,7 +9,7 @@ import {
 import { useState } from 'react';
 
 import type { PositionDto } from '@/entities/portfolio';
-import { isNegative, parseDecimal } from '@/shared/lib/decimal';
+import { isNegative, isZero, parseDecimal } from '@/shared/lib/decimal';
 import { formatPercent, formatPrice, formatQuantity, formatSignedMoney } from '@/shared/lib/format';
 
 import './positions-table.css';
@@ -83,7 +83,17 @@ const columns = [
   }),
   columnHelper.accessor('value', {
     header: 'Стоимость',
-    cell: (cell) => formatPrice(cell.getValue()),
+    cell: (cell) => {
+      const withCoupon = !isZero(cell.row.original.accrued_interest);
+      return (
+        <>
+          {formatPrice(cell.getValue())}
+          {/* У облигаций стоимость больше «количество × цена» на накопленный
+              купонный доход — так же считает брокер. */}
+          {withCoupon ? <span className="muted"> (вкл. НКД)</span> : null}
+        </>
+      );
+    },
     sortingFn: decimalSort,
   }),
   columnHelper.accessor('unrealized_pnl', {

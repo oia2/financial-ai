@@ -123,3 +123,42 @@ def test_zero_quantity_position_is_allowed() -> None:
 
     validate_broker_snapshot(snapshot)
     assert Decimal("0") == Decimal(0)
+
+
+def test_bond_with_accrued_interest_reconciles_with_broker_total() -> None:
+    # Без учёта НКД расчётный итог разошёлся бы с брокером на 13 772 ₽
+    # — ровно этот случай и поймала сверка на реальном счёте.
+    snapshot = make_snapshot(
+        cash="840.93",
+        positions=(
+            make_position(
+                instrument_uid="bond",
+                asset_type="bond",
+                quantity="700",
+                current_price="1029.06",
+                accrued_interest="19.674",
+            ),
+        ),
+        broker_total_value="734954.73",
+    )
+
+    validate_broker_snapshot(snapshot)
+
+
+def test_ignoring_accrued_interest_would_be_rejected() -> None:
+    snapshot = make_snapshot(
+        cash="840.93",
+        positions=(
+            make_position(
+                instrument_uid="bond",
+                asset_type="bond",
+                quantity="700",
+                current_price="1029.06",
+                accrued_interest="0",
+            ),
+        ),
+        broker_total_value="734954.73",
+    )
+
+    with pytest.raises(BrokerValidationError):
+        validate_broker_snapshot(snapshot)

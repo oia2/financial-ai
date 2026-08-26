@@ -187,3 +187,42 @@ def test_build_snapshot_preserves_captured_at() -> None:
     )
 
     assert build_snapshot(raw).captured_at == captured
+
+
+def test_bond_value_includes_accrued_interest() -> None:
+    # Брокер включает НКД в стоимость облигации и в итог портфеля.
+    value = position_value(Decimal("700"), Decimal("1029.06"), Decimal("19.674"))
+
+    assert value == Decimal("734113.80")
+
+
+def test_accrued_interest_defaults_to_zero_for_other_instruments() -> None:
+    assert position_value(Decimal("10"), Decimal("100")) == Decimal("1000")
+
+
+def test_snapshot_totals_reconcile_with_bonds() -> None:
+    snapshot = build_snapshot(
+        make_snapshot(
+            cash="840.93",
+            positions=(
+                make_position(
+                    instrument_uid="bond",
+                    asset_type="bond",
+                    quantity="700",
+                    average_price="1000",
+                    current_price="1029.06",
+                    accrued_interest="19.674",
+                ),
+                make_position(
+                    instrument_uid="share", quantity="100", current_price="250", average_price="200"
+                ),
+            ),
+        )
+    )
+
+    bond = next(p for p in snapshot.positions if p.instrument_uid == "bond")
+
+    assert bond.value == Decimal("734113.80")
+    # P&L считается от той же стоимости, что показана пользователю.
+    assert bond.unrealized_pnl == Decimal("734113.80") - Decimal("700000")
+    assert snapshot.total_value == Decimal("734113.80") + Decimal("25000") + Decimal("840.93")

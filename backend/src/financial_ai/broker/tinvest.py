@@ -137,6 +137,9 @@ class TInvestBroker:
             quantity = to_decimal_or_zero(raw.quantity)
             current_price = to_decimal_or_zero(raw.current_price)
             average_price = to_decimal(raw.average_position_price)
+            # У облигаций брокер отдаёт чистую цену отдельно от накопленного
+            # купонного дохода, а в итог портфеля включает и то и другое.
+            accrued_interest = to_decimal_or_zero(getattr(raw, "current_nkd", None))
 
             result.append(
                 BrokerPosition(
@@ -148,6 +151,7 @@ class TInvestBroker:
                     quantity=quantity,
                     average_price=average_price,
                     current_price=current_price,
+                    accrued_interest=accrued_interest,
                 )
             )
 

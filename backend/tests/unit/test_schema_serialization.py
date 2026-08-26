@@ -23,6 +23,7 @@ def _position(**overrides: object) -> PositionOut:
         "quantity": Decimal("1200"),
         "average_price": Decimal("281.4"),
         "current_price": Decimal("301.72"),
+        "accrued_interest": Decimal("0"),
         "value": Decimal("362064"),
         "unrealized_pnl": Decimal("24384"),
         "unrealized_pnl_percent": Decimal("0.0722"),

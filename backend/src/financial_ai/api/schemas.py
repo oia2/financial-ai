@@ -50,6 +50,8 @@ class PositionOut(BaseModel):
     quantity: DecimalStr
     average_price: OptionalDecimalStr
     current_price: DecimalStr
+    # НКД на одну облигацию, уже включённый в value. У прочих инструментов — 0.
+    accrued_interest: DecimalStr
     value: DecimalStr
     unrealized_pnl: OptionalDecimalStr
     # Доля единицы: 0.0722 — это +7,22%. None, когда база неизвестна.

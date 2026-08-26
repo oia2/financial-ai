@@ -106,6 +106,7 @@ def _build_position_out(position: PortfolioPosition, total: object) -> PositionO
         quantity=position.quantity,
         average_price=position.average_price,
         current_price=position.current_price,
+        accrued_interest=position.accrued_interest,
         value=position.value,
         unrealized_pnl=position.unrealized_pnl,
         unrealized_pnl_percent=percent(position.unrealized_pnl, cost_basis),

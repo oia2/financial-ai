@@ -27,9 +27,17 @@ MIN_STALE_AFTER_SECONDS = 180
 STALE_INTERVAL_FACTOR = 3
 
 
-def position_value(quantity: Decimal, current_price: Decimal) -> Decimal:
-    """Стоимость позиции."""
-    return quantity * current_price
+def position_value(
+    quantity: Decimal,
+    current_price: Decimal,
+    accrued_interest: Decimal = ZERO,
+) -> Decimal:
+    """Стоимость позиции.
+
+    Для облигаций к цене добавляется накопленный купонный доход: именно так
+    считает брокер, и без него отображаемая сумма разошлась бы с его итогом.
+    """
+    return quantity * (current_price + accrued_interest)
 
 
 def position_cost_basis(quantity: Decimal, average_price: Decimal | None) -> Decimal | None:
@@ -66,7 +74,7 @@ def percent(numerator: Decimal | None, base: Decimal | None) -> Decimal | None:
 
 def build_position_state(position: BrokerPosition) -> PositionState:
     """Достраивает позицию расчётными величинами."""
-    value = position_value(position.quantity, position.current_price)
+    value = position_value(position.quantity, position.current_price, position.accrued_interest)
     cost_basis = position_cost_basis(position.quantity, position.average_price)
 
     return PositionState(
@@ -78,6 +86,7 @@ def build_position_state(position: BrokerPosition) -> PositionState:
         quantity=position.quantity,
         average_price=position.average_price,
         current_price=position.current_price,
+        accrued_interest=position.accrued_interest,
         value=value,
         unrealized_pnl=position_pnl(value, cost_basis),
         cost_basis=cost_basis,

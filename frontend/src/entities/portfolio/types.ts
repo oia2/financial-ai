@@ -38,6 +38,8 @@ export interface PositionDto {
   quantity: string;
   average_price: string | null;
   current_price: string;
+  /** НКД на одну облигацию, уже включённый в value. У прочих инструментов «0». */
+  accrued_interest: string;
   value: string;
   unrealized_pnl: string | null;
   /** Доля единицы; null — процент не определён, а не ноль. */

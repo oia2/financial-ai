@@ -31,6 +31,7 @@ def make_position(
     quantity: str = "1200",
     average_price: str | None = "281.4",
     current_price: str = "301.72",
+    accrued_interest: str = "0",
 ) -> BrokerPosition:
     return BrokerPosition(
         instrument_uid=instrument_uid,
@@ -41,6 +42,7 @@ def make_position(
         quantity=Decimal(quantity),
         average_price=None if average_price is None else Decimal(average_price),
         current_price=Decimal(current_price),
+        accrued_interest=Decimal(accrued_interest),
     )
 
 

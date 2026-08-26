@@ -21,6 +21,7 @@ function position(overrides: Partial<PositionDto> & { instrument_uid: string }):
     quantity: '10',
     average_price: '100',
     current_price: '110',
+    accrued_interest: '0',
     value: '1100',
     unrealized_pnl: '100',
     unrealized_pnl_percent: '0.1',
@@ -124,5 +125,31 @@ describe('сортировка позиций', () => {
 
     expect(screen.getByText('В портфеле пока нет позиций')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+});
+
+describe('облигации с НКД', () => {
+  it('поясняет, что стоимость включает накопленный купонный доход', () => {
+    render(
+      <PositionsTable
+        positions={[
+          position({
+            instrument_uid: 'ofz',
+            accrued_interest: '19.674',
+            current_price: '1029.06',
+            quantity: '700',
+            value: '734113.80',
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(/вкл\. НКД/)).toBeInTheDocument();
+  });
+
+  it('не показывает пояснение у обычных позиций', () => {
+    render(<PositionsTable positions={[position({ instrument_uid: 'sber' })]} />);
+
+    expect(screen.queryByText(/вкл\. НКД/)).not.toBeInTheDocument();
   });
 });
