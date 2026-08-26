@@ -59,16 +59,14 @@ research §1); React 19, Vite, TanStack Query, TanStack Table, zod
 |---|---|---|
 | I. Неоднозначность не разрешается предположением | ✅ | Все технические развилки были вынесены на согласование; решения приняты владельцем проекта 2026-08-26 и зафиксированы в [§9](#9-согласованные-решения). Открытыми остаются два вопроса размещения конфигурации, не влияющие на состав задач |
 | II. Простота, качество и расширяемость | ✅ | Отказ от APScheduler, от очереди задач, от TanStack Router/Form, от истории снимков, от разделения backend на два пакета — каждый отказ обоснован в research.md |
-| III. Согласованность спецификации и реализации | ⚠️ **Требует действия** | Обнаружены два расхождения с утверждённым дизайном (нет настройки интервала, нет состояния «нет связи с сервером») и элементы дизайна вне объёма. Дизайн обновляется в Open Design **до** реализации этих экранов — задание подготовлено: [design-update-prompt.md](./design-update-prompt.md), обоснование — research §10 |
+| III. Согласованность спецификации и реализации | ✅ | Расхождения с дизайном устранены: 2026-08-26 в Open Design добавлены настройка интервала и состояние «нет связи с сервером», удалены элементы подключения брокера, состояние «Брокер не подключён» переосмыслено как «Доступ не сконфигурирован». Задание — [design-update-prompt.md](./design-update-prompt.md), проверка — research §10 |
 | IV. Обязательные проверки качества | ✅ | ruff, mypy, pytest / eslint, tsc, vitest / alembic upgrade — research §12. В исходном черновике отсутствовали |
 | V. Чистота и структура репозитория | ✅ | Структура ниже; deployment-артефакты в `deployments/docker-compose/` |
 | VI. Изоляция разработки по Git-веткам | ✅ | `feature/investment-account-state`, запушена в origin |
 | VII. Безопасность и конфигурация | ✅ | Токен — только env, только контейнер Worker; `.env.example` без значений; фильтр секретов в логах; маскированный номер договора в API |
 
-**Вывод гейта**: пройден. Единственный пункт со статусом ⚠️ — обновление дизайна в
-Open Design; это зафиксированное обязательство с готовым заданием, а не нарушение.
-`/speckit-tasks` может быть запущен: правка дизайна становится отдельной задачей,
-предшествующей реализации экранов настройки интервала и состояния «нет связи с сервером».
+**Вывод гейта**: пройден по всем семи принципам. Открытых решений, влияющих на состав
+задач, не осталось — `/speckit-tasks` может быть запущен.
 
 ---
 
@@ -94,6 +92,7 @@ specs/001-investment-account-state/
 
 ```text
 backend/                              # один Python-пакет, два контейнера (research §8)
+├── Dockerfile                        # общий образ; entrypoint выбирает api или worker
 ├── pyproject.toml                    # зависимости + extra-index-url T-Bank
 ├── uv.lock
 ├── alembic.ini
@@ -127,6 +126,7 @@ backend/                              # один Python-пакет, два ко�
 └── tests/{unit,integration,contract}/
 
 frontend/
+├── Dockerfile                        # multi-stage: node build → nginx:alpine (runtime)
 ├── package.json, vite.config.ts, tsconfig.json
 ├── src/                              # Feature-Sliced Design
 │   ├── app/                          # провайдеры, QueryClient, тема из brand-spec.md
@@ -138,9 +138,10 @@ frontend/
 └── tests/
 
 deployments/docker-compose/
-├── docker-compose.yml                # frontend, nginx, backend-api, backend-worker, postgres
-├── nginx/nginx.conf
-└── .env.example                      # только placeholder-значения
+├── docker-compose.yml                # frontend, backend-api, backend-worker, postgres
+├── nginx/nginx.conf                  # монтируется в контейнер frontend
+├── .env.example                      # только placeholder-значения
+└── .env                              # реальные значения, не коммитится
 ```
 
 **Structure Decision**: Web application. Backend — один Python-пакет `backend/` с двумя
@@ -193,10 +194,18 @@ TanStack Table (сортировка позиций, FR-018). TanStack Router / 
 Работает только с `Backend-API`. Ничего о состоянии брокера не вычисляет: `is_stale`,
 статус синхронизации и статус подключения приходят готовыми.
 
-### Nginx
+### Nginx — runtime frontend-контейнера
 
-Отдача статики frontend и reverse proxy `/api` → `Backend-API`. Бизнес-логики нет.
-Внутренний REST Worker наружу **не проксируется**.
+Отдельного сервиса `nginx` нет: nginx является runtime-слоем образа frontend.
+`frontend/Dockerfile` — multi-stage: Node собирает статику, `nginx:alpine` её отдаёт и
+проксирует `/api` → `Backend-API`. Конфиг лежит в
+`deployments/docker-compose/nginx/nginx.conf` и монтируется в контейнер, поэтому правится
+без пересборки образа. Бизнес-логики в нём нет; внутренний REST Worker наружу
+**не проксируется**.
+
+Роли `Frontend` и `Nginx` с архитектурной диаграммы закрывает один контейнер: второй
+проксирующий слой перед одним SPA не даёт ничего, кроме лишнего сервиса и volume
+(Принцип II). Разделение вернётся, когда за Nginx появится более одного upstream'а.
 
 ### Backend-API
 
@@ -285,20 +294,31 @@ FR-008. Backend-API отдаёт данные и статус синхрониз
 ## 7. Docker и конфигурация
 
 ```text
+frontend/Dockerfile                   # multi-stage: node build → nginx:alpine
+backend/Dockerfile                    # общий образ backend-api и backend-worker
 deployments/docker-compose/
 ├── docker-compose.yml
 ├── nginx/nginx.conf
-└── .env.example
+├── .env.example
+└── .env                              # не коммитится
 ```
 
-Compose поднимает `frontend`, `nginx`, `backend-api`, `backend-worker`, `postgres`.
+Dockerfile каждого компонента лежит рядом с его кодом; compose, конфиг nginx и переменные
+окружения — в `deployments/` (Принцип V).
+
+Compose поднимает `frontend`, `backend-api`, `backend-worker`, `postgres`.
+Единственная точка входа снаружи — `frontend` (nginx внутри него).
 
 `TBANK_INVEST_READ_TOKEN` передаётся **только** сервису `backend-worker`.
 `.env.example` содержит только placeholder'ы. Реальный `.env` не коммитится
 (`.gitignore` уже покрывает `.env` и `.env.*` с исключением `!.env.example`).
 
-Расположение реального `.env` — открытый вопрос §9.3: сейчас токен лежит в корневом
-`.env` репозитория, черновик плана предлагает `deployments/docker-compose/.env`.
+Реальный `.env` — **`deployments/docker-compose/.env`**, рядом с compose, который его
+читает (решение владельца проекта от 2026-08-26). Существующий корневой `.env` переносится
+туда и удаляется из корня при создании deployment-структуры.
+
+Локальная разработка ведётся без Nginx: `vite dev` проксирует `/api` на `Backend-API`
+напрямую. Compose с nginx-контейнером используется для проверки, близкой к проду.
 
 ## 8. Стек: итоговая таблица
 
@@ -347,15 +367,17 @@ Compose поднимает `frontend`, `nginx`, `backend-api`, `backend-worker`,
 | 7 | SC-002, SC-003 — денежная точность | Все значения, приходящие из T-Invest как `units` + `nano`, преобразуются и обрабатываются **в доменном слое как `Decimal` без промежуточного `float`**. В PostgreSQL — точные NUMERIC-типы с сохранением точности до 10⁻⁹, по умолчанию **`NUMERIC(28,9)`**. Во внешнем JSON API decimal-значения передаются **строками**. Округление до копеек — только там, где этого требует представление или бизнес-правило |
 | 8 | SC-010 — свежесть отображаемого состояния | **Worker ходит к брокеру раз в настроенный интервал; frontend опрашивает уже сохранённое состояние с `refetchInterval = clamp(интервал / 10, 3 с, 30 с)`.** Два интервала разведены явно |
 | 9 | Принцип IV Constitution | **Тесты обязательны.** ruff + mypy + pytest (backend), eslint + tsc + vitest (frontend), `alembic upgrade head` на чистой БД. Брокер тестируется на границе адаптера `broker/protocol.py`, а не мокированием gRPC |
-| 10 | Принцип III — расхождения с дизайном | Дизайн правится в Open Design **до** реализации соответствующих экранов. Задание подготовлено: [design-update-prompt.md](./design-update-prompt.md) |
+| 10 | Принцип III — расхождения с дизайном | **Выполнено 2026-08-26.** Дизайн обновлён в Open Design по заданию [design-update-prompt.md](./design-update-prompt.md); результат проверен — research §10 |
 | 11 | FR-010 — привязка состояния к пользователю | **Пользователя как сущности пока нет — есть только токен в конфигурации сервера.** Таблица пользователей и поле `user_id` не вводятся до появления аутентификации. FR-010 выполняется тем, что установка обслуживает один счёт и одного владельца токена |
 
-### Осталось решить (не влияет на состав задач)
+### Размещение конфигурации и образов
 
-| # | Вопрос | Рекомендация |
+| # | Вопрос | Решение |
 |---|---|---|
-| 12 | Где лежит `.env` с токеном: корень репозитория (текущее положение) или `deployments/docker-compose/.env` | Рядом с compose, который его читает; корневой `.env` удалить после переноса |
-| 13 | Nginx в локальной разработке: поднимать в dev-профиле compose или разрабатывать через `vite dev` с прокси | `vite dev` + proxy для разработки, compose с Nginx — для проверки, близкой к проду |
+| 12 | Где лежит `.env` с токеном | **`deployments/docker-compose/.env`** — рядом с compose, который его читает. Корневой `.env` переносится туда и удаляется из корня |
+| 13 | Nginx: отдельный контейнер или runtime frontend | **Runtime frontend-образа.** `frontend/Dockerfile` — multi-stage: node build → `nginx:alpine`; конфиг `deployments/docker-compose/nginx/nginx.conf` монтируется в контейнер. Отдельного сервиса `nginx` в compose нет |
+| 14 | Где лежат Dockerfile | **Рядом с кодом компонента**: `frontend/Dockerfile`, `backend/Dockerfile`. В `deployments/` — только compose, конфиг nginx и переменные окружения |
+| 15 | Nginx в локальной разработке | Не используется: `vite dev` проксирует `/api` на Backend-API. Compose — для проверки, близкой к проду |
 
 ---
 

@@ -41,7 +41,7 @@ POSTGRES_PASSWORD=<локальный пароль>
 
 - `.env` не попадает в git (`.gitignore` покрывает `.env` и `.env.*`, кроме `.env.example`);
 - `TBANK_INVEST_READ_TOKEN` передаётся **только** сервису `backend-worker` — убедиться,
-  что его нет в `environment` у `backend-api`, `frontend` и `nginx` (FR-023).
+  что его нет в `environment` у `backend-api` и `frontend` (FR-023).
 
 ---
 
@@ -51,7 +51,12 @@ POSTGRES_PASSWORD=<локальный пароль>
 docker compose -f deployments/docker-compose/docker-compose.yml up --build
 ```
 
-Поднимутся `postgres`, `backend-api`, `backend-worker`, `frontend`, `nginx`.
+Поднимутся `postgres`, `backend-api`, `backend-worker`, `frontend`.
+Отдельного сервиса `nginx` нет: nginx работает внутри контейнера `frontend` — отдаёт
+статику и проксирует `/api` на `backend-api`. Его конфиг —
+`deployments/docker-compose/nginx/nginx.conf`, он монтируется в контейнер, поэтому
+правится без пересборки образа.
+
 Миграции Alembic применяются при старте `backend-api`.
 
 Раздел «Портфель»: <http://localhost:8080>
