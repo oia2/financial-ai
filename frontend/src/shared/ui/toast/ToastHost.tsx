@@ -1,6 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-
-import './toast.css';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 interface ToastApi {
   show: (message: string) => void;
@@ -8,15 +14,18 @@ interface ToastApi {
 
 const ToastContext = createContext<ToastApi | null>(null);
 
-const VISIBLE_MS = 4000;
+/** Столько же, сколько в прототипе дизайна. */
+const VISIBLE_MS = 2400;
 
 /** Кратковременное подтверждение действия — например, успешного обновления. */
 export function ToastHost({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const show = useCallback((text: string) => {
+    if (timer.current !== null) clearTimeout(timer.current);
     setMessage(text);
-    setTimeout(() => setMessage(null), VISIBLE_MS);
+    timer.current = setTimeout(() => setMessage(null), VISIBLE_MS);
   }, []);
 
   const api = useMemo(() => ({ show }), [show]);
@@ -24,7 +33,11 @@ export function ToastHost({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="toast" role="status" aria-live="polite">
+      <div
+        className={`toast${message === null ? '' : ' visible'}`}
+        role="status"
+        aria-live="polite"
+      >
         {message}
       </div>
     </ToastContext.Provider>

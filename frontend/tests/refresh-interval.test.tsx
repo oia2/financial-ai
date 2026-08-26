@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AppProviders } from '@/app/providers';
-import { RefreshIntervalSetting } from '@/features/refresh-interval-setting/RefreshIntervalSetting';
+import { RefreshIntervalForm } from '@/features/refresh-interval-setting/RefreshIntervalForm';
 
 import { http, HttpResponse, server } from './msw/server';
 
@@ -25,7 +25,7 @@ function renderSetting() {
 
   return render(
     <AppProviders client={client}>
-      <RefreshIntervalSetting />
+      <RefreshIntervalForm />
     </AppProviders>,
   );
 }

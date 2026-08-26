@@ -112,7 +112,7 @@ describe('различимость причин', () => {
 
     // Связь пропадает между обновлениями: следующий запрос уже не дойдёт.
     failing = true;
-    await userEvent.click(screen.getByRole('button', { name: 'Обновить сейчас' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить данные' }));
 
     expect(await screen.findByText('Нет связи с сервером Financial AI')).toBeInTheDocument();
     // Данные помечены как последние известные, а не стёрты.

@@ -4,15 +4,14 @@ import { portfolioQueryKey, type RefreshResultDto } from '@/entities/portfolio';
 import { apiPost, ServerUnreachableError } from '@/shared/api/client';
 import { useToast } from '@/shared/ui/toast/ToastHost';
 
-import './refresh-now.css';
-
 /**
  * Ручное обновление (US3).
  *
- * Повторное нажатие во время выполнения не создаёт второго запроса: кнопка
- * заблокирована, а на стороне сервера действует общий лок (FR-029).
+ * Вынесено в хук, потому что в утверждённом дизайне это действие живёт сразу
+ * в трёх местах: иконка в шапке, пункт меню счёта и действие в баннере.
+ * Логика у них одна, включая защиту от повторного запуска (FR-029).
  */
-export function RefreshNow({ inProgress = false }: { inProgress?: boolean }) {
+export function useRefreshNow() {
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -36,17 +35,10 @@ export function RefreshNow({ inProgress = false }: { inProgress?: boolean }) {
     },
   });
 
-  const busy = mutation.isPending || inProgress;
-
-  return (
-    <button
-      type="button"
-      className="refresh-now"
-      onClick={() => mutation.mutate()}
-      disabled={busy}
-      aria-busy={busy}
-    >
-      {busy ? 'Обновляем…' : 'Обновить сейчас'}
-    </button>
-  );
+  return {
+    run: () => {
+      if (!mutation.isPending) mutation.mutate();
+    },
+    isPending: mutation.isPending,
+  };
 }

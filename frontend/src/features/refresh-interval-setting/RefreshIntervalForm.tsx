@@ -4,8 +4,6 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { portfolioQueryKey, type RefreshIntervalDto } from '@/entities/portfolio';
 import { apiGet, ApiError, apiPut } from '@/shared/api/client';
 
-import './refresh-interval-setting.css';
-
 export const refreshIntervalQueryKey = ['refresh-interval'] as const;
 
 const SETTINGS_URL = '/api/settings/refresh-interval';
@@ -13,16 +11,15 @@ const SETTINGS_URL = '/api/settings/refresh-interval';
 /**
  * Настройка частоты фонового обновления (FR-031, FR-035).
  *
- * Границы диапазона приходят с сервера и показываются пользователю, а не
- * хардкодятся здесь. Недопустимое значение отклоняется, и прежний интервал
- * продолжает действовать (US2 AS4).
+ * Разметка повторяет форму из утверждённого дизайна: поле с единицей
+ * измерения, кнопка сохранения, подсказка с диапазоном, сообщение об ошибке
+ * и строка действующего значения. Проверку выполняет приложение
+ * (`noValidate`), чтобы показать формулировку из дизайна, а не браузерную.
  */
-export function RefreshIntervalSetting() {
+export function RefreshIntervalForm() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // Поле заполняется действующим значением один раз: иначе очистка поля
-  // пользователем тут же откатывалась бы обратно.
   const initialised = useRef(false);
 
   const settings = useQuery({
@@ -43,7 +40,6 @@ export function RefreshIntervalSetting() {
     onSuccess: (data) => {
       setError(null);
       queryClient.setQueryData(refreshIntervalQueryKey, data);
-      // Новая частота влияет и на опрос портфеля.
       void queryClient.invalidateQueries({ queryKey: portfolioQueryKey });
     },
     onError: (cause) => setError(describeError(cause, settings.data)),
@@ -65,47 +61,50 @@ export function RefreshIntervalSetting() {
   const { interval_seconds, min_seconds, max_seconds } = settings.data;
 
   return (
-    // noValidate: проверку выполняет приложение, чтобы пользователь видел
-    // объяснение с диапазоном и с прежним значением (US2 AS4), а не
-    // браузерную подсказку, которую нельзя сформулировать.
     <form className="interval-form" onSubmit={handleSubmit} noValidate>
-      <label className="interval-label" htmlFor="refresh-interval-input">
-        Интервал автообновления
-      </label>
+      <label htmlFor="refresh-interval-input">Интервал автообновления</label>
 
-      <div className="interval-row">
-        <input
-          id="refresh-interval-input"
-          className="interval-input numeric"
-          type="number"
-          inputMode="numeric"
-          min={min_seconds}
-          max={max_seconds}
-          step={1}
-          value={draft}
-          aria-describedby="refresh-interval-hint refresh-interval-error"
-          aria-invalid={error !== null}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            setError(null);
-          }}
-        />
-        <span className="interval-unit muted">сек.</span>
-        <button type="submit" className="interval-save" disabled={mutation.isPending}>
+      <div className="interval-control-row">
+        <div className="interval-input-wrap">
+          <input
+            className="interval-input"
+            id="refresh-interval-input"
+            name="refreshInterval"
+            type="number"
+            inputMode="numeric"
+            min={min_seconds}
+            max={max_seconds}
+            step={1}
+            value={draft}
+            aria-describedby="interval-hint interval-error"
+            aria-invalid={error !== null}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setError(null);
+            }}
+          />
+          <span className="interval-unit">сек.</span>
+        </div>
+        <button
+          className="primary-button interval-save"
+          type="submit"
+          disabled={mutation.isPending}
+        >
           Сохранить
         </button>
       </div>
 
-      <p id="refresh-interval-hint" className="interval-hint muted">
-        Целое число от {min_seconds} до {max_seconds} секунд. Действует сейчас:{' '}
-        <strong className="numeric">{interval_seconds} с</strong>
+      <p className="field-hint" id="interval-hint">
+        Целое число от {min_seconds} до {max_seconds} секунд.
       </p>
 
-      {error === null ? null : (
-        <p id="refresh-interval-error" className="interval-error" role="alert">
-          {error}
-        </p>
-      )}
+      <p className="field-error" id="interval-error" role="alert" hidden={error === null}>
+        {error}
+      </p>
+
+      <p className="interval-current">
+        Действует сейчас: <strong>{interval_seconds} с</strong>
+      </p>
     </form>
   );
 }

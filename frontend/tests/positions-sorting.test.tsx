@@ -46,7 +46,7 @@ function rowOrder(): string[] {
   const body = within(table).getAllByRole('rowgroup')[1];
   return within(body!)
     .getAllByRole('row')
-    .map((row) => within(row).getAllByRole('cell')[0]?.textContent ?? '');
+    .map((row) => row.querySelector('.ticker')?.textContent ?? '');
 }
 
 async function clickHeader(name: RegExp) {

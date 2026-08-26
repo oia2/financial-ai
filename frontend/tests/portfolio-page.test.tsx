@@ -45,7 +45,7 @@ describe('состояние счёта', () => {
   it('показывает долю денежных средств', async () => {
     renderPage();
 
-    expect(await screen.findByText(/10,07% портфеля/)).toBeInTheDocument();
+    expect(await screen.findByText(/10,1% портфеля/)).toBeInTheDocument();
   });
 
   it('показывает таблицу позиций', async () => {
@@ -74,7 +74,8 @@ describe('состояние счёта', () => {
   it('показывает маскированный номер договора и не показывает полный', async () => {
     renderPage();
 
-    expect(await screen.findByText(/•• 4821/)).toBeInTheDocument();
+    // Маскированный номер показан и в шапке, и в меню счёта.
+    expect((await screen.findAllByText(/•• 4821/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/2000124821/)).not.toBeInTheDocument();
   });
 });
@@ -96,7 +97,8 @@ describe('граничные состояния', () => {
 
     renderPage();
 
-    expect(await screen.findByText(/Доступ к Т-Банк не сконфигурирован/)).toBeInTheDocument();
+    // Текст показан в строке подключения и в панели состояния.
+    expect((await screen.findAllByText(/Доступ к Т-Банк не сконфигурирован/)).length).toBe(2);
     // Кнопки подключения нет: доступ задаётся конфигурацией сервера.
     expect(screen.queryByRole('button', { name: /Подключить/ })).not.toBeInTheDocument();
   });

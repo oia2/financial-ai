@@ -1,16 +1,13 @@
 import type { PortfolioViewState, SyncDto } from '@/entities/portfolio';
 import { formatAge, formatTime } from '@/shared/lib/format';
 
-import './sync-status-banner.css';
-
 /**
- * Предупреждения о несвежести данных (FR-037, FR-038).
+ * Баннер состояния синхронизации по утверждённому дизайну (FR-037, FR-038).
  *
- * Три причины показываются по-разному и не могут быть перепутаны:
- *
- *  - данные устарели — брокер отвечает, но синхронизации давно не было;
- *  - не удалось обновить портфель — T-Bank API недоступен или вернул ошибку;
- *  - нет связи с сервером Financial AI — до самого сервера не достучаться.
+ * Разметка одна на три причины — как в артефакте: иконка, `banner-copy` и
+ * текстовое действие. Различаются формулировки, иконка и модификатор класса;
+ * у обрыва связи с сервером — инверсия, чтобы его нельзя было спутать со
+ * сбоем брокера (SC-011).
  */
 export function SyncStatusBanner({
   state,
@@ -32,61 +29,64 @@ export function SyncStatusBanner({
   const lastSuccess = sync?.last_success_at == null ? null : formatTime(sync.last_success_at);
   const age = ageSeconds === undefined ? null : formatAge(ageSeconds);
 
-  if (state === 'server-offline') {
-    return (
-      <section className="banner banner-offline" role="status">
-        <div className="banner-copy">
-          <strong>Нет связи с сервером Financial AI</strong>
-          <span>
-            {age === null
-              ? 'Данные не загружены.'
-              : `Показано последнее известное состояние${
-                  lastSuccess === null ? '' : ` на ${lastSuccess}`
-                } — ${age}.`}{' '}
-            Система автоматически пытается восстановить связь.
-          </span>
-        </div>
-        <button type="button" className="banner-action" onClick={onRetry} disabled={retrying}>
-          Повторить
-        </button>
-      </section>
-    );
-  }
-
-  if (state === 'sync-error') {
-    return (
-      <section className="banner banner-error" role="status">
-        <div className="banner-copy">
-          <strong>Не удалось обновить портфель</strong>
-          <span>
-            {describeBrokerFailure(sync)}
-            {lastSuccess === null
+  const offline = state === 'server-offline';
+  const content = offline
+    ? {
+        title: 'Нет связи с сервером Financial AI',
+        text:
+          (age === null
+            ? 'Данные не загружены.'
+            : `Показано последнее известное состояние${lastSuccess === null ? '' : ` на ${lastSuccess}`} — ${age}.`) +
+          ' Система автоматически пытается восстановить связь.',
+        action: 'Повторить',
+      }
+    : state === 'sync-error'
+      ? {
+          title: 'Не удалось обновить портфель',
+          text:
+            describeBrokerFailure(sync) +
+            (lastSuccess === null
               ? ' Успешной синхронизации ещё не было.'
-              : ` Показано последнее успешно синхронизированное состояние на ${lastSuccess}.`}
-          </span>
-        </div>
-        <button type="button" className="banner-action" onClick={onRetry} disabled={retrying}>
-          Повторить запрос к брокеру
-        </button>
-      </section>
-    );
-  }
+              : ` Показано последнее успешно синхронизированное состояние на ${lastSuccess}.`),
+          action: 'Повторить запрос к брокеру',
+        }
+      : {
+          title: 'Данные временно устарели',
+          text:
+            (lastSuccess === null
+              ? 'Последней успешной синхронизации нет.'
+              : `Последняя успешная синхронизация была в ${lastSuccess}.`) +
+            (age === null ? '' : ` Возраст данных — ${age}.`) +
+            ' Показано последнее известное состояние.',
+          action: 'Обновить сейчас',
+        };
 
   return (
-    <section className="banner banner-stale" role="status">
+    <div
+      className={`banner visible${offline ? ' server-offline' : ''}`}
+      role="status"
+      aria-live="polite"
+    >
+      {offline ? (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5v.01M3 3l18 18" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v5M12 16.5v.5" />
+        </svg>
+      )}
+
       <div className="banner-copy">
-        <strong>Данные временно устарели</strong>
-        <span>
-          {lastSuccess === null
-            ? 'Последней успешной синхронизации нет.'
-            : `Последняя успешная синхронизация была в ${lastSuccess}.`}{' '}
-          {age === null ? '' : `Возраст данных — ${age}.`} Показано последнее известное состояние.
-        </span>
+        <strong>{content.title}</strong>
+        <span>{content.text}</span>
       </div>
-      <button type="button" className="banner-action" onClick={onRetry} disabled={retrying}>
-        Обновить сейчас
+
+      <button type="button" className="text-button" onClick={onRetry} disabled={retrying}>
+        {content.action}
       </button>
-    </section>
+    </div>
   );
 }
 

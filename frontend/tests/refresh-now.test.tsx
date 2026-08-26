@@ -1,8 +1,8 @@
 /**
  * Ручное обновление (T060).
  *
- * Проверяется поведение из US3: индикация выполнения, подтверждение,
- * защита от повторного запуска и понятное сообщение при неуспехе.
+ * В утверждённом дизайне действие живёт в шапке — иконкой и пунктом меню
+ * счёта, — поэтому проверяется именно оно, а не отдельная кнопка.
  */
 
 import { QueryClient } from '@tanstack/react-query';
@@ -11,14 +11,15 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AppProviders } from '@/app/providers';
-import { RefreshNow } from '@/features/refresh-now/RefreshNow';
 import { ToastHost } from '@/shared/ui/toast/ToastHost';
+import { AppHeader } from '@/widgets/app-header/AppHeader';
 
+import { portfolioFixture } from './msw/fixtures';
 import { http, HttpResponse, server } from './msw/server';
 
 const URL = '*/api/portfolio/refresh';
 
-function renderButton(props: { inProgress?: boolean } = {}) {
+function renderHeader(overrides: Parameters<typeof portfolioFixture>[0] = {}) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, refetchInterval: false },
@@ -29,7 +30,7 @@ function renderButton(props: { inProgress?: boolean } = {}) {
   return render(
     <AppProviders client={client}>
       <ToastHost>
-        <RefreshNow {...props} />
+        <AppHeader data={portfolioFixture(overrides)} />
       </ToastHost>
     </AppProviders>,
   );
@@ -48,13 +49,13 @@ describe('ручное обновление', () => {
   it('подтверждает успешное обновление', async () => {
     server.use(http.post(URL, () => HttpResponse.json(okResponse())));
 
-    renderButton();
-    await userEvent.click(screen.getByRole('button', { name: 'Обновить сейчас' }));
+    renderHeader();
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить данные' }));
 
     expect(await screen.findByText('Портфель обновлён')).toBeInTheDocument();
   });
 
-  it('показывает индикацию выполнения и блокирует повторный запуск', async () => {
+  it('блокирует повторный запуск до завершения', async () => {
     let calls = 0;
     server.use(
       http.post(URL, async () => {
@@ -64,25 +65,23 @@ describe('ручное обновление', () => {
       }),
     );
 
-    renderButton();
-    const button = screen.getByRole('button', { name: 'Обновить сейчас' });
+    renderHeader();
+    const button = screen.getByRole('button', { name: 'Обновить данные' });
 
     await userEvent.click(button);
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-busy', 'true');
 
-    const busy = await screen.findByRole('button', { name: 'Обновляем…' });
-    expect(busy).toBeDisabled();
-    expect(busy).toHaveAttribute('aria-busy', 'true');
-
-    await waitFor(() => expect(screen.getByRole('button')).toBeEnabled());
-    // US3 AS3: повторное нажатие до завершения не создаёт второго запроса.
+    await waitFor(() => expect(button).toBeEnabled());
+    // US3 AS3: второй запрос к брокеру не создаётся.
     expect(calls).toBe(1);
   });
 
   it('сообщает, что обновление уже выполнялось', async () => {
     server.use(http.post(URL, () => HttpResponse.json(okResponse(true))));
 
-    renderButton();
-    await userEvent.click(screen.getByRole('button', { name: 'Обновить сейчас' }));
+    renderHeader();
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить данные' }));
 
     expect(await screen.findByText('Обновление уже выполнялось')).toBeInTheDocument();
   });
@@ -99,8 +98,8 @@ describe('ручное обновление', () => {
       ),
     );
 
-    renderButton();
-    await userEvent.click(screen.getByRole('button', { name: 'Обновить сейчас' }));
+    renderHeader();
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить данные' }));
 
     const toast = await screen.findByText('Не удалось обновить портфель');
     // Технические детали ответа брокера пользователю не показываются (FR-028).
@@ -110,13 +109,13 @@ describe('ручное обновление', () => {
   it('различает обрыв связи с сервером', async () => {
     server.use(http.post(URL, () => HttpResponse.error()));
 
-    renderButton();
-    await userEvent.click(screen.getByRole('button', { name: 'Обновить сейчас' }));
+    renderHeader();
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить данные' }));
 
     expect(await screen.findByText('Нет связи с сервером Financial AI')).toBeInTheDocument();
   });
 
-  it('блокирует кнопку, пока синхронизация идёт на сервере', async () => {
+  it('блокирует действие, пока синхронизация идёт на сервере', async () => {
     const called = vi.fn();
     server.use(
       http.post(URL, () => {
@@ -125,11 +124,22 @@ describe('ручное обновление', () => {
       }),
     );
 
-    renderButton({ inProgress: true });
+    const fixture = portfolioFixture();
+    renderHeader({ sync: { ...fixture.sync, in_progress: true } });
 
-    const button = screen.getByRole('button');
+    const button = screen.getByRole('button', { name: 'Обновить данные' });
     expect(button).toBeDisabled();
     await userEvent.click(button);
     expect(called).not.toHaveBeenCalled();
+  });
+
+  it('повторяет действие в меню счёта', async () => {
+    server.use(http.post(URL, () => HttpResponse.json(okResponse())));
+
+    renderHeader();
+    await userEvent.click(screen.getByRole('button', { name: /Т-Банк/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Обновить данные' }));
+
+    expect(await screen.findByText('Портфель обновлён')).toBeInTheDocument();
   });
 });

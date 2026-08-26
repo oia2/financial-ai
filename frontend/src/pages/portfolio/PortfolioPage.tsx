@@ -1,77 +1,100 @@
-import { RefreshIntervalSetting } from '@/features/refresh-interval-setting/RefreshIntervalSetting';
-import { RefreshNow } from '@/features/refresh-now/RefreshNow';
 import {
   selectPortfolioState,
   usePortfolioQuery,
   type PortfolioDto,
   type PortfolioViewState,
 } from '@/entities/portfolio';
-import { Freshness } from '@/widgets/freshness/Freshness';
-import { PortfolioSummary } from '@/widgets/portfolio-summary/PortfolioSummary';
+import { formatTime } from '@/shared/lib/format';
+import { AppHeader } from '@/widgets/app-header/AppHeader';
+import { CapitalStrip } from '@/widgets/capital-strip/CapitalStrip';
 import { PositionsTable } from '@/widgets/positions-table/PositionsTable';
 import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner';
-
-import './portfolio-page.css';
 
 /**
  * Раздел «Портфель».
  *
- * Все состояния (FR-015) выводятся из одного ответа API и факта его наличия;
- * ничего о состоянии брокера страница не вычисляет сама.
+ * Композиция повторяет утверждённый дизайн Open Design (FR-017): шапка,
+ * заголовок со строкой подключения, баннер состояния, полоса капитала,
+ * секция позиций. Все состояния (FR-015) выводятся из одного ответа API и
+ * факта его наличия — страница ничего не вычисляет сама.
  */
 export function PortfolioPage() {
   const query = usePortfolioQuery();
   const state = selectPortfolioState(query.data, query.error, query.isPending);
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="product muted">FINANCIAL AI · Портфель</p>
-          <h1 className="page-title">Портфель</h1>
-        </div>
+    <div className="app-shell">
+      <AppHeader data={query.data} />
 
-        {query.data ? (
-          <div className="header-side">
-            <div className="header-account">
-              <AccountLine data={query.data} />
-              {/* Действующая частота обновления видна пользователю (FR-036). */}
-              <p className="auto-refresh muted">
-                Автообновление каждые{' '}
-                <span className="numeric">{query.data.sync.refresh_interval_seconds} с</span>
-              </p>
-            </div>
-            <Freshness snapshot={query.data.snapshot} sync={query.data.sync} />
-            <div className="header-actions">
-              <RefreshNow inProgress={query.data.sync.in_progress} />
-              <RefreshIntervalSetting />
-            </div>
+      <main>
+        {state === 'loading' ? (
+          <div className="skeleton-shell" aria-live="polite">
+            <div className="skeleton-line skeleton-heading" />
+            <div className="skeleton-block skeleton-summary" />
+            <div className="skeleton-line skeleton-row" />
+            <div className="skeleton-line skeleton-row" />
+            <div className="skeleton-line skeleton-row" />
+            <span className="sr-only">Обновляем данные портфеля</span>
           </div>
-        ) : null}
-      </header>
+        ) : (
+          <div>
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">Текущее состояние капитала</p>
+                <h1>Портфель</h1>
+              </div>
+              <ConnectionLine state={state} data={query.data} />
+            </div>
 
-      <main className="page-main">
-        <SyncStatusBanner
-          state={state}
-          sync={query.data?.sync}
-          ageSeconds={query.data?.snapshot?.age_seconds}
-          onRetry={() => void query.refetch()}
-          retrying={query.isFetching}
-        />
-        <PortfolioBody state={state} data={query.data} />
+            <SyncStatusBanner
+              state={state}
+              sync={query.data?.sync}
+              ageSeconds={query.data?.snapshot?.age_seconds}
+              onRetry={() => void query.refetch()}
+              retrying={query.isFetching}
+            />
+
+            <PortfolioBody state={state} data={query.data} />
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
-function AccountLine({ data }: { data: PortfolioDto }) {
-  if (data.broker.account === null) return null;
+/** Строка подключения в заголовке: точка статуса и краткое пояснение. */
+function ConnectionLine({
+  state,
+  data,
+}: {
+  state: PortfolioViewState;
+  data: PortfolioDto | undefined;
+}) {
+  if (data === undefined) {
+    return (
+      <div className="connection-line">
+        <span className="status-dot neutral" />
+        <span>Нет связи с сервером</span>
+      </div>
+    );
+  }
+
+  const account = data.broker.account;
+  const connected = data.broker.status === 'connected';
+
+  // В дизайне у точки два состояния: обычное и приглушённое. Приглушённая
+  // означает «данные сейчас не подтверждены брокером».
+  const healthy = connected && (state === 'fresh' || state === 'empty');
 
   return (
-    <p className="account-line muted">
-      {/* Номер договора — только маскированный (FR-022). */}
-      Т-Банк · {data.broker.account.masked_id}
-    </p>
+    <div className="connection-line">
+      <span className={`status-dot${healthy ? '' : ' neutral'}`} />
+      <span>
+        {connected
+          ? `Т-Банк подключён${account === null ? '' : ` · счёт ${account.masked_id}`}`
+          : 'Доступ к Т-Банк не сконфигурирован'}
+      </span>
+    </div>
   );
 }
 
@@ -82,30 +105,22 @@ function PortfolioBody({
   state: PortfolioViewState;
   data: PortfolioDto | undefined;
 }) {
-  if (state === 'loading') {
-    return <p className="state-panel">Обновляем данные портфеля…</p>;
-  }
-
-  if (state === 'server-offline' && data === undefined) {
-    return (
-      <section className="state-panel">
-        <h2>Данные недоступны</h2>
-        <p className="muted">
-          Состояние счёта не было загружено до потери связи с сервером. Как только связь
-          восстановится, данные появятся автоматически.
-        </p>
-      </section>
-    );
-  }
-
   if (state === 'no-broker') {
     return (
       <section className="state-panel">
-        <h2>Доступ к Т-Банк не сконфигурирован</h2>
-        <p className="muted">
-          Сервер Financial AI не получил действующий read-only доступ к T-Bank Invest API.
-          Администратору системы нужно проверить токен в конфигурации сервера.
-        </p>
+        <div className="state-content">
+          <div className="state-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 12h8M12 8v8M5 5l14 14" />
+              <rect x="3" y="4" width="18" height="16" rx="3" />
+            </svg>
+          </div>
+          <h2>Доступ к Т-Банк не сконфигурирован</h2>
+          <p>
+            Сервер Financial AI не получил действующий read-only доступ к T-Bank Invest API.
+            Администратору системы нужно проверить токен в конфигурации сервера.
+          </p>
+        </div>
       </section>
     );
   }
@@ -113,22 +128,49 @@ function PortfolioBody({
   if (data === undefined || data.snapshot === null) {
     return (
       <section className="state-panel">
-        <h2>Данных о счёте пока нет</h2>
-        <p className="muted">
-          Ни одна синхронизация с брокером ещё не завершилась успешно. Нулевые суммы не
-          показываются, чтобы их нельзя было принять за фактические.
-        </p>
+        <div className="state-content">
+          <div className="state-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v5M12 16.5v.5" />
+            </svg>
+          </div>
+          <h2>Данных о счёте пока нет</h2>
+          <p>
+            Ни одна синхронизация с брокером ещё не завершилась успешно. Нулевые суммы не
+            показываются, чтобы их нельзя было принять за фактические.
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
-    <>
-      <PortfolioSummary snapshot={data.snapshot} />
+    <section>
+      <CapitalStrip snapshot={data.snapshot} sync={data.sync} />
+
       <section className="positions-section">
-        <h2 className="section-title">Позиции</h2>
+        <div className="section-toolbar">
+          <div className="section-title-line">
+            <h2>Позиции</h2>
+            <span className="position-count">{data.snapshot.positions_count}</span>
+          </div>
+          <span className="freshness">
+            {data.sync.last_success_at === null
+              ? 'Синхронизации ещё не было'
+              : `Последняя синхронизация ${formatTime(data.sync.last_success_at)}`}
+          </span>
+        </div>
+
         <PositionsTable positions={data.snapshot.positions} />
+
+        {data.snapshot.positions.length === 0 ? null : (
+          <p className="table-footnote">
+            Стоимость и P&amp;L рассчитаны по последним данным брокера. У облигаций стоимость
+            включает накопленный купонный доход.
+          </p>
+        )}
       </section>
-    </>
+    </section>
   );
 }

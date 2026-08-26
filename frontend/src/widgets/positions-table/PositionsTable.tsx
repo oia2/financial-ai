@@ -9,10 +9,8 @@ import {
 import { useState } from 'react';
 
 import type { PositionDto } from '@/entities/portfolio';
-import { isNegative, isZero, parseDecimal } from '@/shared/lib/decimal';
+import { isNegative, isZero, parseDecimal, shiftDecimal } from '@/shared/lib/decimal';
 import { formatPercent, formatPrice, formatQuantity, formatSignedMoney } from '@/shared/lib/format';
-
-import './positions-table.css';
 
 const columnHelper = createColumnHelper<PositionDto>();
 
@@ -50,6 +48,12 @@ const decimalSort = (
     (rowB.original as unknown as Record<string, string | null>)[id] ?? null,
   );
 
+/** Ширина полосы доли в процентах — как в дизайне. */
+function weightWidth(share: string): number {
+  const percent = Number(shiftDecimal(share, 2));
+  return Math.max(0, Math.min(100, percent));
+}
+
 const columns = [
   columnHelper.accessor((row) => row.ticker ?? row.instrument_uid, {
     id: 'instrument',
@@ -57,11 +61,11 @@ const columns = [
     cell: (cell) => {
       const position = cell.row.original;
       return (
-        <span className="instrument">
+        <>
           {/* Отсутствие тикера и названия не блокирует отображение позиции. */}
-          <span className="instrument-ticker">{position.ticker ?? position.instrument_uid}</span>
-          {position.name ? <span className="instrument-name">{position.name}</span> : null}
-        </span>
+          <span className="ticker">{position.ticker ?? position.instrument_uid}</span>
+          <span className="instrument-name">{position.name ?? '—'}</span>
+        </>
       );
     },
     sortingFn: 'alphanumeric',
@@ -83,40 +87,52 @@ const columns = [
   }),
   columnHelper.accessor('value', {
     header: 'Стоимость',
-    cell: (cell) => {
-      const withCoupon = !isZero(cell.row.original.accrued_interest);
-      return (
-        <>
-          {formatPrice(cell.getValue())}
-          {/* У облигаций стоимость больше «количество × цена» на накопленный
-              купонный доход — так же считает брокер. */}
-          {withCoupon ? <span className="muted"> (вкл. НКД)</span> : null}
-        </>
-      );
-    },
+    cell: (cell) => (
+      <>
+        {formatPrice(cell.getValue())}
+        {/* У облигаций стоимость больше «количество × цена» на накопленный
+            купонный доход — так же считает брокер. */}
+        {isZero(cell.row.original.accrued_interest) ? null : (
+          <span className="instrument-name"> вкл. НКД</span>
+        )}
+      </>
+    ),
     sortingFn: decimalSort,
   }),
   columnHelper.accessor('unrealized_pnl', {
     header: 'P&L',
     cell: (cell) => {
       const value = cell.getValue();
-      if (value === null) return '—';
-      const percent = formatPercent(cell.row.original.unrealized_pnl_percent);
-      return (
-        <span className={isNegative(value) ? 'negative' : 'positive'}>
-          {formatSignedMoney(value)}
-          {percent === null ? null : <span className="muted"> ({percent})</span>}
-        </span>
-      );
+      return value === null ? '—' : formatSignedMoney(value);
     },
     sortingFn: decimalSort,
   }),
   columnHelper.accessor('share', {
     header: 'Доля',
-    cell: (cell) => formatPercent(cell.getValue(), 1),
+    cell: (cell) => {
+      const value = cell.getValue();
+      return (
+        <div className="weight-cell">
+          <span className="weight-value">{formatPercent(value, 1)}</span>
+          <span className="weight-track">
+            <span className="weight-fill" style={{ width: `${weightWidth(value)}%` }} />
+          </span>
+        </div>
+      );
+    },
     sortingFn: decimalSort,
   }),
 ];
+
+/** Подписи для мобильной раскладки — дизайн выводит их через data-label. */
+const MOBILE_LABELS: Record<string, string> = {
+  quantity: 'Количество',
+  average_price: 'Средняя цена',
+  current_price: 'Текущая цена',
+  value: 'Стоимость',
+  unrealized_pnl: 'P&L',
+  share: 'Доля',
+};
 
 export function PositionsTable({ positions }: { positions: PositionDto[] }) {
   // По умолчанию — убывание доли в портфеле (FR-018).
@@ -127,8 +143,7 @@ export function PositionsTable({ positions }: { positions: PositionDto[] }) {
     columns,
     state: { sorting },
     onSortingChange: setSorting,
-    // Повторный выбор столбца меняет направление на противоположное, а не
-    // снимает сортировку: у таблицы всегда есть понятный порядок (FR-018).
+    // Повторный выбор столбца меняет направление, а не снимает сортировку.
     enableSortingRemoval: false,
     // Идентичность строки — инструмент, а не порядковый номер: при фоновом
     // обновлении React переиспользует те же узлы, поэтому прокрутка и
@@ -140,50 +155,83 @@ export function PositionsTable({ positions }: { positions: PositionDto[] }) {
 
   if (positions.length === 0) {
     return (
-      <div className="table-frame">
-        <p className="empty-state">В портфеле пока нет позиций</p>
+      <div className="state-panel">
+        <div className="state-content">
+          <div className="state-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M6 7l1 12h10l1-12M9 7V4h6v3" />
+            </svg>
+          </div>
+          <h2>В портфеле пока нет позиций</h2>
+          <p>
+            Счёт подключён и синхронизирован. Позиции появятся здесь после зачисления активов на
+            брокерский счёт.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="table-frame">
-      <div className="table-scroll">
-        <table className="positions-table numeric" aria-label="Позиции">
-          <thead>
-            {table.getHeaderGroups().map((group) => (
-              <tr key={group.id}>
-                {group.headers.map((header) => {
-                  const sorted = header.column.getIsSorted();
-                  return (
-                    <th key={header.id} aria-sort={ariaSort(sorted)}>
-                      <button
-                        type="button"
-                        className="sort-button"
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <span className="sort-indicator" aria-hidden="true">
-                          {sorted === 'asc' ? '↑' : sorted === 'desc' ? '↓' : ''}
-                        </span>
-                      </button>
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <table aria-label="Позиции">
+        <colgroup>
+          <col className="instrument" />
+          <col className="quantity" />
+          <col className="price" />
+          <col className="price" />
+          <col className="value" />
+          <col className="pnl" />
+          <col className="weight" />
+        </colgroup>
+        <thead>
+          {table.getHeaderGroups().map((group) => (
+            <tr key={group.id}>
+              {group.headers.map((header) => {
+                const sorted = header.column.getIsSorted();
+                return (
+                  <th key={header.id} scope="col" aria-sort={ariaSort(sorted)}>
+                    <button
+                      type="button"
+                      className={`sort-button${sorted ? ' active' : ''}`}
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      {flexRender(header.column.columnDef.header, header.getContext())}{' '}
+                      <span className="sort-arrow" aria-hidden="true">
+                        {sorted === 'asc' ? '↑' : sorted === 'desc' ? '↓' : ''}
+                      </span>
+                    </button>
+                  </th>
+                );
+              })}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => {
+                const id = cell.column.id;
+                const pnl = id === 'unrealized_pnl' ? cell.getValue<string | null>() : null;
+                const className =
+                  id === 'instrument'
+                    ? 'instrument-cell'
+                    : pnl === null
+                      ? undefined
+                      : isNegative(pnl)
+                        ? 'pnl-negative'
+                        : 'pnl-positive';
+
+                return (
+                  <td key={cell.id} className={className} data-label={MOBILE_LABELS[id]}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
