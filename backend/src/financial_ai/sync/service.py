@@ -22,6 +22,7 @@ from financial_ai.broker.validation import validate_broker_snapshot
 from financial_ai.db import repository
 from financial_ai.db.engine import get_session_factory
 from financial_ai.domain.portfolio import build_snapshot
+from financial_ai.sync import advisory
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,19 @@ class SyncService:
     async def sync_account_state(self) -> SyncResult:
         started = time.monotonic()
 
+        # Межпроцессная страховка: если синхронизацию уже выполняет другая
+        # реплика Worker, второго обращения к брокеру не будет — вернём
+        # результат, который она сохранила (FR-029).
+        async with self._session_factory() as lock_session:
+            if not await advisory.try_acquire(lock_session):
+                return await self._stored_result(started)
+
+            try:
+                return await self._perform(started)
+            finally:
+                await advisory.release(lock_session)
+
+    async def _perform(self, started: float) -> SyncResult:
         try:
             snapshot = await self._broker.fetch_snapshot()
             validate_broker_snapshot(snapshot)
@@ -81,6 +95,20 @@ class SyncService:
             captured_at=account_snapshot.captured_at,
             duration_ms=_elapsed_ms(started),
         )
+
+    async def _stored_result(self, started: float) -> SyncResult:
+        """Результат синхронизации, выполненной другим процессом."""
+        async with self._session_factory() as session:
+            sync_state = await repository.get_sync_state(session)
+            state = await repository.get_state(session)
+
+            return SyncResult(
+                status=sync_state.last_status,
+                captured_at=state.captured_at if state is not None else None,
+                failure_reason_code=sync_state.failure_reason_code,
+                deduplicated=True,
+                duration_ms=_elapsed_ms(started),
+            )
 
     async def _record_failure(self, error: BrokerError, started: float) -> SyncResult:
         # Отсутствие токена — это «доступ не сконфигурирован», а не «токен

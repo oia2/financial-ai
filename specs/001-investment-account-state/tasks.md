@@ -165,18 +165,18 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T057 [P] [US3] Контрактный тест `POST /api/portfolio/refresh` в `backend/tests/contract/test_portfolio_refresh.py`: успех, `status: failed` при ошибке брокера, `503 worker_unavailable` при недоступном worker'е
-- [ ] T058 [P] [US3] Контрактный тест `POST /internal/sync` в `backend/tests/contract/test_worker_sync.py`: 200 с `status: failed` вместо 5xx при ошибке брокера, поля `deduplicated` и `duration_ms`
-- [ ] T059 [P] [US3] Интеграционный тест в `backend/tests/integration/test_sync_dedup.py`: одновременные ручная и фоновая синхронизации → ровно одно обращение к брокеру, второй запрос получает результат первого (FR-029)
-- [ ] T060 [P] [US3] Тест кнопки обновления в `frontend/tests/refresh-now.test.tsx`: индикация загрузки, обновлённые значения и отметка времени, блокировка повторного запуска до завершения
+- [X] T057 [P] [US3] Контрактный тест `POST /api/portfolio/refresh` в `backend/tests/contract/test_portfolio_refresh.py`: успех, `status: failed` при ошибке брокера, `503 worker_unavailable` при недоступном worker'е
+- [X] T058 [P] [US3] Контрактный тест `POST /internal/sync` в `backend/tests/contract/test_worker_sync.py`: 200 с `status: failed` вместо 5xx при ошибке брокера, поля `deduplicated` и `duration_ms`
+- [X] T059 [P] [US3] Интеграционный тест в `backend/tests/integration/test_sync_dedup.py`: одновременные ручная и фоновая синхронизации → ровно одно обращение к брокеру, второй запрос получает результат первого (FR-029)
+- [X] T060 [P] [US3] Тест кнопки обновления в `frontend/tests/refresh-now.test.tsx`: индикация загрузки, обновлённые значения и отметка времени, блокировка повторного запуска до завершения
 
 ### Implementation for User Story 3
 
-- [ ] T061 [US3] Реализовать `backend/src/financial_ai/worker/routes/sync.py`: `POST /internal/sync` — вызов той же `sync_account_state()`, что использует планировщик, ответ по [contracts/worker-internal-api.md](./contracts/worker-internal-api.md)
-- [ ] T062 [US3] Дополнить `backend/src/financial_ai/sync/lock.py`: PostgreSQL advisory lock поверх `asyncio.Lock` и семантика `deduplicated` — ожидание текущей операции вместо второго обращения к брокеру, ограниченное таймаутом
-- [ ] T063 [US3] Реализовать `POST /api/portfolio/refresh` в `backend/src/financial_ai/api/routes/portfolio.py`: httpx-вызов `WORKER_INTERNAL_URL`, трансляция результата, `503 worker_unavailable` при недоступности worker'а
-- [ ] T064 [P] [US3] Реализовать `frontend/src/features/refresh-now/`: кнопка «Обновить сейчас», индикация выполнения, защита от повторного запуска, инвалидация query после завершения
-- [ ] T065 [US3] Добавить подтверждение успешного обновления в `frontend/src/shared/ui/toast/` и подключить его к сценарию ручного обновления (US3 AS2)
+- [X] T061 [US3] Реализовать `backend/src/financial_ai/worker/routes/sync.py`: `POST /internal/sync` — вызов той же `sync_account_state()`, что использует планировщик, ответ по [contracts/worker-internal-api.md](./contracts/worker-internal-api.md)
+- [X] T062 [US3] Дополнить `backend/src/financial_ai/sync/lock.py`: PostgreSQL advisory lock поверх `asyncio.Lock` и семантика `deduplicated` — ожидание текущей операции вместо второго обращения к брокеру, ограниченное таймаутом
+- [X] T063 [US3] Реализовать `POST /api/portfolio/refresh` в `backend/src/financial_ai/api/routes/portfolio.py`: httpx-вызов `WORKER_INTERNAL_URL`, трансляция результата, `503 worker_unavailable` при недоступности worker'а
+- [X] T064 [P] [US3] Реализовать `frontend/src/features/refresh-now/`: кнопка «Обновить сейчас», индикация выполнения, защита от повторного запуска, инвалидация query после завершения
+- [X] T065 [US3] Добавить подтверждение успешного обновления в `frontend/src/shared/ui/toast/` и подключить его к сценарию ручного обновления (US3 AS2)
 
 **Checkpoint**: US1–US3 работают независимо; автоматическое и ручное обновление используют один код синхронизации
 

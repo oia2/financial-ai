@@ -18,7 +18,7 @@ from financial_ai.sync.factory import build_sync_service
 from financial_ai.sync.lock import SingleFlight
 from financial_ai.sync.scheduler import SyncScheduler
 from financial_ai.sync.service import SyncResult
-from financial_ai.worker.routes import health
+from financial_ai.worker.routes import health, sync
 
 
 @asynccontextmanager
@@ -51,3 +51,4 @@ app = FastAPI(
 )
 
 app.include_router(health.router, prefix="/internal")
+app.include_router(sync.router, prefix="/internal")

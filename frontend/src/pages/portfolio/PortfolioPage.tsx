@@ -1,4 +1,5 @@
 import { RefreshIntervalSetting } from '@/features/refresh-interval-setting/RefreshIntervalSetting';
+import { RefreshNow } from '@/features/refresh-now/RefreshNow';
 import {
   selectPortfolioState,
   usePortfolioQuery,
@@ -40,7 +41,10 @@ export function PortfolioPage() {
               </p>
             </div>
             <Freshness snapshot={query.data.snapshot} sync={query.data.sync} />
-            <RefreshIntervalSetting />
+            <div className="header-actions">
+              <RefreshNow inProgress={query.data.sync.in_progress} />
+              <RefreshIntervalSetting />
+            </div>
           </div>
         ) : null}
       </header>

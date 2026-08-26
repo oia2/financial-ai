@@ -48,6 +48,13 @@
   font-size: 13px;
 }
 
+.header-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
 .page-main {
   display: flex;
   flex-direction: column;

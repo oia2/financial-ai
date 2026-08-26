@@ -8,9 +8,11 @@ Backend-API не обращается к брокеру. Он отдаёт то,
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.api.schemas import (
@@ -18,14 +20,19 @@ from financial_ai.api.schemas import (
     BrokerOut,
     PortfolioOut,
     PositionOut,
+    RefreshResultOut,
     SnapshotOut,
     SyncOut,
 )
+from financial_ai.config import get_settings
 from financial_ai.db import repository
 from financial_ai.db.engine import get_session
 from financial_ai.db.models import AccountState, BrokerSyncState, PortfolioPosition
 from financial_ai.db.settings_repo import get_interval_seconds
 from financial_ai.domain.portfolio import age_seconds, is_stale, percent, share, stale_after_seconds
+from financial_ai.sync import advisory
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["portfolio"])
 
@@ -44,6 +51,9 @@ async def get_portfolio(
     positions = await repository.get_positions(session) if state is not None else []
     sync_state = await repository.get_sync_state(session)
     interval = await get_interval_seconds(session)
+    # Идёт ли синхронизация прямо сейчас — видно по advisory lock, который
+    # держит Worker; отдельного канала между сервисами для этого не нужно.
+    in_progress = await advisory.is_held(session)
 
     now = dt.datetime.now(dt.UTC)
 
@@ -53,7 +63,7 @@ async def get_portfolio(
             account=AccountOut.model_validate(account) if account is not None else None,
         ),
         snapshot=_build_snapshot_out(state, positions, now),
-        sync=_build_sync_out(sync_state, state, interval, now),
+        sync=_build_sync_out(sync_state, state, interval, now, in_progress),
     )
 
 
@@ -108,6 +118,7 @@ def _build_sync_out(
     state: AccountState | None,
     interval_seconds: int,
     now: dt.datetime,
+    in_progress: bool,
 ) -> SyncOut:
     captured_at = state.captured_at if state is not None else None
 
@@ -121,5 +132,33 @@ def _build_sync_out(
         is_stale=is_stale(captured_at, now, interval_seconds),
         stale_after_seconds=stale_after_seconds(interval_seconds),
         refresh_interval_seconds=interval_seconds,
-        in_progress=False,
+        in_progress=in_progress,
+    )
+
+
+@router.post("/portfolio/refresh", response_model=RefreshResultOut)
+async def refresh_portfolio() -> RefreshResultOut:
+    """Ручное обновление (US3).
+
+    Backend-API не ходит к брокеру: он транслирует команду Backend-Worker,
+    у которого есть токен и общий лок с фоновым циклом.
+    """
+    settings = get_settings()
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.worker_sync_timeout_seconds) as client:
+            response = await client.post(f"{settings.worker_internal_url}/internal/sync")
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPError as error:
+        # Worker недоступен. Для интерфейса это ошибка синхронизации, а не
+        # обрыв связи с сервером: ответ получен, значит сервер жив.
+        logger.warning("Backend-Worker недоступен для ручного обновления")
+        raise HTTPException(status_code=503, detail={"code": "worker_unavailable"}) from error
+
+    return RefreshResultOut(
+        status=payload["status"],
+        deduplicated=payload["deduplicated"],
+        captured_at=payload["captured_at"],
+        failure_reason_code=payload["failure_reason_code"],
     )
