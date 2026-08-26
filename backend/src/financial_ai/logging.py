@@ -31,6 +31,10 @@ class SecretFilter(logging.Filter):
         if secret and len(secret) >= MIN_SECRET_LENGTH and secret not in self._secrets:
             self._secrets.append(secret)
 
+    def scrub(self, value: str) -> str:
+        """Публичный вариант: используется форматтером для готовой строки."""
+        return self._scrub(value)
+
     def _scrub(self, value: str) -> str:
         for secret in self._secrets:
             if secret in value:
@@ -60,7 +64,17 @@ class SecretFilter(logging.Filter):
 
 
 class JsonFormatter(logging.Formatter):
-    """Однострочный JSON — пригоден для машинного разбора."""
+    """Однострочный JSON — пригоден для машинного разбора.
+
+    Секреты вырезаются здесь, из уже собранной строки. Фильтра на записи
+    недостаточно: текст исключения формируется самим форматтером, а поля
+    ``extra`` попадают в вывод, минуя обработку фильтра. Вырезание на
+    последнем шаге закрывает оба пути.
+    """
+
+    def __init__(self, secret_filter: SecretFilter | None = None) -> None:
+        super().__init__()
+        self._secret_filter = secret_filter
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -77,7 +91,10 @@ class JsonFormatter(logging.Formatter):
             if key.startswith("ctx_"):
                 payload[key[4:]] = value
 
-        return json.dumps(payload, ensure_ascii=False)
+        line = json.dumps(payload, ensure_ascii=False)
+        if self._secret_filter is not None:
+            line = self._secret_filter.scrub(line)
+        return line
 
 
 _secret_filter = SecretFilter()
@@ -93,7 +110,7 @@ def setup_logging(level: str = "INFO", secrets: list[str] | None = None) -> None
         _secret_filter.add_secret(secret)
 
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
+    handler.setFormatter(JsonFormatter(_secret_filter))
     handler.addFilter(_secret_filter)
 
     root = logging.getLogger()

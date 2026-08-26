@@ -9,6 +9,7 @@ import {
 import { Freshness } from '@/widgets/freshness/Freshness';
 import { PortfolioSummary } from '@/widgets/portfolio-summary/PortfolioSummary';
 import { PositionsTable } from '@/widgets/positions-table/PositionsTable';
+import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner';
 
 import './portfolio-page.css';
 
@@ -50,6 +51,13 @@ export function PortfolioPage() {
       </header>
 
       <main className="page-main">
+        <SyncStatusBanner
+          state={state}
+          sync={query.data?.sync}
+          ageSeconds={query.data?.snapshot?.age_seconds}
+          onRetry={() => void query.refetch()}
+          retrying={query.isFetching}
+        />
         <PortfolioBody state={state} data={query.data} />
       </main>
     </div>
@@ -76,6 +84,18 @@ function PortfolioBody({
 }) {
   if (state === 'loading') {
     return <p className="state-panel">Обновляем данные портфеля…</p>;
+  }
+
+  if (state === 'server-offline' && data === undefined) {
+    return (
+      <section className="state-panel">
+        <h2>Данные недоступны</h2>
+        <p className="muted">
+          Состояние счёта не было загружено до потери связи с сервером. Как только связь
+          восстановится, данные появятся автоматически.
+        </p>
+      </section>
+    );
   }
 
   if (state === 'no-broker') {

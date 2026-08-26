@@ -193,21 +193,21 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T066 [P] [US4] Unit-тесты классификации ошибок в `backend/tests/unit/test_broker_errors.py`: `broker_unavailable`, `broker_rejected_token`, `rate_limited`, `validation_failed`, `internal_error`
-- [ ] T067 [P] [US4] Интеграционный тест в `backend/tests/integration/test_sync_failure.py`: неуспешная синхронизация обновляет только `broker_sync_state`, сохранённое состояние и позиции не изменяются (FR-008, US4 AS3)
-- [ ] T068 [P] [US4] Unit-тест `is_stale` в `backend/tests/unit/test_staleness.py`: порог `max(3 × интервал, 180 с)` по FR-040, отсутствие снимка не считается устареванием
-- [ ] T069 [P] [US4] Тесты состояний в `frontend/tests/sync-states.test.tsx`: три различимых предупреждения (устаревание, сбой брокера, нет связи с сервером), автоматическое снятие предупреждения после восстановления (FR-039, SC-011)
-- [ ] T070 [P] [US4] Тест в `backend/tests/integration/test_no_secret_leak.py`: значение токена не появляется в ответах API, логах и сообщениях об ошибках при всех классах сбоев (SC-009)
+- [X] T066 [P] [US4] Unit-тесты классификации ошибок в `backend/tests/unit/test_broker_errors.py`: `broker_unavailable`, `broker_rejected_token`, `rate_limited`, `validation_failed`, `internal_error`
+- [X] T067 [P] [US4] Интеграционный тест в `backend/tests/integration/test_sync_failure.py`: неуспешная синхронизация обновляет только `broker_sync_state`, сохранённое состояние и позиции не изменяются (FR-008, US4 AS3)
+- [X] T068 [P] [US4] Unit-тест `is_stale` в `backend/tests/unit/test_staleness.py`: порог `max(3 × интервал, 180 с)` по FR-040, отсутствие снимка не считается устареванием
+- [X] T069 [P] [US4] Тесты состояний в `frontend/tests/sync-states.test.tsx`: три различимых предупреждения (устаревание, сбой брокера, нет связи с сервером), автоматическое снятие предупреждения после восстановления (FR-039, SC-011)
+- [X] T070 [P] [US4] Тест в `backend/tests/integration/test_no_secret_leak.py`: значение токена не появляется в ответах API, логах и сообщениях об ошибках при всех классах сбоев (SC-009)
 
 ### Implementation for User Story 4
 
-- [ ] T071 [US4] Реализовать `backend/src/financial_ai/broker/errors.py`: классификация исключений SDK и сетевых ошибок в коды `failure_reason_code`, санитизация диагностики
-- [ ] T072 [US4] Дополнить `backend/src/financial_ai/sync/service.py`: транзакция неуспеха по [data-model.md §8](./data-model.md) — обновление статуса, причины, `consecutive_failures`, перевод `broker_status` в `rejected` при отклонённом токене; `not_configured` при отсутствующем токене
-- [ ] T073 [US4] Дополнить `backend/src/financial_ai/api/routes/portfolio.py` и `schemas.py`: блоки `broker.status`, `sync.status`, `sync.failure_reason_code`, `sync.is_stale`, `sync.stale_after_seconds`, `sync.in_progress`
-- [ ] T074 [P] [US4] Реализовать `frontend/src/widgets/sync-status-banner/`: варианты «Данные временно устарели», «Не удалось обновить портфель» и «Нет связи с сервером Financial AI» по утверждённому дизайну, с действием повтора
-- [ ] T075 [US4] Реализовать в `frontend/src/entities/portfolio/` и `frontend/src/shared/api/client.ts` обработку транспортной ошибки: состояние «нет связи с сервером», автоматические повторы подключения, немедленный повтор по действию пользователя, автоматическое снятие после восстановления (FR-038, FR-039)
-- [ ] T076 [US4] Реализовать в `frontend/src/pages/portfolio/` состояние «Брокер не подключён» для `broker.status` `not_configured` и `rejected`: пояснение о несконфигурированном доступе без раскрытия токена (FR-020, FR-024)
-- [ ] T077 [US4] Подключить логирование причин неуспешной синхронизации в `backend/src/financial_ai/sync/service.py` через фильтр секретов из `logging.py` (FR-030)
+- [X] T071 [US4] Реализовать `backend/src/financial_ai/broker/errors.py`: классификация исключений SDK и сетевых ошибок в коды `failure_reason_code`, санитизация диагностики
+- [X] T072 [US4] Дополнить `backend/src/financial_ai/sync/service.py`: транзакция неуспеха по [data-model.md §8](./data-model.md) — обновление статуса, причины, `consecutive_failures`, перевод `broker_status` в `rejected` при отклонённом токене; `not_configured` при отсутствующем токене
+- [X] T073 [US4] Дополнить `backend/src/financial_ai/api/routes/portfolio.py` и `schemas.py`: блоки `broker.status`, `sync.status`, `sync.failure_reason_code`, `sync.is_stale`, `sync.stale_after_seconds`, `sync.in_progress`
+- [X] T074 [P] [US4] Реализовать `frontend/src/widgets/sync-status-banner/`: варианты «Данные временно устарели», «Не удалось обновить портфель» и «Нет связи с сервером Financial AI» по утверждённому дизайну, с действием повтора
+- [X] T075 [US4] Реализовать в `frontend/src/entities/portfolio/` и `frontend/src/shared/api/client.ts` обработку транспортной ошибки: состояние «нет связи с сервером», автоматические повторы подключения, немедленный повтор по действию пользователя, автоматическое снятие после восстановления (FR-038, FR-039)
+- [X] T076 [US4] Реализовать в `frontend/src/pages/portfolio/` состояние «Брокер не подключён» для `broker.status` `not_configured` и `rejected`: пояснение о несконфигурированном доступе без раскрытия токена (FR-020, FR-024)
+- [X] T077 [US4] Подключить логирование причин неуспешной синхронизации в `backend/src/financial_ai/sync/service.py` через фильтр секретов из `logging.py` (FR-030)
 
 **Checkpoint**: все причины несвежести данных различимы; сохранённое состояние никогда не затирается сбоем
 
@@ -223,12 +223,12 @@ T-Bank: общую стоимость, денежные средства с до
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T078 [P] [US5] Тест сортировки в `frontend/tests/positions-sorting.test.tsx`: сортировка по каждому столбцу, переключение направления повторным выбором, порядок по умолчанию — убывание доли в портфеле
+- [X] T078 [P] [US5] Тест сортировки в `frontend/tests/positions-sorting.test.tsx`: сортировка по каждому столбцу, переключение направления повторным выбором, порядок по умолчанию — убывание доли в портфеле
 
 ### Implementation for User Story 5
 
-- [ ] T079 [US5] Подключить TanStack Table в `frontend/src/widgets/positions-table/`: сортировка по всем отображаемым столбцам с переключением направления и индикацией (FR-018)
-- [ ] T080 [US5] Задать сортировку по умолчанию — убывание доли в портфеле — в `frontend/src/widgets/positions-table/`, с корректной обработкой `null` в столбцах P&L и средней цены
+- [X] T079 [US5] Подключить TanStack Table в `frontend/src/widgets/positions-table/`: сортировка по всем отображаемым столбцам с переключением направления и индикацией (FR-018)
+- [X] T080 [US5] Задать сортировку по умолчанию — убывание доли в портфеле — в `frontend/src/widgets/positions-table/`, с корректной обработкой `null` в столбцах P&L и средней цены
 
 **Checkpoint**: все пять user stories функционально завершены
 

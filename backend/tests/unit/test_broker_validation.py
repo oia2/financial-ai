@@ -107,9 +107,7 @@ def test_missing_broker_total_skips_reconciliation() -> None:
 def test_short_position_does_not_break_reconciliation() -> None:
     snapshot = make_snapshot(
         cash="100000",
-        positions=(
-            make_position(instrument_uid="short", quantity="-4", current_price="180"),
-        ),
+        positions=(make_position(instrument_uid="short", quantity="-4", current_price="180"),),
         broker_total_value="99280",
     )
 

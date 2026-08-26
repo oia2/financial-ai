@@ -85,13 +85,21 @@ async def test_sequential_requests_are_not_deduplicated(db_session: AsyncSession
 async def test_in_progress_is_visible_through_advisory_lock(db_session: AsyncSession) -> None:
     from financial_ai.sync import advisory
 
-    broker = FakeBroker(delay=0.2)
+    broker = FakeBroker(delay=0.5)
     scheduler = _scheduler(broker)
 
     assert await advisory.is_held(db_session) is False
 
     task = asyncio.create_task(scheduler.run_once())
-    await asyncio.sleep(0.05)
+
+    # Ждём появления блокировки, а не фиксированную паузу: под нагрузкой
+    # старт задачи занимает разное время.
+    deadline = asyncio.get_running_loop().time() + 3.0
+    while asyncio.get_running_loop().time() < deadline:
+        if await advisory.is_held(db_session):
+            break
+        await asyncio.sleep(0.01)
+
     # Backend-API видит выполняющуюся синхронизацию, хотя лок берёт Worker.
     assert await advisory.is_held(db_session) is True
 

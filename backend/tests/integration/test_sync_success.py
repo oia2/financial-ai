@@ -51,8 +51,10 @@ async def test_snapshot_is_stored_with_positions(db_session: AsyncSession) -> No
 
     positions = (
         await db_session.execute(
-            text("select instrument_uid, value, unrealized_pnl from portfolio_position "
-                 "order by sort_order")
+            text(
+                "select instrument_uid, value, unrealized_pnl from portfolio_position "
+                "order by sort_order"
+            )
         )
     ).all()
 
@@ -93,8 +95,10 @@ async def test_successful_sync_marks_broker_connected(db_session: AsyncSession) 
     await db_session.commit()
     row = (
         await db_session.execute(
-            text("select broker_status, last_status, last_success_at, consecutive_failures "
-                 "from broker_sync_state where id = 1")
+            text(
+                "select broker_status, last_status, last_success_at, consecutive_failures "
+                "from broker_sync_state where id = 1"
+            )
         )
     ).one()
 
@@ -152,8 +156,10 @@ async def test_empty_portfolio_is_stored_as_zeroes(db_session: AsyncSession) -> 
     await db_session.commit()
     row = (
         await db_session.execute(
-            text("select total_value, positions_count, positions_cost_basis from account_state "
-                 "where id = 1")
+            text(
+                "select total_value, positions_count, positions_cost_basis from account_state "
+                "where id = 1"
+            )
         )
     ).one()
 

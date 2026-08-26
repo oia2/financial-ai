@@ -91,11 +91,13 @@ def test_position_without_average_price_does_not_pollute_cost_basis() -> None:
         make_snapshot(
             cash="0",
             positions=(
-                make_position(instrument_uid="a", quantity="10", average_price="100",
-                              current_price="120"),
+                make_position(
+                    instrument_uid="a", quantity="10", average_price="100", current_price="120"
+                ),
                 # Внешнее зачисление: цена приобретения неизвестна.
-                make_position(instrument_uid="b", quantity="10", average_price=None,
-                              current_price="50"),
+                make_position(
+                    instrument_uid="b", quantity="10", average_price=None, current_price="50"
+                ),
             ),
         )
     )
@@ -113,10 +115,12 @@ def test_short_position_is_handled_without_distorting_totals() -> None:
         make_snapshot(
             cash="100000",
             positions=(
-                make_position(instrument_uid="long", quantity="10", average_price="100",
-                              current_price="150"),
-                make_position(instrument_uid="short", quantity="-4", average_price="200",
-                              current_price="180"),
+                make_position(
+                    instrument_uid="long", quantity="10", average_price="100", current_price="150"
+                ),
+                make_position(
+                    instrument_uid="short", quantity="-4", average_price="200", current_price="180"
+                ),
             ),
         )
     )

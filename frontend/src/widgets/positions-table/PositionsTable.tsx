@@ -117,6 +117,9 @@ export function PositionsTable({ positions }: { positions: PositionDto[] }) {
     columns,
     state: { sorting },
     onSortingChange: setSorting,
+    // Повторный выбор столбца меняет направление на противоположное, а не
+    // снимает сортировку: у таблицы всегда есть понятный порядок (FR-018).
+    enableSortingRemoval: false,
     // Идентичность строки — инструмент, а не порядковый номер: при фоновом
     // обновлении React переиспользует те же узлы, поэтому прокрутка и
     // выбранная сортировка не сбрасываются (US2 AS2).
