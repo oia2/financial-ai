@@ -355,3 +355,14 @@ Task: "Форматирование под русскую локаль в fronte
 - [X] T091 Прогнать на живых данных сценарии quickstart 4.1, 4.2, 4.5, 4.7, 4.8, 4.9, ранее заблокированные отклонённым токеном, и обновить раздел приёмки в `specs/001-investment-account-state/checklists/requirements.md` per US1/AC1, US2, US4, US5, SC-002, SC-005 (contradicts)
 - [X] T092 Привести раздел Project Structure в `specs/001-investment-account-state/plan.md` в соответствие с кодом: `widgets/{app-header,capital-strip,positions-table,sync-status-banner}`, `features/refresh-now` как хук, добавленные `shared/lib/{plural,preferences}.ts` per plan: Project Structure (partial)
 - [X] T093 [P] Переименовать каталог `frontend/src/widgets/positions-table/` в `positions-section` вслед за компонентом `PositionsSection`, который теперь включает панель инструментов, пагинацию и примечание per Constitution V (partial)
+
+---
+
+## Phase 10: Convergence
+
+**Purpose**: расхождения, найденные вторым прогоном `/speckit-converge` 2026-08-26.
+Функциональных пробелов нет — все три касаются проектных артефактов, отставших от кода.
+
+- [ ] T094 Внести поле `accrued_interest` в описание позиции в `specs/001-investment-account-state/contracts/backend-api.md`: API отдаёт его и фронтенд им пользуется, в `data-model.md` оно описано, а в контракте отсутствует; добавить пояснение, что НКД включён в `value` per plan: contracts/backend-api.md (contradicts)
+- [ ] T095 Актуализировать `AGENTS.md`: Nginx перечислен отдельным компонентом, хотя стал runtime-слоем контейнера frontend; добавить `scripts/check.sh` как единую команду проверки готовности per Constitution IX (partial)
+- [ ] T096 [P] Добавить `scripts/` в дерево Project Structure в `specs/001-investment-account-state/plan.md` per plan: Project Structure, Constitution V (partial)
