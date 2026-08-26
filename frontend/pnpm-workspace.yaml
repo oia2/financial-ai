@@ -1,0 +1,5 @@
+# pnpm 11: явное разрешение build-скриптов для зависимостей, которым они нужны.
+# esbuild ставит платформенный бинарник, msw — service worker для тестов.
+allowBuilds:
+  esbuild: true
+  msw: true

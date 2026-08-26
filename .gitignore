@@ -19,3 +19,33 @@ logs/
 dist/
 build/
 tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+coverage/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Конфигурация локальных MCP-серверов: содержит абсолютные пути к приложениям
+# на конкретной машине разработчика.
+.mcp.json
+
+# Файлы контекста конкретных AI-инструментов. Правила проекта живут в
+# AGENTS.md и .specify/memory/constitution.md — они не привязаны к вендору.
+CLAUDE.md
+.cursorrules
