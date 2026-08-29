@@ -1,0 +1,12 @@
+[
+  { "asset_id": "EQ_AST_SBER", "price_series_id": "EQ_PRS_SBER" },
+  { "asset_id": "EQ_AST_GAZP", "price_series_id": "EQ_PRS_GAZP" },
+  { "asset_id": "EQ_AST_LKOH", "price_series_id": "EQ_PRS_LKOH" },
+  { "asset_id": "EQ_AST_GMKN", "price_series_id": "EQ_PRS_GMKN" },
+  { "asset_id": "EQ_AST_ROSN", "price_series_id": "EQ_PRS_ROSN" },
+  { "asset_id": "EQ_AST_NVTK", "price_series_id": "EQ_PRS_NVTK" },
+  { "asset_id": "EQ_AST_TATN", "price_series_id": "EQ_PRS_TATN" },
+  { "asset_id": "EQ_AST_MTSS", "price_series_id": "EQ_PRS_MTSS" },
+  { "asset_id": "EQ_AST_MGNT", "price_series_id": "EQ_PRS_MGNT" },
+  { "asset_id": "EQ_AST_CHMF", "price_series_id": "EQ_PRS_CHMF" }
+]

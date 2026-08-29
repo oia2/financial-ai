@@ -53,6 +53,21 @@
 Наличие компонента на целевой диаграмме не означает, что он реализуется сейчас.
 В объём первой фичи входят только выделенные ниже контейнеры.
 
+Полное описание системы — состав контейнеров, взаимодействия, границы ответственности и
+отступления развёртывания от диаграммы — в [`docs/architecture.md`](docs/architecture.md).
+Каноническая диаграмма контейнеров: [`docs/container-diagram.svg`](docs/container-diagram.svg).
+
+Звено **Daily ML** ранжирует акции по ожидаемой избыточной доходности против индекса
+MOEX на горизонте семи торговых сессий. Модель разрабатывается в отдельном
+исследовательском репозитории и находится в исследовательской стадии; её описание —
+[`docs/daily-ml-model.md`](docs/daily-ml-model.md).
+
+В платформе это звено пока не реализовано. Чтобы стенд можно было поднимать целиком, в
+репозитории есть его эмулятор — отдельный контейнер, который отвечает на запрос
+ранжирования правдоподобным по форме ответом с вымышленными скорами. Он ни с чем не
+связан и подлежит замене настоящей моделью: см.
+[`daily-ml-emulator/README.md`](daily-ml-emulator/README.md).
+
 ### Контейнеры первой фичи
 
 | Контейнер | Роль | Ходит в T-Bank |
@@ -131,6 +146,13 @@ frontend/                     # React-приложение
 ├── src/
 └── tests/
 
+daily-ml-emulator/            # эмулятор звена ранжирования: временный стенд-заместитель
+├── Dockerfile                # multi-stage: uv → python:3.12-slim
+├── pyproject.toml            # отдельный uv-проект
+├── universe/default.json     # вселенная активов
+├── src/daily_ml_emulator/
+└── tests/
+
 deployments/docker-compose/   # всё, что относится к развёртыванию
 ├── docker-compose.yml
 ├── nginx/nginx.conf
@@ -146,6 +168,11 @@ specs/                        # спецификации фич (Spec Kit)
     ├── contracts/            # контракты API
     ├── quickstart.md         # запуск и проверочные сценарии
     └── checklists/
+
+docs/                             # документация системы
+├── architecture.md               # описание системы: контейнеры, границы, потоки
+├── container-diagram.svg         # каноническая диаграмма контейнеров (C4), правится в draw.io
+└── daily-ml-model.md             # описание модели ранжирования Daily ML
 
 .specify/memory/constitution.md   # обязательные инженерные правила проекта
 AGENTS.md                         # контекст проекта для AI-агентов
@@ -168,6 +195,7 @@ Dockerfile каждого компонента лежит рядом с его �
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | postgres | Учётные данные БД |
 | `DATABASE_URL` | backend-api, backend-worker | Подключение к PostgreSQL |
 | `WORKER_INTERNAL_URL` | backend-api | Адрес внутреннего REST worker'а |
+| `DAILY_ML_EMULATOR_PORT` | daily-ml-emulator | Порт эмулятора ранжирования на хосте (по умолчанию 8100) |
 
 Правила:
 
@@ -195,6 +223,16 @@ docker compose -f deployments/docker-compose/docker-compose.yml up --build
 ```bash
 curl -s localhost:8080/api/health
 ```
+
+Вместе со стендом поднимается эмулятор Daily ML — заглушка звена ранжирования. Его можно
+запустить и отдельно, он ни от чего не зависит:
+
+```bash
+docker compose -f deployments/docker-compose/docker-compose.yml up --build daily-ml-emulator
+curl -s "localhost:8100/rankings?decision_date=2026-08-28"
+```
+
+Все скоры в его ответе вымышлены; каждый ответ помечен `"emulated": true`.
 
 ### Локальная разработка
 
