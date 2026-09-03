@@ -229,6 +229,11 @@ class IngestRun(Base):
     # ok | failed | skipped. skipped — законный исход: неторговый день или
     # источник без данных на эту дату.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # daily | catchup | backfill. Прогон догона за вчерашнюю дату иначе
+    # неотличим от обычного, а ручной сбор за прошлую дату — от догона.
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="daily")
+
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rows_written: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

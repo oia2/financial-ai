@@ -21,6 +21,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data import gaps
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
 from financial_ai.market_data.repository import MarketDataRepository
@@ -73,6 +74,28 @@ class IngestResult:
     def unfinished_sources(self) -> list[str]:
         """Источники, оставшиеся незакрытыми: видны без чтения логов."""
         return [o.source_id for o in self.outcomes if o.status == STATUS_FAILED]
+
+
+TRIGGER_DAILY = "daily"
+TRIGGER_CATCHUP = "catchup"
+
+
+@dataclass(slots=True)
+class CatchupResult:
+    """Исход догона пропущенных сессий."""
+
+    requested: list[dt.date] = field(default_factory=list)
+    closed: list[dt.date] = field(default_factory=list)
+    failed: list[dt.date] = field(default_factory=list)
+
+    # Хранилище пусто: это не дыра, а отсутствие истории. Догон намеренно не
+    # выполнялся — нужна первичная загрузка.
+    needs_backfill: bool = False
+    skipped_reason: str | None = None
+
+    @property
+    def attempted(self) -> bool:
+        return bool(self.requested)
 
 
 def build_iss_config(settings: Settings) -> IssConfig:
@@ -202,6 +225,162 @@ async def ingest_session(
             await iss.__aexit__(None, None, None)
 
 
+async def catch_up(
+    session: AsyncSession,
+    settings: Settings,
+    asof_date: dt.date,
+    client: IssClient | None = None,
+    cbr_client: httpx.AsyncClient | None = None,
+) -> CatchupResult:
+    """Догнать пропущенные сессии окна.
+
+    Три свойства, ради которых написано именно так:
+
+    - **сессии идут от старых к новым.** При прерывании остаётся закрытым более
+      ранний участок окна, а не разрозненные даты;
+    - **недоступность одной сессии не отменяет остальные.** Задержанные
+      модальности за старые даты могут быть недоступны по своей природе;
+    - **порога по числу сессий нет.** Догоняется всё окно: система работает с
+      314 сессиями за раз, и остановка на десятом дне сделала бы механизм
+      бесполезным ровно в том случае, ради которого он заведён.
+    """
+    result = CatchupResult()
+
+    if not settings.market_data_catchup_enabled:
+        result.skipped_reason = "догон выключен настройкой"
+        return result
+
+    report = await gaps.find_gaps(session, settings, asof_date)
+
+    if report.needs_backfill:
+        # Разграничение по состоянию хранилища, а не по числу пропущенных дней:
+        # на чистой базе календарь уже полон, и «пропущено 314 сессий» —
+        # нормальное состояние новой установки, а не авария.
+        result.needs_backfill = True
+        result.skipped_reason = "в хранилище нет наблюдений: нужна первичная загрузка"
+        logger.warning("догон не выполняется: %s", result.skipped_reason)
+        return result
+
+    if not report.missing_sessions:
+        return result
+
+    result.requested = list(report.missing_sessions)
+    logger.info(
+        "догон: пропущено сессий %d, окно %d",
+        len(result.requested),
+        len(report.window),
+    )
+
+    repository = MarketDataRepository(session)
+    owns_client = client is None
+    iss = client or IssClient(build_iss_config(settings))
+    if owns_client:
+        await iss.__aenter__()
+
+    try:
+        for day in result.requested:
+            run_id = str(uuid.uuid4())
+            outcomes = await _catch_up_session(repository, run_id, iss, day)
+            await session.commit()
+
+            # Сессия считается закрытой по котировкам: на них держится
+            # пространство строк. Недоступность задержанной модальности за
+            # старую дату — нормальное явление, а не незакрытая сессия.
+            quotes = next(o for o in outcomes if o.source_id == equity_d1.SOURCE_ID)
+            if quotes.status == STATUS_FAILED:
+                result.failed.append(day)
+            else:
+                result.closed.append(day)
+
+        # Диапазонные источники закрывают дыру одним обращением на ряд: биржа и
+        # ЦБ отдают историю за период, и перебор дат здесь был бы чистой
+        # потерей.
+        await _catch_up_ranges(
+            repository, iss, result.requested[0], result.requested[-1], cbr_client
+        )
+        await session.commit()
+    finally:
+        if owns_client:
+            await iss.__aexit__(None, None, None)
+
+    logger.info("догон: закрыто %d из %d", len(result.closed), len(result.requested))
+    return result
+
+
+async def _catch_up_session(
+    repository: MarketDataRepository,
+    run_id: str,
+    iss: IssClient,
+    session_date: dt.date,
+) -> list[SourceOutcome]:
+    """Собрать одну пропущенную сессию источниками с выборкой по дате.
+
+    Справочник секторов сюда не входит: он отражает **текущую** принадлежность,
+    истории у него нет, и догонять там нечего. Дивиденды тоже: они собираются по
+    активу за всю историю сразу, поэтому ежедневный прогон уже покрывает
+    пропущенные дни.
+    """
+    outcomes: list[SourceOutcome] = []
+
+    for source_id, action in (
+        (
+            equity_d1.SOURCE_ID,
+            lambda: equity_d1.sync_equity_daily(iss, repository, session_date),
+        ),
+        (
+            equity_agg.SOURCE_ID,
+            lambda: equity_agg.sync_equity_aggregates(iss, repository, session_date),
+        ),
+        (
+            reference.CONSTITUENTS_SOURCE_ID,
+            lambda: reference.sync_index_constituents(iss, repository, session_date),
+        ),
+        (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
+        (
+            positions.SOURCE_ID,
+            lambda: positions.sync_positions(iss, repository, session_date),
+        ),
+    ):
+        outcome = await _run_source(
+            repository, run_id, source_id, session_date, action, trigger=TRIGGER_CATCHUP
+        )
+        outcomes.append(outcome)
+
+    return outcomes
+
+
+async def _catch_up_ranges(
+    repository: MarketDataRepository,
+    iss: IssClient,
+    date_from: dt.date,
+    date_till: dt.date,
+    cbr_client: httpx.AsyncClient | None,
+) -> None:
+    """Закрыть дыру источниками, умеющими выборку за период.
+
+    Число обращений здесь не зависит от длины дыры. Прогон записывается на
+    дату конца периода: он относится ко всему промежутку, а не к одной сессии.
+    """
+    run_id = str(uuid.uuid4())
+
+    await _run_source(
+        repository,
+        run_id,
+        global_series.SOURCE_ID,
+        date_till,
+        lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
+        trigger=TRIGGER_CATCHUP,
+    )
+    await _run_source(
+        repository,
+        run_id,
+        cbr.SOURCE_ID,
+        date_till,
+        lambda: _sync_cbr_range(repository, date_from, date_till, cbr_client),
+        trigger=TRIGGER_CATCHUP,
+    )
+
+
 async def ingest_and_rank(
     session: AsyncSession,
     settings: Settings,
@@ -227,6 +406,12 @@ async def ingest_and_rank(
     if result.session_date is None or not result.succeeded:
         logger.info("ранжирование пропущено: сбор не завершён успешно")
         return result, None
+
+    # Догон идёт ПОСЛЕ текущей сессии и ДО материализации набора. Порядок не
+    # косметический: текущая сессия гейтит ранжирование, и длинный догон не
+    # должен её задерживать; а набор, собранный до догона, уехал бы к модели с
+    # дырами и породил бы второй набор с другим дайджестом.
+    await catch_up(session, settings, result.session_date, client, cbr_client)
 
     try:
         dataset = await dataset_module.build_dataset(session, settings, result.session_date)
@@ -286,6 +471,30 @@ async def _sync_dividends(
     return await dividends.sync_dividends(broker_client, repository, session_date, known)
 
 
+async def _sync_cbr_range(
+    repository: MarketDataRepository,
+    date_from: dt.date,
+    date_till: dt.date,
+    client: httpx.AsyncClient | None = None,
+) -> int:
+    """Макроряды ЦБ за период.
+
+    Страницы Банка России уже принимают границы периода, поэтому дыра любой
+    длины закрывается двумя обращениями — по одному на ключевую ставку и ЗКЦ.
+    """
+    config = cbr.CbrConfig()
+    written = 0
+
+    key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client)
+    written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
+
+    zcyc = await cbr.fetch_zcyc(config, date_from, date_till, client)
+    for series_id, values in zcyc.items():
+        written += await repository.upsert_global_values(series_id, values)
+
+    return written
+
+
 async def _run_delayed_source(
     repository: MarketDataRepository,
     run_id: str,
@@ -319,6 +528,7 @@ async def _run_source(
     source_id: str,
     session_date: dt.date | None,
     action: object,
+    trigger: str = TRIGGER_DAILY,
 ) -> SourceOutcome:
     """Выполнить сбор одного источника, зафиксировав исход.
 
@@ -346,6 +556,7 @@ async def _run_source(
         session_date=session_date,
         rows_written=outcome.rows_written,
         failure_reason=outcome.failure_reason,
+        trigger=trigger,
     )
     return outcome
 

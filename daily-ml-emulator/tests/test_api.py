@@ -249,3 +249,60 @@ def test_emulator_needs_no_database_or_secrets() -> None:
         any(marker in name.upper() for marker in ("TOKEN", "PASSWORD", "DATABASE", "SECRET"))
         for name in fields
     )
+
+
+# --- объявление полноты окна (spec 004, FR-021) ------------------------------
+
+
+def test_complete_window_is_accepted(client: TestClient) -> None:
+    """Пустой перечень — утверждение «окно полно», а не отсутствие поля."""
+    assert client.post("/rankings", json=request_body(incomplete=[])).status_code == 200
+
+
+def test_incomplete_window_is_accepted(client: TestClient) -> None:
+    """Неполнота входа ранжирование не отменяет: решает сторона модели."""
+    payload = request_body(
+        incomplete=[
+            {"session_date": "2026-08-14", "sources": ["equity_d1", "equity_agg"]},
+            {"session_date": "2026-08-17", "sources": ["futures_positions"]},
+        ]
+    )
+    response = client.post("/rankings", json=payload)
+    assert response.status_code == 200
+    assert response.json()["emulated"] is True
+
+
+def test_missing_incomplete_field_returns_422(client: TestClient) -> None:
+    """Отсутствие поля означало бы, что отправитель о полноте не высказался."""
+    payload = request_body()
+    del payload["dataset"]["incomplete"]
+
+    response = client.post("/rankings", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_request"
+
+
+def test_incomplete_row_without_sources_returns_422(client: TestClient) -> None:
+    payload = request_body(incomplete=[{"session_date": "2026-08-14"}])
+
+    response = client.post("/rankings", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_request"
+
+
+def test_incomplete_row_without_date_returns_422(client: TestClient) -> None:
+    payload = request_body(incomplete=[{"sources": ["equity_d1"]}])
+
+    response = client.post("/rankings", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_request"
+
+
+def test_incomplete_window_still_ranks_every_asset(client: TestClient) -> None:
+    """Ранжирование выполняется: отказ заморозил бы систему навсегда."""
+    payload = request_body(incomplete=[{"session_date": "2026-08-14", "sources": ["equity_d1"]}])
+    body = client.post("/rankings", json=payload).json()
+    assert len(body["items"]) == 3

@@ -275,3 +275,107 @@ async def test_digest_changes_when_aggregates_change(
     with_aggregates = (await build_dataset(db_session, settings, ASOF)).digest
 
     assert without != with_aggregates
+
+
+# --- объявление полноты окна (FR-021 — FR-023, spec 004) ---------------------
+
+
+async def test_manifest_always_declares_completeness(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Поле присутствует всегда: пустой перечень отличается от умолчания."""
+    await _seed(db_session)
+    dataset = await build_dataset(db_session, settings, ASOF)
+
+    manifest = json.loads((dataset.path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["incomplete"] == []
+    assert dataset.incomplete == []
+
+
+async def test_missing_session_reaches_the_manifest(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Сессия, за которую не ходили на биржу, объявляется неполной."""
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions(SESSIONS)
+    for ticker in ("SBER", "GAZP"):
+        await repository.upsert_asset(f"EQ_AST_{ticker}", ticker, ASOF)
+        await repository.upsert_price_series(f"EQ_PRS_{ticker}", f"EQ_AST_{ticker}", ASOF)
+    # Средняя сессия не собрана: дыра внутри окна.
+    await repository.upsert_daily_bars(
+        [
+            DailyBar(
+                asset_id=f"EQ_AST_{ticker}",
+                price_series_id=f"EQ_PRS_{ticker}",
+                session_date=day,
+                open=Decimal("312.4"),
+                high=Decimal("315.1"),
+                low=Decimal("311.0"),
+                close=Decimal("314.22"),
+                volume=Decimal("1000"),
+            )
+            for ticker in ("SBER", "GAZP")
+            for day in (SESSIONS[0], SESSIONS[2])
+        ]
+    )
+    await db_session.commit()
+
+    dataset = await build_dataset(db_session, settings, ASOF)
+
+    assert dataset.incomplete == [
+        {"session_date": SESSIONS[1].isoformat(), "sources": ["equity_d1"]}
+    ]
+
+    manifest = json.loads((dataset.path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["incomplete"] == dataset.incomplete
+
+
+async def test_completeness_changes_the_digest(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Два набора с одинаковыми рядами и разной полнотой — разные входы."""
+    repository = MarketDataRepository(db_session)
+    await _seed(db_session)
+
+    complete = (await build_dataset(db_session, settings, ASOF)).digest
+
+    # Ряды не трогаем: меняется только знание о том, что источник не закрылся.
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="run-1",
+        source_id="futures_positions",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSIONS[1],
+        failure_reason="источник не ответил",
+        trigger="catchup",
+    )
+    await db_session.commit()
+
+    incomplete = (await build_dataset(db_session, settings, ASOF)).digest
+
+    assert complete != incomplete
+
+
+async def test_unfinished_source_is_named(db_session: AsyncSession, settings: Settings) -> None:
+    """Гранулярность по источнику: неполна модальность, а не весь срез."""
+    repository = MarketDataRepository(db_session)
+    await _seed(db_session)
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="run-1",
+        source_id="futures_positions",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSIONS[1],
+        failure_reason="источник не ответил",
+    )
+    await db_session.commit()
+
+    dataset = await build_dataset(db_session, settings, ASOF)
+
+    assert dataset.incomplete == [
+        {"session_date": SESSIONS[1].isoformat(), "sources": ["futures_positions"]}
+    ]
