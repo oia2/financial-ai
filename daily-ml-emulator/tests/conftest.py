@@ -1,54 +1,46 @@
 """Общие фикстуры тестов эмулятора."""
 
-import json
+from __future__ import annotations
+
 from collections.abc import Iterator
-from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-REPO_UNIVERSE = Path(__file__).resolve().parent.parent / "universe" / "default.json"
+ASOF = "2026-08-28"
+DIGEST = "sha256:9f2c00000000000000000000000000000000000000000000000000000000abcd"
 
 
 @pytest.fixture
-def default_universe_path() -> Path:
-    """Файл вселенной по умолчанию, поставляемый с эмулятором."""
-    return REPO_UNIVERSE
-
-
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    """Клиент приложения на вселенной по умолчанию."""
-    monkeypatch.setenv("DAILY_ML_EMULATOR_UNIVERSE_PATH", str(REPO_UNIVERSE))
+def client() -> Iterator[TestClient]:
+    """Клиент приложения. Вселенная больше не конфигурируется."""
     from daily_ml_emulator.app import app
 
     with TestClient(app) as test_client:
         yield test_client
 
 
-@pytest.fixture
-def make_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[object]:
-    """Фабрика клиентов на произвольной вселенной.
+def asset(ticker: str) -> dict[str, str]:
+    return {"asset_id": f"EQ_AST_{ticker}", "price_series_id": f"EQ_PRS_{ticker}"}
 
-    Возвращает вызываемый объект: список записей -> TestClient.
-    """
-    clients: list[TestClient] = []
 
-    def _make(entries: list[dict[str, str]] | str) -> TestClient:
-        universe_file = tmp_path / "universe.json"
-        if isinstance(entries, str):
-            universe_file.write_text(entries, encoding="utf-8")
-        else:
-            universe_file.write_text(json.dumps(entries), encoding="utf-8")
-        monkeypatch.setenv("DAILY_ML_EMULATOR_UNIVERSE_PATH", str(universe_file))
-        from daily_ml_emulator.app import app
-
-        test_client = TestClient(app)
-        test_client.__enter__()
-        clients.append(test_client)
-        return test_client
-
-    yield _make
-
-    for test_client in clients:
-        test_client.__exit__(None, None, None)
+def request_body(
+    tickers: tuple[str, ...] = ("SBER", "GAZP", "LKOH"),
+    asof: str = ASOF,
+    digest: str = DIGEST,
+) -> dict[str, Any]:
+    """Запрос по contracts/daily-ml-request.md."""
+    return {
+        "asof_date": asof,
+        "dataset": {
+            "ref": "file:///datasets/2026-08-28-9f2c000000000000",
+            "digest": digest,
+            "windows": {
+                "price_sessions": 314,
+                "global_sessions": 314,
+                "positions_sessions": 82,
+            },
+        },
+        "assets": [asset(t) for t in tickers],
+    }

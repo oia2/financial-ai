@@ -79,6 +79,9 @@ def _schema(database_available: bool) -> Iterator[None]:
     async def create() -> None:
         from sqlalchemy.ext.asyncio import create_async_engine
 
+        # Импорт ради регистрации таблиц рыночных данных в Base.metadata:
+        # без него create_all их не создаст.
+        import financial_ai.market_data.models  # noqa: F401
         from financial_ai.db.models import Base
 
         engine = create_async_engine(TEST_DATABASE_URL)
@@ -112,7 +115,14 @@ async def db_session(database_available: bool, _schema: None) -> AsyncIterator[o
         await session.execute(
             text(
                 "truncate portfolio_position, account_state, investment_account, "
-                "broker_sync_state, account_refresh_settings restart identity cascade"
+                "broker_sync_state, account_refresh_settings, "
+                # Рыночные данные (spec 003): без очистки наблюдения одного теста
+                # видны следующему, и падают не те тесты, которые сломаны.
+                "market_equity_daily_bar, market_global_daily_series, "
+                "market_price_series, market_asset, market_trading_session, "
+                "market_equity_aggregate, market_futures_position, market_asset_sector, "
+                "market_dividend_event, "
+                "market_ingest_run restart identity cascade"
             )
         )
         await session.execute(

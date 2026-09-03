@@ -52,6 +52,20 @@ services:
       TBANK_INVEST_READ_TOKEN: ${TBANK_INVEST_READ_TOKEN:-}
       TBANK_INVEST_TARGET: ${TBANK_INVEST_TARGET:-invest-public-api.tbank.ru:443}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Сбор рыночных данных MOEX. Данные публичны — секретов здесь нет.
+      MARKET_DATA_ENABLED: ${MARKET_DATA_ENABLED:-true}
+      MARKET_DATA_INGEST_AFTER_CLOSE: ${MARKET_DATA_INGEST_AFTER_CLOSE:-19:30}
+      MARKET_DATA_BACKFILL_FROM: ${MARKET_DATA_BACKFILL_FROM:-}
+      MARKET_DATA_PRICE_WINDOW_SESSIONS: ${MARKET_DATA_PRICE_WINDOW_SESSIONS:-314}
+      MARKET_DATA_GLOBAL_WINDOW_SESSIONS: ${MARKET_DATA_GLOBAL_WINDOW_SESSIONS:-314}
+      MARKET_DATA_POSITIONS_WINDOW_SESSIONS: ${MARKET_DATA_POSITIONS_WINDOW_SESSIONS:-82}
+      MARKET_DATA_DATASET_ROOT: /datasets
+      MARKET_DATA_DATASET_RETENTION_DAYS: ${MARKET_DATA_DATASET_RETENTION_DAYS:-30}
+      DAILY_ML_URL: ${DAILY_ML_URL:-http://daily-ml-emulator:8000}
+    volumes:
+      # Неизменяемые наборы входных данных: worker пишет, звено ранжирования
+      # читает. Это не хранилище — набор опознан дайджестом и не меняется.
+      - datasets:/datasets
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +88,11 @@ services:
       - "${DAILY_ML_EMULATOR_PORT:-8100}:8000"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # Только на чтение: набор материализует worker, звено ранжирования его
+      # не меняет. Сам эмулятор набор не читает — том смонтирован под будущую
+      # настоящую модель, которая встанет на это место.
+      - datasets:/datasets:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -96,3 +115,4 @@ services:
 
 volumes:
   postgres-data:
+  datasets:
