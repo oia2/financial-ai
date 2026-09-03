@@ -69,6 +69,13 @@ app = FastAPI(
 )
 
 
+class IncompleteSession(BaseModel):
+    """Сессия окна, данные за которую неполны."""
+
+    session_date: date = Field(description="Торговая сессия окна")
+    sources: list[str] = Field(description="Источники, оставшиеся незакрытыми за эту сессию")
+
+
 class DatasetRef(BaseModel):
     """Ссылка на неизменяемый набор входных данных."""
 
@@ -77,6 +84,14 @@ class DatasetRef(BaseModel):
     windows: dict[str, int] = Field(
         default_factory=dict,
         description="Фактические глубины окон, вошедшие в набор, в торговых сессиях",
+    )
+
+    # Поле обязательно, и умолчания у него нет намеренно: пустой перечень —
+    # значимое утверждение «окно полно», а отсутствие поля означало бы, что
+    # отправитель о полноте не высказался. Различать эти случаи обязан уже
+    # эмулятор: настоящая модель будет строить на них разное поведение.
+    incomplete: list[IncompleteSession] = Field(
+        description="Сессии окна, данные за которые неполны. Пустой список — окно полно"
     )
 
 
@@ -224,6 +239,12 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
     if "asof_date" in fields:
         code = "invalid_asof_date"
         message = "asof_date должен быть датой в формате YYYY-MM-DD"
+    elif "incomplete" in fields:
+        code = "invalid_request"
+        message = (
+            "dataset.incomplete обязателен: каждый элемент содержит session_date и sources. "
+            "Пустой список означает, что окно полно"
+        )
     else:
         code = "invalid_request"
         message = "запрос не прошёл валидацию: требуются asof_date, dataset и assets"

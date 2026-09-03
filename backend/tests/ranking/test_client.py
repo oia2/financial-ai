@@ -45,6 +45,7 @@ def dataset(tmp_path: Path) -> Dataset:
         ],
         windows={"price_sessions": 314, "global_sessions": 314, "positions_sessions": 82},
         path=tmp_path / "ds",
+        incomplete=[],
     )
 
 
@@ -200,3 +201,55 @@ async def test_excluded_assets_are_reported(settings: Settings, dataset: Dataset
     assert ranking.included_asset_count == 1
     assert ranking.excluded[0]["asset_id"] == "EQ_AST_GAZP"
     assert ranking.excluded[0]["reason"] == "нет истории"
+
+
+# --- объявление полноты окна (FR-021, spec 004) ------------------------------
+
+
+def test_request_always_declares_completeness(dataset: Dataset) -> None:
+    """Пустой перечень — значимое утверждение «окно полно», а не отсутствие."""
+    payload = build_request(dataset)
+    assert payload["dataset"]["incomplete"] == []  # type: ignore[index]
+
+
+def test_request_carries_incomplete_sessions(tmp_path: Path) -> None:
+    incomplete = [
+        {"session_date": "2026-08-14", "sources": ["equity_d1"]},
+        {"session_date": "2026-08-17", "sources": ["futures_positions"]},
+    ]
+    dataset = Dataset(
+        ref=(tmp_path / "ds").as_uri(),
+        digest=DIGEST,
+        asof_date=ASOF,
+        sessions=[ASOF],
+        assets=[AssetRef("EQ_AST_SBER", "EQ_PRS_SBER")],
+        windows={"price_sessions": 314},
+        path=tmp_path / "ds",
+        incomplete=incomplete,
+    )
+
+    payload = build_request(dataset)
+
+    assert payload["dataset"]["incomplete"] == incomplete  # type: ignore[index]
+
+
+def test_incomplete_is_sorted_by_date(tmp_path: Path) -> None:
+    """Порядок фиксирован: одинаковое содержимое обязано давать один дайджест."""
+    incomplete = [
+        {"session_date": "2026-08-14", "sources": ["equity_d1"]},
+        {"session_date": "2026-08-17", "sources": ["equity_d1"]},
+    ]
+    dataset = Dataset(
+        ref=(tmp_path / "ds").as_uri(),
+        digest=DIGEST,
+        asof_date=ASOF,
+        sessions=[ASOF],
+        assets=[AssetRef("EQ_AST_SBER", "EQ_PRS_SBER")],
+        windows={"price_sessions": 314},
+        path=tmp_path / "ds",
+        incomplete=incomplete,
+    )
+
+    rows = build_request(dataset)["dataset"]["incomplete"]  # type: ignore[index]
+    dates = [row["session_date"] for row in rows]
+    assert dates == sorted(dates)

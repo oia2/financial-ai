@@ -6,6 +6,8 @@
     python -m financial_ai.market_data.cli run --session 2026-08-28
     python -m financial_ai.market_data.cli calendar --show-last 10
     python -m financial_ai.market_data.cli stats --session 2026-08-28
+    python -m financial_ai.market_data.cli gaps
+    python -m financial_ai.market_data.cli catchup --dry-run
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import sys
 from financial_ai.config import get_settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.logging import setup_logging
-from financial_ai.market_data import backfill, ingest
+from financial_ai.market_data import backfill, gaps, ingest
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -52,6 +54,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Сверить разбор страниц Банка России с живым ответом (нужен доступ к сети)",
     )
     verify.add_argument("--session", type=_parse_date, required=True)
+
+    gaps_cmd = sub.add_parser("gaps", help="Какие сессии окна не собраны")
+    gaps_cmd.add_argument(
+        "--asof",
+        type=_parse_date,
+        default=None,
+        help="Дата решения, от которой отсчитывается окно. По умолчанию — последняя сессия.",
+    )
+
+    catchup = sub.add_parser("catchup", help="Догнать пропущенные сессии окна")
+    catchup.add_argument(
+        "--asof",
+        type=_parse_date,
+        default=None,
+        help="Дата решения, от которой отсчитывается окно. По умолчанию — последняя сессия.",
+    )
+    catchup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показать, что было бы собрано, и не обращаться к источникам.",
+    )
 
     back = sub.add_parser("backfill", help="Первичная загрузка истории")
     back.add_argument(
@@ -113,8 +136,100 @@ async def _stats(session_date: dt.date) -> int:
         runs = await repository.runs_for_session(session_date)
     print(f"сессия {session_date}: наблюдений по активам {bars}")
     for run in runs:
-        print(f"  {run.source_id:<20} {run.status:<8} строк: {run.rows_written}")
+        print(f"  {run.source_id:<20} {run.status:<8} {run.trigger:<8} строк: {run.rows_written}")
     return 0
+
+
+async def _resolve_asof(session: object, asof: dt.date | None) -> dt.date | None:
+    if asof is not None:
+        return asof
+    repository = MarketDataRepository(session)  # type: ignore[arg-type]
+    return await TradingCalendar(repository).latest_session()
+
+
+async def _gaps(asof: dt.date | None) -> int:
+    """Показать, каких сессий окна не хватает.
+
+    Отдельного кода возврата для «дыра есть» нет: команда отвечает на вопрос,
+    а не выносит вердикт.
+    """
+    settings = get_settings()
+    factory = get_session_factory()
+    async with factory() as session:
+        resolved = await _resolve_asof(session, asof)
+        if resolved is None:
+            print("календарь пуст: выполните сбор")
+            return 1
+        report = await gaps.find_gaps(session, settings, resolved)
+
+    if report.needs_backfill:
+        print("в хранилище нет наблюдений: нужна первичная загрузка (backfill)")
+        return 0
+
+    print(f"окно: {len(report.window)} торговых сессий, оканчивается {report.asof_date}")
+    if not report.missing_sessions:
+        print("пропущенных сессий нет")
+    else:
+        print(f"пропущено сессий: {len(report.missing_sessions)}")
+        print()
+        for day in report.missing_sessions:
+            print(f"  {day}   нет котировок")
+
+    if report.unfinished:
+        print()
+        print("незакрыто по источникам:")
+        for item in report.unfinished:
+            reason = item.reason or "причина не записана"
+            print(f"  {item.session_date}   {item.source_id:<20} failed: {reason}")
+    return 0
+
+
+async def _catchup(asof: dt.date | None, dry_run: bool) -> int:
+    """Закрыть дыру.
+
+    Код 2 отделён от 1 намеренно: «догнали не всё» и «не смогли начать» —
+    разные неисправности с разными последствиями.
+    """
+    settings = get_settings()
+    factory = get_session_factory()
+
+    async with factory() as session:
+        resolved = await _resolve_asof(session, asof)
+        if resolved is None:
+            print("календарь пуст: выполните сбор")
+            return 1
+
+        if dry_run:
+            report = await gaps.find_gaps(session, settings, resolved)
+            if report.needs_backfill:
+                print("в хранилище нет наблюдений: нужна первичная загрузка (backfill)")
+                return 1
+            print(f"было бы собрано сессий: {len(report.missing_sessions)}")
+            for day in report.missing_sessions:
+                print(f"  {day}")
+            return 0
+
+        result = await ingest.catch_up(session, settings, resolved)
+
+    if result.needs_backfill:
+        print("в хранилище нет наблюдений: нужна первичная загрузка (backfill)")
+        return 1
+    if result.skipped_reason is not None:
+        print(f"догон не выполнялся: {result.skipped_reason}")
+        return 1
+    if not result.attempted:
+        print("пропущенных сессий нет")
+        return 0
+
+    print(
+        f"догон от {result.requested[0]} до {result.requested[-1]}: сессий {len(result.requested)}"
+    )
+    for day in result.closed:
+        print(f"  {day}  ok")
+    for day in result.failed:
+        print(f"  {day}  failed")
+    print(f"итог: закрыто {len(result.closed)} из {len(result.requested)}")
+    return 2 if result.failed else 0
 
 
 async def _backfill(date_from: str | None, tickers: list[str] | None) -> int:
@@ -195,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_stats(args.session))
     if args.command == "verify-cbr":
         return asyncio.run(_verify_cbr(args.session))
+    if args.command == "gaps":
+        return asyncio.run(_gaps(args.asof))
+    if args.command == "catchup":
+        return asyncio.run(_catchup(args.asof, args.dry_run))
     if args.command == "backfill":
         return asyncio.run(_backfill(args.date_from, args.ticker))
     return 1

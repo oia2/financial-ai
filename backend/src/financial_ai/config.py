@@ -107,6 +107,37 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- догон пропущенных сессий (spec 004) --------------------------------
+
+    market_data_catchup_enabled: bool = Field(
+        default=True,
+        description=(
+            "Догонять ли пропущенные торговые сессии. Выключение оставляет "
+            "обнаружение пропусков: знать о дыре полезно, даже если чинить её "
+            "решено вручную."
+        ),
+    )
+
+    market_data_catchup_window_sessions: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Глубина поиска пропусков в торговых сессиях. Ноль означает «как "
+            "окно цен набора»: сессия старше него в набор не попадёт, и "
+            "догонять её незачем. Другое значение имеет смысл только для "
+            "отладки."
+        ),
+    )
+
+    @property
+    def catchup_window_sessions(self) -> int:
+        """Фактическая глубина поиска пропусков.
+
+        Предел выводится из устройства системы, а не назначается числом: дыра
+        старше окна набора до модели не доходит.
+        """
+        return self.market_data_catchup_window_sessions or self.market_data_price_window_sessions
+
     market_data_http_timeout_seconds: float = Field(default=60.0, gt=0)
     market_data_http_retries: int = Field(default=6, ge=1)
     market_data_iss_page_limit: int = Field(default=100, ge=1)

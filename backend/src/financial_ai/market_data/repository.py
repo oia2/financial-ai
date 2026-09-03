@@ -459,6 +459,7 @@ class MarketDataRepository:
         session_date: dt.date | None = None,
         rows_written: int = 0,
         failure_reason: str | None = None,
+        trigger: str = "daily",
     ) -> None:
         statement = (
             insert(IngestRun)
@@ -467,6 +468,7 @@ class MarketDataRepository:
                 source_id=source_id,
                 session_date=session_date,
                 status=status,
+                trigger=trigger,
                 failure_reason=failure_reason,
                 rows_written=rows_written,
                 started_at=started_at,
@@ -476,6 +478,7 @@ class MarketDataRepository:
                 constraint="uq_ingest_run_source",
                 set_={
                     "status": status,
+                    "trigger": trigger,
                     "failure_reason": failure_reason,
                     "rows_written": rows_written,
                     "finished_at": finished_at,
@@ -483,6 +486,72 @@ class MarketDataRepository:
             )
         )
         await self._session.execute(statement)
+
+    # --- поиск пропусков (spec 004) ----------------------------------------
+
+    async def has_any_daily_bars(self) -> bool:
+        """Есть ли в хранилище хоть одно наблюдение.
+
+        Отличает дыру от отсутствия истории: на чистой базе календарь уже полон,
+        и «пропущено 314 сессий» — нормальное состояние новой установки, а не
+        авария. Догон там не нужен, нужна первичная загрузка.
+        """
+        row = await self._session.scalar(select(EquityDailyBar.session_date).limit(1))
+        return row is not None
+
+    async def sessions_with_daily_bars(self, sessions: list[dt.date]) -> set[dt.date]:
+        """Сессии окна, за которые есть дневные котировки."""
+        if not sessions:
+            return set()
+        rows = await self._session.scalars(
+            select(EquityDailyBar.session_date)
+            .where(EquityDailyBar.session_date.in_(sessions))
+            .distinct()
+        )
+        return set(rows.all())
+
+    async def sessions_with_successful_run(
+        self, sessions: list[dt.date], source_id: str
+    ) -> set[dt.date]:
+        """Сессии окна, за которые источник отработал успешно.
+
+        Успешный прогон при нуле наблюдений — законный исход: биржа ответила,
+        данных за день нет. Такая сессия собрана, и повторять её незачем.
+        """
+        if not sessions:
+            return set()
+        rows = await self._session.scalars(
+            select(IngestRun.session_date)
+            .where(
+                IngestRun.session_date.in_(sessions),
+                IngestRun.source_id == source_id,
+                IngestRun.status == "ok",
+            )
+            .distinct()
+        )
+        return {day for day in rows.all() if day is not None}
+
+    async def failed_runs_for_sessions(self, sessions: list[dt.date]) -> list[IngestRun]:
+        """Источники, оставшиеся незакрытыми за сессии окна.
+
+        Берётся ПОСЛЕДНИЙ прогон каждой пары «сессия — источник», и только если
+        он неуспешен. Иначе удачный повтор не снимал бы отметку: источник,
+        упавший однажды и собранный со второй попытки, числился бы незакрытым
+        вечно, а перечень пропусков превращался бы в журнал былых неудач.
+        """
+        if not sessions:
+            return []
+        rows = await self._session.scalars(
+            select(IngestRun)
+            .where(IngestRun.session_date.in_(sessions))
+            .distinct(IngestRun.session_date, IngestRun.source_id)
+            .order_by(
+                IngestRun.session_date,
+                IngestRun.source_id,
+                IngestRun.started_at.desc(),
+            )
+        )
+        return [run for run in rows.all() if run.status == "failed"]
 
     async def runs_for_session(self, session_date: dt.date) -> list[IngestRun]:
         rows = await self._session.scalars(

@@ -50,6 +50,24 @@ class MarketDataScheduler:
             await self._task
             self._task = None
 
+    @staticmethod
+    def _report_catchup(result: ingest.CatchupResult) -> None:
+        """Догон не должен чинить молча: незакрытое видно так же, как сбой сбора."""
+        if result.needs_backfill or result.skipped_reason is not None:
+            logger.warning("догон не выполнялся: %s", result.skipped_reason)
+            return
+        if not result.attempted:
+            return
+        if result.failed:
+            logger.warning(
+                "догон: закрыто %d из %d, остались незакрытыми %s",
+                len(result.closed),
+                len(result.requested),
+                ", ".join(day.isoformat() for day in result.failed),
+            )
+        else:
+            logger.info("догон: закрыто сессий %d", len(result.closed))
+
     async def _loop(self) -> None:
         while not self._stopping.is_set():
             try:
@@ -85,6 +103,14 @@ class MarketDataScheduler:
         factory = get_session_factory()
         async with factory() as session:
             result = await ingest.ingest_session(session, self._settings)
+
+            # Догон после текущей сессии: она гейтит ранжирование и должна
+            # пройти быстро. Отметка в памяти больше НЕ является знанием о
+            # собранном — она лишь не даёт запускать цикл дважды в день.
+            # Что собрано на самом деле, известно из данных.
+            if result.session_date is not None:
+                catchup = await ingest.catch_up(session, self._settings, result.session_date)
+                self._report_catchup(catchup)
 
         # Отметка ставится независимо от исхода: повторять неудачный прогон
         # в тот же день бессмысленно, если биржа лежит. Следующая попытка —

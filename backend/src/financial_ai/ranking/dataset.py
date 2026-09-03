@@ -29,6 +29,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data import gaps
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.models import (
     EquityAggregate,
@@ -58,6 +59,9 @@ class DatasetError(RuntimeError):
 # Ключ ряда: экономический актив плюс его ценовой ряд. Оба нужны — у актива
 # может быть несколько несшиваемых рядов.
 SeriesKey = tuple[str, str]
+
+# Строка объявления полноты окна: дата сессии и незакрытые за неё источники.
+IncompleteRow = dict[str, str | list[str]]
 SeriesRows = dict[SeriesKey, list[list[str | None]]]
 
 PRICE_FIELDS = ["open", "high", "low", "close", "volume"]
@@ -82,6 +86,11 @@ class Dataset:
     assets: list[AssetRef]
     windows: dict[str, int]
     path: Path
+
+    # Полнота окна: какие сессии и по каким источникам остались несобранными.
+    # Поле присутствует ВСЕГДА — пустой перечень это значимое утверждение
+    # «окно полно», и от отсутствия высказывания оно отличается.
+    incomplete: list[IncompleteRow]
 
 
 async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt.date) -> Dataset:
@@ -134,6 +143,16 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         "positions_sessions": settings.market_data_positions_window_sessions,
     }
 
+    # Полнота окна — утверждение отправителя: из рядов её не вывести, пропуск
+    # там выглядит одинаково и когда бумага не торговалась, и когда за день не
+    # ходили на биржу.
+    report = await gaps.find_gaps(session, settings, asof_date)
+    incomplete: list[IncompleteRow] = [
+        {"session_date": day.isoformat(), "sources": sources}
+        for day, sources in report.incomplete_by_session().items()
+        if day in set(price_sessions)
+    ]
+
     digest = _digest(
         asof_date,
         price_sessions,
@@ -142,6 +161,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         positions_payload,
         aggregates,
         sector_map,
+        incomplete,
     )
     root = Path(settings.market_data_dataset_root)
     path = root / f"{asof_date.isoformat()}-{digest[:16]}"
@@ -160,6 +180,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
             positions_payload,
             aggregates,
             sector_map,
+            incomplete,
             assets,
             windows,
             digest,
@@ -173,6 +194,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         assets=assets,
         windows=windows,
         path=path,
+        incomplete=incomplete,
     )
 
 
@@ -283,6 +305,7 @@ def _digest(
     positions_payload: dict[str, list[list[str | None]]],
     aggregates: SeriesRows,
     sector_map: dict[str, str | None],
+    incomplete: list[IncompleteRow],
 ) -> str:
     """Дайджест от содержимого.
 
@@ -297,6 +320,10 @@ def _digest(
         "positions": {k: positions_payload[k] for k in sorted(positions_payload)},
         "aggregates": {f"{a}|{s}": rows for (a, s), rows in sorted(aggregates.items())},
         "sectors": {k: sector_map[k] for k in sorted(sector_map)},
+        # Полнота входит в содержимое намеренно: два набора с одинаковыми
+        # рядами и разной полнотой окна — РАЗНЫЕ входы, и одинаковый
+        # идентификатор позволил бы скрыть различие.
+        "incomplete": incomplete,
     }
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -312,6 +339,7 @@ def _write(
     positions_payload: dict[str, list[list[str | None]]],
     aggregates: SeriesRows,
     sector_map: dict[str, str | None],
+    incomplete: list[IncompleteRow],
     assets: list[AssetRef],
     windows: dict[str, int],
     digest: str,
@@ -391,6 +419,7 @@ def _write(
                 "asof_date": asof_date.isoformat(),
                 "digest": f"sha256:{digest}",
                 "windows": windows,
+                "incomplete": incomplete,
                 "session_count": len(sessions),
                 "asset_count": len(assets),
                 "assets": [

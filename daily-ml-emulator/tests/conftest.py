@@ -29,8 +29,13 @@ def request_body(
     tickers: tuple[str, ...] = ("SBER", "GAZP", "LKOH"),
     asof: str = ASOF,
     digest: str = DIGEST,
+    incomplete: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Запрос по contracts/daily-ml-request.md."""
+    """Запрос по contracts/daily-ml-request.md.
+
+    `incomplete` присутствует всегда: пустой список — значимое утверждение
+    «окно полно», а не умолчание (spec 004, FR-021).
+    """
     return {
         "asof_date": asof,
         "dataset": {
@@ -38,9 +43,11 @@ def request_body(
             "digest": digest,
             "windows": {
                 "price_sessions": 314,
+                "aggregate_sessions": 314,
                 "global_sessions": 314,
                 "positions_sessions": 82,
             },
+            "incomplete": incomplete if incomplete is not None else [],
         },
         "assets": [asset(t) for t in tickers],
     }

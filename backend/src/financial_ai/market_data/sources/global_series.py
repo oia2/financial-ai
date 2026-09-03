@@ -58,27 +58,42 @@ async def sync_iss_series(
     session_date: dt.date,
     specs: tuple[SeriesSpec, ...] = ISS_SERIES,
 ) -> int:
-    """Собрать значения глобальных рядов за одну торговую сессию.
+    """Собрать значения глобальных рядов за одну торговую сессию."""
+    return await sync_iss_series_range(client, repository, session_date, session_date, specs)
+
+
+async def sync_iss_series_range(
+    client: IssClient,
+    repository: MarketDataRepository,
+    date_from: dt.date,
+    date_till: dt.date,
+    specs: tuple[SeriesSpec, ...] = ISS_SERIES,
+) -> int:
+    """Собрать значения глобальных рядов за период.
+
+    Биржа отдаёт историю ряда диапазоном, и для догона это принципиально:
+    дыра любой длины закрывается **одним** обращением на ряд вместо одного на
+    каждую сессию. Ежедневный добор — частный случай с совпадающими границами.
 
     Неудача одного ряда не отменяет остальные: ряды независимы, и терять
     собранное из-за недоступности одного индекса незачем.
     """
     written = 0
     for spec in specs:
-        values = await _fetch_series(client, spec, session_date)
+        values = await _fetch_series(client, spec, date_from, date_till)
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
     return written
 
 
 async def _fetch_series(
-    client: IssClient, spec: SeriesSpec, session_date: dt.date
+    client: IssClient, spec: SeriesSpec, date_from: dt.date, date_till: dt.date
 ) -> dict[dt.date, Decimal | None]:
     try:
         rows = await client.fetch_security_history(
             spec.secid,
-            session_date.isoformat(),
-            session_date.isoformat(),
+            date_from.isoformat(),
+            date_till.isoformat(),
             spec.columns(),
             engine=spec.engine,
             market=spec.market,

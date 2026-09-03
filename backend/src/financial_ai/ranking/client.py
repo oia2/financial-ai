@@ -65,6 +65,10 @@ def build_request(dataset: Dataset) -> dict[str, object]:
             "ref": dataset.ref,
             "digest": dataset.digest,
             "windows": dataset.windows,
+            # Присутствует всегда: пустой перечень — значимое утверждение
+            # «окно полно». Без него неполнота входа стала бы неотличима от
+            # решения модели, и выпавший актив выглядел бы исключённым ею.
+            "incomplete": dataset.incomplete,
         },
         "assets": [
             {"asset_id": a.asset_id, "price_series_id": a.price_series_id} for a in dataset.assets
