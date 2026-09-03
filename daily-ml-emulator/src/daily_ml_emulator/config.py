@@ -16,12 +16,6 @@ class Settings(BaseSettings):
     # спутать с выдачей настоящей модели.
     daily_ml_emulator_model_id: str = "daily-ml-emulator-v1"
 
-    # Путь к файлу вселенной, по умолчанию — относительно рабочего каталога.
-    # В образе WORKDIR = /app, поэтому разрешается в /app/universe/default.json;
-    # при локальном запуске из daily-ml-emulator/ — в его universe/default.json.
-    # Свой файл подставляется монтированием тома, без пересборки образа.
-    daily_ml_emulator_universe_path: str = "universe/default.json"
-
     log_level: str = "INFO"
 
 

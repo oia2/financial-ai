@@ -149,7 +149,6 @@ frontend/                     # React-приложение
 daily-ml-emulator/            # эмулятор звена ранжирования: временный стенд-заместитель
 ├── Dockerfile                # multi-stage: uv → python:3.12-slim
 ├── pyproject.toml            # отдельный uv-проект
-├── universe/default.json     # вселенная активов
 ├── src/daily_ml_emulator/
 └── tests/
 
@@ -196,6 +195,8 @@ Dockerfile каждого компонента лежит рядом с его �
 | `DATABASE_URL` | backend-api, backend-worker | Подключение к PostgreSQL |
 | `WORKER_INTERNAL_URL` | backend-api | Адрес внутреннего REST worker'а |
 | `DAILY_ML_EMULATOR_PORT` | daily-ml-emulator | Порт эмулятора ранжирования на хосте (по умолчанию 8100) |
+| `MARKET_DATA_*` | backend-worker | Сбор рыночных данных MOEX: включение, время запуска после закрытия сессии, глубина первичной загрузки, глубины окон, срок хранения наборов. Секретов среди них нет — данные MOEX ISS публичны |
+| `DAILY_ML_URL` | backend-worker | Адрес звена ранжирования |
 
 Правила:
 
@@ -222,6 +223,15 @@ docker compose -f deployments/docker-compose/docker-compose.yml up --build
 
 ```bash
 curl -s localhost:8080/api/health
+```
+
+Каждый вечер после закрытия торговой сессии `backend-worker` забирает с MOEX данные
+прошедшего дня, складывает их в PostgreSQL, собирает из накопленной истории неизменяемый
+набор и запрашивает у звена ранжирования порядок активов:
+
+```bash
+docker compose … exec backend-worker python -m financial_ai.market_data.cli run --session 2026-08-28
+docker compose … exec backend-worker python -m financial_ai.ranking.cli rank --asof 2026-08-28
 ```
 
 Вместе со стендом поднимается эмулятор Daily ML — заглушка звена ранжирования. Его можно

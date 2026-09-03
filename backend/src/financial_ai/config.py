@@ -49,6 +49,75 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO")
 
+    # --- сбор рыночных данных MOEX (spec 003) -------------------------------
+    # Данные MOEX ISS публичны: секретов среди этих настроек нет и быть не может.
+
+    market_data_enabled: bool = Field(
+        default=True,
+        description="Выполнять ли ежедневный сбор рыночных данных.",
+    )
+
+    market_data_iss_base_url: str = Field(default="https://iss.moex.com/iss")
+
+    market_data_board: str = Field(
+        default="TQBR",
+        description="Доска торгов: основной режим для акций в рублях.",
+    )
+
+    market_data_calendar_proxy_security: str = Field(
+        default="SBER",
+        description=(
+            "Опорная бумага для построения торгового календаря. Даты, в которые "
+            "она торговалась, и есть торговые сессии."
+        ),
+    )
+
+    market_data_ingest_after_close: str = Field(
+        default="19:30",
+        description=(
+            "Время запуска сбора после закрытия сессии, Europe/Moscow. Модель "
+            "наблюдает ЗАВЕРШЁННУЮ сессию: собирать раньше — значит завести "
+            "утечку будущего в признаки."
+        ),
+    )
+
+    market_data_backfill_from: str = Field(
+        default="",
+        description="Начальная дата первичной загрузки. Пусто — вся доступная история.",
+    )
+
+    # Глубины окон выведены из конфигурации признаков модели, а не назначены:
+    # самое длинное окно признака — 252 сессии, окно модели — 63 (20 у позиций),
+    # отсюда 252 + 63 - 1 = 314 и 63 + 20 - 1 = 82 (research.md §1).
+    market_data_price_window_sessions: int = Field(default=314, ge=1)
+    market_data_global_window_sessions: int = Field(default=314, ge=1)
+    market_data_positions_window_sessions: int = Field(default=82, ge=1)
+
+    market_data_dataset_root: str = Field(
+        default="/datasets",
+        description="Каталог неизменяемых наборов входных данных.",
+    )
+
+    market_data_dataset_retention_days: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Срок хранения наборов. Неизменяемость означает накопление: без "
+            "правила очистки место закончится."
+        ),
+    )
+
+    market_data_http_timeout_seconds: float = Field(default=60.0, gt=0)
+    market_data_http_retries: int = Field(default=6, ge=1)
+    market_data_iss_page_limit: int = Field(default=100, ge=1)
+
+    daily_ml_url: str = Field(
+        default="http://daily-ml-emulator:8000",
+        description="Базовый адрес звена ранжирования.",
+    )
+
+    daily_ml_timeout_seconds: float = Field(default=60.0, gt=0)
+
     @property
     def broker_token_configured(self) -> bool:
         """Задан ли непустой токен.

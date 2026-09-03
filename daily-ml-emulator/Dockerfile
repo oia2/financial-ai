@@ -27,11 +27,6 @@ RUN groupadd --system app && useradd --system --gid app --home /app app
 WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
 
-# Вселенная по умолчанию копируется отдельным слоем: она меняется чаще кода.
-# Путь по умолчанию — universe/default.json относительно WORKDIR, то есть
-# /app/universe/default.json. Свой файл монтируется поверх, без пересборки.
-COPY --chown=app:app universe ./universe
-
 USER app
 EXPOSE 8000
 

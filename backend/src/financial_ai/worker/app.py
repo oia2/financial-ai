@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from financial_ai.config import get_settings
 from financial_ai.db.engine import dispose_engine
 from financial_ai.logging import setup_logging
+from financial_ai.market_data.scheduler import MarketDataScheduler
 from financial_ai.sync.factory import build_sync_service
 from financial_ai.sync.lock import SingleFlight
 from financial_ai.sync.scheduler import SyncScheduler
@@ -34,7 +35,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.scheduler = scheduler
     await scheduler.start()
 
+    # Сбор рыночных данных: раз в торговую сессию, после её закрытия.
+    # Секретов ему не нужно — данные MOEX ISS публичны.
+    market_data = MarketDataScheduler(settings)
+    application.state.market_data_scheduler = market_data
+    await market_data.start()
+
     yield
+
+    await market_data.stop()
 
     # Остановка дожидается текущей синхронизации: транзакция не должна
     # оборваться на середине.

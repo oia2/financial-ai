@@ -1,34 +1,30 @@
-"""Вселенная активов: то, что эмулятор ранжирует.
+"""Активы, переданные в запросе.
 
-Аналог того, что настоящая модель определяет сама на каждую дату. Здесь она задаётся
-конфигурацией и загружается один раз при старте.
+Раньше вселенная бралась из конфигурации эмулятора. Теперь активы приходят в
+запросе — так же, как их будет получать обученная модель: список из конфигурации
+не имел отношения к тому, что торговалось на дату решения.
 
-Порядок записей значим: он задаёт базовую нумерацию, от которой отсчитывается сдвиг
-в правиле ранжирования. Больше ни на что порядок не влияет.
+Проверки при этом никуда не делись, они переехали со старта на запрос: пустой
+список и дубликаты по-прежнему отвергаются. Ключ `asof_date + asset_id` обязан
+остаться ключом.
 """
 
-import json
+from __future__ import annotations
+
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
-# Верхняя граница вселенной. Взята из SC-002: ответ обязан приходить быстрее секунды
-# при вселенной до 200 активов.
-MAX_UNIVERSE_SIZE = 200
+# Верхняя граница. Взята из SC-002 спецификации эмулятора: ответ обязан
+# приходить быстрее секунды.
+MAX_ASSET_COUNT = 1000
 
 
-class UniverseError(RuntimeError):
-    """Конфигурация вселенной непригодна.
-
-    Поднимается при старте и не даёт контейнеру подняться. Отвечать 500 на каждый
-    запрос при заведомо сломанной конфигурации хуже: неисправность обнаружилась бы
-    позже и дальше от причины.
-    """
+class UniverseError(ValueError):
+    """Перечень активов в запросе непригоден."""
 
 
 @dataclass(frozen=True, slots=True)
 class UniverseEntry:
-    """Один актив вселенной.
+    """Один актив.
 
     Идентичность повторяет каноническую в исследовательском репозитории:
     `asset_id` — экономический актив, устойчивый к переименованиям тикера,
@@ -39,82 +35,47 @@ class UniverseEntry:
     price_series_id: str
 
 
-def _read_document(path: Path) -> Any:
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise UniverseError(f"не удалось прочитать файл вселенной {path}: {error}") from error
+def entries_from_request(assets: list[dict[str, str]]) -> tuple[UniverseEntry, ...]:
+    """Проверить и преобразовать активы запроса.
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise UniverseError(
-            f"файл вселенной {path} не является корректным JSON: {error}"
-        ) from error
+    Отказ здесь лучше молчаливого ранжирования непригодного списка: пустой
+    ответ или две строки на один актив обнаружились бы гораздо позже.
+    """
+    if not assets:
+        raise UniverseError("перечень активов пуст: ранжировать нечего")
 
-
-def _require_field(item: dict[str, Any], field: str, position: int, path: Path) -> str:
-    """Достать непустое строковое поле записи или отказать с внятным сообщением."""
-    value = item.get(field)
-    if value is None:
-        raise UniverseError(f"в записи {position} в {path} отсутствует поле {field}")
-    if not isinstance(value, str):
-        raise UniverseError(
-            f"поле {field} в записи {position} в {path} должно быть строкой, "
-            f"получен {type(value).__name__}"
-        )
-    if not value.strip():
-        raise UniverseError(f"поле {field} в записи {position} в {path} пустое")
-    return value
-
-
-def load_universe(path: Path) -> tuple[UniverseEntry, ...]:
-    """Прочитать вселенную из JSON-файла и проверить её пригодность."""
-    document = _read_document(path)
-
-    if not isinstance(document, list):
-        raise UniverseError(
-            f"файл вселенной {path} должен содержать список активов, "
-            f"получен {type(document).__name__}"
-        )
-
-    if not document:
-        raise UniverseError(
-            f"вселенная в {path} пуста: ранжировать нечего. Нужен хотя бы один актив"
-        )
-
-    if len(document) > MAX_UNIVERSE_SIZE:
-        raise UniverseError(
-            f"во вселенной {path} {len(document)} активов, допустимо не более {MAX_UNIVERSE_SIZE}"
-        )
+    if len(assets) > MAX_ASSET_COUNT:
+        raise UniverseError(f"передано {len(assets)} активов, допустимо не более {MAX_ASSET_COUNT}")
 
     entries: list[UniverseEntry] = []
-    seen_asset_ids: set[str] = set()
-    seen_price_series_ids: set[str] = set()
+    seen_assets: set[str] = set()
+    seen_series: set[str] = set()
 
-    for position, item in enumerate(document):
-        if not isinstance(item, dict):
+    for position, item in enumerate(assets):
+        asset_id = _require(item, "asset_id", position)
+        price_series_id = _require(item, "price_series_id", position)
+
+        if asset_id in seen_assets:
             raise UniverseError(
-                f"запись {position} в {path} должна быть объектом, получен {type(item).__name__}"
+                f"asset_id {asset_id} передан более одного раза (запись {position}); "
+                "ключ asof_date + asset_id перестал бы быть ключом"
+            )
+        if price_series_id in seen_series:
+            raise UniverseError(
+                f"price_series_id {price_series_id} передан более одного раза (запись {position})"
             )
 
-        asset_id = _require_field(item, "asset_id", position, path)
-        price_series_id = _require_field(item, "price_series_id", position, path)
-
-        # Уникальность asset_id — то, на чём держится ключ decision_date + asset_id.
-        if asset_id in seen_asset_ids:
-            raise UniverseError(
-                f"asset_id {asset_id} встречается во вселенной {path} более одного раза "
-                f"(запись {position}); ключ decision_date + asset_id перестал бы быть ключом"
-            )
-        if price_series_id in seen_price_series_ids:
-            raise UniverseError(
-                f"price_series_id {price_series_id} встречается во вселенной {path} "
-                f"более одного раза (запись {position})"
-            )
-
-        seen_asset_ids.add(asset_id)
-        seen_price_series_ids.add(price_series_id)
+        seen_assets.add(asset_id)
+        seen_series.add(price_series_id)
         entries.append(UniverseEntry(asset_id=asset_id, price_series_id=price_series_id))
 
     return tuple(entries)
+
+
+def _require(item: dict[str, str], field: str, position: int) -> str:
+    value = item.get(field)
+    if value is None:
+        raise UniverseError(f"в записи {position} отсутствует поле {field}")
+    if not isinstance(value, str) or not value.strip():
+        raise UniverseError(f"поле {field} в записи {position} пустое")
+    return value

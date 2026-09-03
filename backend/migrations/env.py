@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from financial_ai.config import get_settings
 from financial_ai.db.models import Base
 
+# Импорт ради регистрации таблиц рыночных данных в Base.metadata: без него
+# autogenerate их не увидит.
+import financial_ai.market_data.models  # noqa: F401  isort:skip
+
 config = context.config
 
 if config.config_file_name is not None:
