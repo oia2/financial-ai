@@ -70,6 +70,15 @@ async def main():
 asyncio.run(main())
 \" && DATABASE_URL=\"\${DATABASE_URL%/*}/financial_ai_gatecheck\" uv run alembic upgrade head >/dev/null"
 
+# ---------- эмулятор Daily ML ----------
+# Отдельный uv-проект: свои зависимости и своя конфигурация инструментов.
+# Сборка образа отдельного шага не требует — docker compose build ниже собирает
+# все сервисы файла, включая эмулятор.
+step "daily-ml-emulator: ruff check"  bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff check ."
+step "daily-ml-emulator: ruff format" bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff format --check ."
+step "daily-ml-emulator: mypy"        bash -c "cd '$ROOT/daily-ml-emulator' && uv run mypy"
+step "daily-ml-emulator: pytest"      bash -c "cd '$ROOT/daily-ml-emulator' && uv run pytest -q"
+
 # ---------- frontend ----------
 step "frontend: eslint"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/eslint ."
 step "frontend: prettier"         bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/prettier --check ."
