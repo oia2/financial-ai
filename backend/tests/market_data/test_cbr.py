@@ -30,13 +30,18 @@ KEY_RATE_HTML = """
 </body></html>
 """
 
+# Настоящая страница ЦБ: кривая доходности по двенадцати срокам внутри
+# `.table-wrapper`. Колонки читаются ПО ПОЗИЦИИ — так делает оригинал, и
+# полагаться на текст заголовка нельзя.
 ZCYC_HTML = """
 <html><body>
+<div class="table-wrapper">
 <table>
-  <tr><th>Дата</th><th>B1</th><th>B2</th><th>0,25</th></tr>
-  <tr><td>28.08.2026</td><td>7,1234</td><td>-1,5</td><td>15,25</td></tr>
-  <tr><td>27.08.2026</td><td>7,0000</td><td>-1,4</td><td>15,10</td></tr>
+  <tr><th>Дата</th><th>0,25</th><th>0,5</th><th>0,75</th><th>1</th><th>2</th><th>3</th><th>5</th><th>7</th><th>10</th><th>15</th><th>20</th><th>30</th></tr>
+  <tr><td>28.08.2026</td><td>16,10</td><td>16,05</td><td>16,00</td><td>15,80</td><td>14,90</td><td>14,20</td><td>13,50</td><td>13,10</td><td>12,80</td><td>12,50</td><td>12,30</td><td>12,10</td></tr>
+  <tr><td>27.08.2026</td><td>16,20</td><td>16,15</td><td>16,10</td><td>15,90</td><td>15,00</td><td>14,30</td><td>13,60</td><td>13,20</td><td>12,90</td><td>12,60</td><td>12,40</td><td>12,20</td></tr>
 </table>
+</div>
 </body></html>
 """
 
@@ -90,15 +95,49 @@ def test_empty_value_stays_none_not_zero() -> None:
 # --- ЗКЦ ---------------------------------------------------------------------
 
 
-def test_zcyc_splits_columns_into_series() -> None:
+def test_zcyc_yields_points_not_model_parameters() -> None:
+    """Модели нужны точки кривой, а не параметры Нельсона-Сигеля.
+
+    `global_regime_core_v1.yaml` объявляет `yield_curve_points`, а из
+    параметров их без формулы не получить. Прежняя версия сохраняла `B1` и
+    подобное — и тест это закреплял.
+    """
     series = cbr.parse_zcyc_html(ZCYC_HTML)
-    assert set(series) == {"CBR_ZCYC_B1", "CBR_ZCYC_B2", "CBR_ZCYC_0_25"}
+    assert {"CBR_ZCYC_yield_1y", "CBR_ZCYC_yield_2y"} <= set(series)
+    assert not any(name.endswith("_B1") for name in series)
+
+
+def test_zcyc_covers_every_term_of_the_original() -> None:
+    series = cbr.parse_zcyc_html(ZCYC_HTML)
+    assert set(series) == {f"CBR_ZCYC_{term}" for term in cbr.ZCYC_TERMS}
+
+
+def test_zcyc_points_declared_by_the_feature_config_are_present() -> None:
+    """Ровно те четыре точки, по которым считается наклон кривой."""
+    series = cbr.parse_zcyc_html(ZCYC_HTML)
+    for point in ("yield_1y", "yield_2y", "yield_5y", "yield_10y"):
+        assert series[f"CBR_ZCYC_{point}"][dt.date(2026, 8, 28)] is not None
 
 
 def test_zcyc_values_are_parsed() -> None:
     series = cbr.parse_zcyc_html(ZCYC_HTML)
-    assert series["CBR_ZCYC_B1"][dt.date(2026, 8, 28)] == Decimal("7.1234")
-    assert series["CBR_ZCYC_B2"][dt.date(2026, 8, 28)] == Decimal("-1.5")
+    assert series["CBR_ZCYC_yield_0_25y"][dt.date(2026, 8, 28)] == Decimal("16.10")
+    assert series["CBR_ZCYC_yield_30y"][dt.date(2026, 8, 28)] == Decimal("12.10")
+
+
+def test_zcyc_columns_are_read_by_position() -> None:
+    """Заголовки на странице — сроки, а не имена рядов."""
+    series = cbr.parse_zcyc_html(ZCYC_HTML)
+    assert series["CBR_ZCYC_yield_1y"][dt.date(2026, 8, 27)] == Decimal("15.90")
+
+
+def test_zcyc_wrong_table_shape_is_reported() -> None:
+    """Разметка страницы изменилась — это неуспех, а не пустой результат."""
+    html = (
+        '<div class="table-wrapper"><table><tr><td>28.08.2026</td><td>7,1</td></tr></table></div>'
+    )
+    with pytest.raises(cbr.CbrError, match="сроками"):
+        cbr.parse_zcyc_html(html)
 
 
 def test_zcyc_missing_table_is_reported() -> None:
@@ -106,9 +145,14 @@ def test_zcyc_missing_table_is_reported() -> None:
         cbr.parse_zcyc_html("<html><body></body></html>")
 
 
-def test_zcyc_without_value_columns_is_reported() -> None:
-    with pytest.raises(cbr.CbrError, match="нет колонок"):
-        cbr.parse_zcyc_html("<table><tr><th>Дата</th></tr></table>")
+def test_zcyc_outside_the_wrapper_is_not_read() -> None:
+    """Таблица берётся из `.table-wrapper`, а не первая на странице.
+
+    На странице ЦБ таблиц несколько, и прежняя версия читала не ту — отсюда
+    параметры модели вместо точек кривой.
+    """
+    with pytest.raises(cbr.CbrError, match="не найдена"):
+        cbr.parse_zcyc_html("<table><tr><th>Дата</th><th>B1</th></tr></table>")
 
 
 # --- обращение ---------------------------------------------------------------

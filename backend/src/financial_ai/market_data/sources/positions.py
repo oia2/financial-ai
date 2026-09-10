@@ -9,15 +9,22 @@
 **Передатирование запрещено.** Опоздавший файл нельзя записать как наблюдение
 о следующей сессии. Такая ошибка не падает тестом и не видна в данных: она
 просто сдвигает историю на день, и модель обучается на смещённом сигнале.
+Здесь запрет держится ещё и на сверке даты ответа с запрошенной: биржа отдаёт
+последний доступный снимок, если за дату данных нет.
 
 **Отсутствие — не ноль.** Покрытие частичное по своей природе: позиции есть не
 по всем активам. Ноль означал бы «участники не держат позиций», а пропуск —
-«мы не знаем». Для модели это разные утверждения, и ветка позиций не должна
-кодировать артефакт покрытия как сигнал.
+«мы не знаем». Для модели это разные утверждения.
 
-Перенесено из `pipelines/moex_futures_positions/` (`MR-MASTER-DRO`, `f07295e`)
-в части получения и разбора. Политика алиасов и сшивка ценовых рядов не
-переносятся — они относятся к инженерии признаков и живут на стороне модели.
+**Пустота — не частичность.** Полное отсутствие значений записывается как
+неуспех с причиной (FR-018). Прежняя реализация писала 260 строк пустых
+значений на сессию и сообщала «получено 260, записано 260 (покрытие частичное —
+это норма)»; формулировка верна для настоящей частичности и именно поэтому
+скрыла дефект, при котором значений не было вообще: 5 непустых на 57 029.
+
+Источник — не биржевой интерфейс данных, а форма на сайте биржи: см.
+`positions_client.py`. Запись о происхождении в `PROVENANCE.md` до этой фичи
+утверждала обратное.
 """
 
 from __future__ import annotations
@@ -25,62 +32,166 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
-from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
-from financial_ai.market_data.sources.equity_d1 import asset_id_for, to_decimal
+from financial_ai.market_data.sources.equity_d1 import asset_id_for
+from financial_ai.market_data.sources.positions_client import (
+    PositionsClient,
+    PositionsSourceError,
+)
 
 logger = logging.getLogger(__name__)
 
 SOURCE_ID = "futures_positions"
-COLUMNS = ("SECID", "TRADEDATE", "FIZ_LONG", "FIZ_SHORT", "JUR_LONG", "JUR_SHORT")
+
+
+class EmptyPositionsError(RuntimeError):
+    """Ни одного значения там, где источник обязан их приносить.
+
+    Отдельный тип, а не возврат нуля: прогон должен записаться как неуспех с
+    причиной, а не как успех с нулём строк (FR-018).
+    """
 
 
 async def sync_positions(
-    client: IssClient, repository: MarketDataRepository, session_date: dt.date
+    client: PositionsClient,
+    repository: MarketDataRepository,
+    session_date: dt.date,
+    contracts: dict[str, str],
+    sessions: list[dt.date] | None = None,
 ) -> int:
     """Собрать позиции за одну торговую сессию.
 
-    Дата наблюдения — та, за которую запрошены данные. Она не подменяется
-    датой получения ни при каких обстоятельствах.
+    ``contracts`` — соответствие «тикер акции → код контракта», построенное из
+    ISS один раз на прогон: строить его на каждую сессию значило бы платить два
+    обращения за то, что не меняется в пределах прогона.
+
+    Три правила аккуратности выполняются здесь, а не в клиенте, потому что все
+    три требуют знания уже собранного:
+
+    - собранная пара «инструмент — дата» повторно не запрашивается (FR-024c);
+    - периоды до первой доступной даты инструмента не запрашиваются (FR-024b);
+    - акция без контракта не запрашивается вовсе (FR-022).
     """
-    rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
-    positions = rows_to_positions(rows, session_date)
-    written = await repository.upsert_positions(positions)
+    if not contracts:
+        raise EmptyPositionsError("соответствие акций и контрактов пусто: спрашивать нечего")
+
+    known_tickers = await repository.tickers_with_history()
+    already = await repository.assets_with_positions(session_date)
+    first_seen = await repository.first_position_dates()
+
+    wanted = sorted(ticker for ticker in known_tickers if ticker in contracts)
+    if not wanted:
+        raise EmptyPositionsError(
+            "ни у одной известной бумаги нет фьючерсного контракта: соответствие не построилось"
+        )
+
+    rows: list[PositionRow] = []
+    requested = 0
+    skipped_collected = 0
+    skipped_early = 0
+
+    for ticker in wanted:
+        asset_id = asset_id_for(ticker)
+
+        if asset_id in already:
+            # Пара уже собрана. Для источников с единицей «дата» это следует из
+            # правил догона; здесь единица мельче сессии, и правило нужно явно.
+            skipped_collected += 1
+            continue
+
+        contract = contracts[ticker]
+        existed = await _existed_then(
+            client, contract, session_date, first_seen.get(asset_id), sessions
+        )
+        if not existed:
+            # Инструмента тогда ещё не существовало: обращение заведомо не
+            # принесёт данных, а такие запрещены (FR-022).
+            skipped_early += 1
+            continue
+
+        requested += 1
+        snapshot = await client.fetch(contract, session_date)
+        if snapshot is None:
+            continue
+
+        rows.append(
+            PositionRow(
+                asset_id=asset_id,
+                session_date=session_date,
+                fiz_long=snapshot.fiz_long,
+                fiz_short=snapshot.fiz_short,
+                jur_long=snapshot.jur_long,
+                jur_short=snapshot.jur_short,
+            )
+        )
+
+    filled = [row for row in rows if _has_values(row)]
+
+    if requested and not filled:
+        # Ровно то различие, ради которого FR-018 существует: настоящая
+        # частичность даёт значения хотя бы по части инструментов, дефект —
+        # ноль. Ноль записывается как неуспех, а не как успешная пустота.
+        raise EmptyPositionsError(
+            f"позиции за {session_date}: выполнено {requested} обращений, "
+            "ни одного значения не получено"
+        )
+
+    written = await repository.upsert_positions(filled)
     logger.info(
-        "позиции за %s: получено %d, записано %d (покрытие частичное — это норма)",
+        "позиции за %s: спрошено %d, со значениями %d, записано %d "
+        "(уже собрано %d, до появления инструмента %d)",
         session_date,
-        len(rows),
+        requested,
+        len(filled),
         written,
+        skipped_collected,
+        skipped_early,
     )
     return written
 
 
-def rows_to_positions(rows: list[dict[str, object]], session_date: dt.date) -> list[PositionRow]:
-    """Преобразовать ответ биржи в наблюдения о позициях.
+async def _existed_then(
+    client: PositionsClient,
+    contract: str,
+    session_date: dt.date,
+    known_since: dt.date | None,
+    sessions: list[dt.date] | None,
+) -> bool:
+    """Существовал ли инструмент на эту сессию.
 
-    ``session_date`` проставляется из аргумента, а не из строки ответа: так
-    передатирование становится невозможным по построению, а не по договорённости.
+    **Отметка из собранных данных — нижняя граница, а не ответ.** Самая ранняя
+    собранная сессия доказывает, что инструмент тогда существовал, и только: про
+    более раннее время она не говорит ничего. Прежняя версия трактовала её как
+    первую доступную дату и потому запрещала догон истории навсегда — сессии
+    старше уже собранных пропускались как несуществующие. На стенде это
+    выглядело так: догон за 2026-08-10…14 пропустил 69 активов из 69 при
+    нулевых обращениях, хотя позиции по ним собраны с 2026-08-24.
+
+    Поэтому отметка только **сокращает поиск**: сессия не старше её принимается
+    без проб, а для более ранних поиск выполняется.
     """
-    out: list[PositionRow] = []
-    seen: set[str] = set()
+    if known_since is not None and session_date >= known_since:
+        return True
 
-    for row in rows:
-        secid = row.get("SECID")
-        if not isinstance(secid, str) or not secid.strip():
-            continue
-        ticker = secid.strip().upper()
-        if ticker in seen:
-            continue
-        seen.add(ticker)
+    first_available = await client.first_available_date(contract, sessions or [])
+    if first_available is not None:
+        return session_date >= first_available
 
-        out.append(
-            PositionRow(
-                asset_id=asset_id_for(ticker),
-                session_date=session_date,
-                fiz_long=to_decimal(row.get("FIZ_LONG")),
-                fiz_short=to_decimal(row.get("FIZ_SHORT")),
-                jur_long=to_decimal(row.get("JUR_LONG")),
-                jur_short=to_decimal(row.get("JUR_SHORT")),
-            )
-        )
-    return out
+    # Поиск выполнялся и не нашёл ничего — обращения по контракту бесполезны.
+    # Если же поиска не было (сессий не передали), пропускать нельзя: незнание
+    # не является основанием не спрашивать.
+    return not client.searched_for_first_date(contract)
+
+
+def _has_values(row: PositionRow) -> bool:
+    """Есть ли в строке хоть одно значение.
+
+    Пустые строки не записываются вовсе: именно они заставляли догон считать
+    сессию закрытой, и правильные позиции за неё не появились бы никогда.
+    """
+    return any(
+        value is not None for value in (row.fiz_long, row.fiz_short, row.jur_long, row.jur_short)
+    )
+
+
+__all__ = ["SOURCE_ID", "EmptyPositionsError", "PositionsSourceError", "sync_positions"]

@@ -99,3 +99,40 @@ def test_tie_is_broken_deterministically() -> None:
     second = select_front_contract(list(reversed(rows)), SESSION)
     assert first is not None and second is not None
     assert first.secid == second.secid
+
+
+# --- адрес источника (spec 005, FR-019) --------------------------------------
+
+
+class UrlCapturingIss:
+    """Подделка клиента: запоминает раздел, в который пошёл источник."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def fetch_session_rows_for(
+        self, session_date: str, columns: tuple[str, ...], **kwargs: object
+    ) -> list[dict[str, object]]:
+        self.calls.append({"session_date": session_date, **kwargs})
+        return []
+
+
+async def test_brent_asks_the_futures_section_without_a_board() -> None:
+    """Доска акций в адрес срочного рынка не подставляется."""
+    from financial_ai.market_data.sources import brent as brent_source
+
+    iss = UrlCapturingIss()
+    await brent_source.sync_brent(iss, _NullRepository(), dt.date(2026, 8, 28))  # type: ignore[arg-type]
+
+    assert iss.calls, "источник не обратился к бирже"
+    call = iss.calls[0]
+    assert call["engine"] == "futures"
+    assert call["market"] == "forts"
+    assert call.get("board") is None
+
+
+class _NullRepository:
+    """Хранилище-заглушка: адрес проверяется до записи."""
+
+    async def upsert_global_values(self, series_id: str, values: object) -> int:
+        return 0

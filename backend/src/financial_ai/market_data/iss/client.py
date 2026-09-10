@@ -99,7 +99,7 @@ class IssClient:
         """
         url = urls.history_by_date_url(
             self._config.base_url,
-            board if board is not None else self._config.board,
+            self._board_for(board, engine, market),
             engine or self._config.engine,
             market or self._config.market,
         )
@@ -131,7 +131,7 @@ class IssClient:
         """
         url = urls.history_by_security_url(
             self._config.base_url,
-            board if board is not None else self._config.board,
+            self._board_for(board, engine, market),
             secid,
             engine or self._config.engine,
             market or self._config.market,
@@ -142,6 +142,122 @@ class IssClient:
                 date_from, date_till, start, self._config.page_limit, columns
             ),
         )
+
+    async def fetch_futures_series(self) -> list[dict[str, Any]]:
+        """Серии срочного рынка: базовый актив и код контракта.
+
+        Нужны позициям: код контракта из тикера акции не выводится, а список
+        серий связывает их напрямую.
+        """
+        payload = await self._get_json(
+            urls.futures_series_url(self._config.base_url), {"iss.meta": "off"}
+        )
+        block = payload.get("series") or {}
+        return _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+    async def fetch_futures_open_interest(self) -> dict[str, int]:
+        """Открытый интерес по кодам базовых активов срочного рынка.
+
+        Разрешает выбор, когда у одной акции несколько кодов контракта:
+        классический и вечный, обычный и мини. Позиции живут там, где торгуют.
+        """
+        payload = await self._get_json(
+            urls.futures_securities_url(self._config.base_url),
+            {"iss.meta": "off", "iss.only": "securities"},
+        )
+        block = payload.get("securities") or {}
+        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+        totals: dict[str, int] = {}
+        for row in rows:
+            code = row.get("ASSETCODE")
+            if not isinstance(code, str) or not code.strip():
+                continue
+            value = row.get("PREVOPENPOSITION")
+            totals[code.strip().upper()] = totals.get(code.strip().upper(), 0) + int(value or 0)
+        return totals
+
+    async def fetch_index_analytics(
+        self, index_id: str, session_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Состав индекса с весами бумаг.
+
+        ``session_date`` пустой означает «текущий состав» — так по умолчанию
+        работает оригинал, и так же устроен наш справочник секторов: у него нет
+        оси сессий.
+
+        Страницы листаются курсором раздела: состав широкого индекса не
+        помещается в одну страницу, а недобранный хвост выглядел бы как
+        выбывшие из индекса бумаги.
+        """
+        url = urls.index_analytics_url(self._config.base_url, index_id)
+        rows: list[dict[str, Any]] = []
+        start = 0
+
+        while True:
+            params: dict[str, Any] = {
+                "iss.meta": "off",
+                "iss.only": "analytics,analytics.cursor",
+                "start": start,
+                "limit": self._config.page_limit,
+            }
+            if session_date:
+                params["date"] = session_date
+
+            payload = await self._get_json(url, params)
+            block = payload.get("analytics") or {}
+            data = block.get("data") or []
+            if not data:
+                break
+
+            rows.extend(_rows_to_dicts(block.get("columns") or [], data))
+            if len(data) < self._config.page_limit:
+                break
+            start += len(data)
+
+        return rows
+
+    async def fetch_index_titles(self) -> dict[str, str]:
+        """Краткие имена индексов: `MOEXOG` — «Индекс нефти и газа».
+
+        Секторы называются именами отраслевых индексов, а не собственными
+        строками: собственная строка была бы нашей выдумкой поверх биржи.
+        """
+        payload = await self._get_json(
+            urls.index_titles_url(self._config.base_url),
+            {"iss.meta": "off", "iss.only": "indices"},
+        )
+        block = payload.get("indices") or {}
+        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+        titles: dict[str, str] = {}
+        for row in rows:
+            index_id = row.get("indexid")
+            title = row.get("shortname")
+            if isinstance(index_id, str) and index_id.strip():
+                titles[index_id.strip().upper()] = (
+                    str(title).strip() if isinstance(title, str) and title.strip() else ""
+                )
+        return titles
+
+    def _board_for(self, board: str | None, engine: str | None, market: str | None) -> str | None:
+        """Какую доску ставить в адрес.
+
+        **Доска осмысленна только в своём разделе.** `TQBR` — доска акций, и в
+        адресе индексов или срочного рынка её быть не может: биржа отвечает
+        пустым списком, а не ошибкой, поэтому дефект выглядит как отсутствие
+        данных. Так пропали и Brent, и четыре индекса — по 1 сессии из 314.
+
+        Отсюда правило: явно заданная доска берётся как есть; доска из
+        конфигурации подставляется **только** в тот раздел, к которому она
+        относится; в любом другом разделе сегмента доски нет.
+        """
+        if board is not None:
+            return board
+        same_section = (engine or self._config.engine) == self._config.engine and (
+            market or self._config.market
+        ) == self._config.market
+        return self._config.board if same_section else None
 
     async def _paginate(self, url: str, params_for: Any) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
