@@ -38,6 +38,35 @@ ZCYC_URL = "https://cbr.ru/hd_base/zcyc_params/"
 KEY_RATE_SERIES_ID = "CBR_KEY_RATE"
 ZCYC_SERIES_PREFIX = "CBR_ZCYC_"
 
+# Сроки кривой бескупонной доходности в порядке колонок таблицы ЦБ.
+# Перенесено дословно из `pipelines/cbr_zcyc_params_sync/cli.py:11-23`:
+# оригинал отображает колонки ПО ПОЗИЦИИ, а не по тексту заголовка.
+#
+# Прежняя версия называла ряды по заголовку и брала первую таблицу страницы —
+# из-за этого в хранилище оседали параметры модели Нельсона-Сигеля (`B1` и
+# подобные) вместо точек кривой. Модели нужны именно точки: конфигурация
+# признаков объявляет `yield_curve_points: [yield_1y, yield_2y, yield_5y,
+# yield_10y]`, а из параметров их без формулы не получить.
+ZCYC_TERMS: tuple[str, ...] = (
+    "yield_0_25y",
+    "yield_0_5y",
+    "yield_0_75y",
+    "yield_1y",
+    "yield_2y",
+    "yield_3y",
+    "yield_5y",
+    "yield_7y",
+    "yield_10y",
+    "yield_15y",
+    "yield_20y",
+    "yield_30y",
+)
+
+# Точки, которые конфигурация признаков модели объявляет входом
+# (`yield_curve_points`). Их отсутствие — отказ, а не неполнота: без них
+# `data_plane_step6` не считает наклон кривой.
+REQUIRED_ZCYC_TERMS: tuple[str, ...] = ("yield_1y", "yield_2y", "yield_5y", "yield_10y")
+
 CBR_DATE_FORMAT = "%d.%m.%Y"
 
 
@@ -118,38 +147,44 @@ async def fetch_zcyc(
 
 
 def parse_zcyc_html(html: str) -> dict[str, dict[dt.date, Decimal | None]]:
-    """Разобрать таблицу параметров ЗКЦ.
+    """Разобрать таблицу точек кривой бескупонной доходности.
 
-    Первая колонка — дата, остальные — параметры кривой. Имена параметров
-    берутся из заголовка таблицы.
+    Первая колонка — дата, остальные двенадцать — доходности по срокам.
+    Отображение **по позиции**, как в оригинале: заголовки на странице ЦБ
+    подписаны сроками, а не именами рядов, и полагаться на их текст нельзя.
+
+    Таблица берётся из `.table-wrapper`, а не первая на странице: на странице
+    есть и другие, и прежняя версия читала не ту.
     """
     soup = BeautifulSoup(html, "html.parser")
-    table = soup.find("table")
+    wrapper = soup.select_one(".table-wrapper")
+    table = wrapper.find("table") if wrapper is not None else None
     if table is None:
-        raise CbrError("таблица параметров ЗКЦ не найдена в ответе ЦБ")
-
-    rows = table.find_all("tr")
-    if not rows:
-        raise CbrError("таблица параметров ЗКЦ пуста")
-
-    headers = [cell.get_text(strip=True) for cell in rows[0].find_all(["th", "td"])]
-    if len(headers) < 2:
-        raise CbrError("в таблице параметров ЗКЦ нет колонок со значениями")
+        raise CbrError("таблица кривой доходности не найдена в ответе ЦБ")
 
     series: dict[str, dict[dt.date, Decimal | None]] = {
-        f"{ZCYC_SERIES_PREFIX}{_normalise(name)}": {} for name in headers[1:]
+        f"{ZCYC_SERIES_PREFIX}{term}": {} for term in ZCYC_TERMS
     }
 
-    for row in rows[1:]:
+    matched = False
+    for row in table.find_all("tr"):
         cells = row.find_all("td")
-        if len(cells) != len(headers):
+        # Строка данных — ровно дата плюс двенадцать сроков. Заголовки и
+        # служебные строки отсеиваются этим же условием.
+        if len(cells) != 1 + len(ZCYC_TERMS):
             continue
         day = _parse_cbr_date(cells[0].get_text(strip=True))
         if day is None:
             continue
-        for position, name in enumerate(headers[1:], start=1):
-            key = f"{ZCYC_SERIES_PREFIX}{_normalise(name)}"
+        matched = True
+        for position, term in enumerate(ZCYC_TERMS, start=1):
+            key = f"{ZCYC_SERIES_PREFIX}{term}"
             series[key][day] = to_decimal(_clean_number(cells[position].get_text(strip=True)))
+
+    if not matched:
+        raise CbrError(
+            f"в таблице ЦБ нет строк с {len(ZCYC_TERMS)} сроками: разметка страницы изменилась"
+        )
 
     return series
 

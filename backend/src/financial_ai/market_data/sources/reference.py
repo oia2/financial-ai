@@ -4,9 +4,21 @@
 торговой сессии. Собирать их каждый вечер незачем — достаточно обновлять
 вместе с остальным и хранить последнее известное значение.
 
+**Оба источника берутся из раздела аналитики индексов, а не из истории торгов.**
+Это не деталь адреса, а разные данные. Прежняя версия спрашивала историю
+торгов TQBR и просила у неё колонки `WEIGHT`, `SECTORID`, `SECTORNAME`, которых
+там нет; биржа отвечала `200`, строки приходили, значения оставались пустыми.
+В хранилище накопилось 62 584 строки весов при пяти непустых и 506 строк
+справочника отраслей, где отрасль не заполнена ни у одной.
+
+**У биржи нет поля «сектор».** Сектор выводится из принадлежности бумаги к
+отраслевым индексам MOEX — так делает оригинал, и другого источника отрасли
+биржа не предоставляет.
+
 Перенесено из `pipelines/iss_equity_sector_sync/` и
-`pipelines/iss_index_constituents_daily_sync/` (`MR-MASTER-DRO`, `f07295e`) в
-части получения и разбора.
+`pipelines/iss_index_constituents_daily_sync/` (`MR-MASTER-DRO`, `f07295e`):
+оттуда взяты разделы, перечень отраслевых индексов и правило выбора при
+вхождении бумаги в несколько из них.
 """
 
 from __future__ import annotations
@@ -25,40 +37,83 @@ logger = logging.getLogger(__name__)
 SECTORS_SOURCE_ID = "equity_sectors"
 CONSTITUENTS_SOURCE_ID = "index_constituents"
 
-SECTOR_COLUMNS = ("SECID", "SECTORID", "SECTORNAME")
-CONSTITUENT_COLUMNS = ("SECID", "TRADEDATE", "WEIGHT")
-
 # Вес бумаги в индексе — глобальный ряд на актив: имя ряда несёт индекс и бумагу.
 INDEX_WEIGHT_PREFIX = "IDX_WEIGHT_"
+
+# Отраслевые индексы MOEX. Перечень перенесён из конфигурации оригинала
+# (`iss_equity_sector_sync/config.py`), а не собран по догадке: он и есть
+# определение того, какие отрасли биржа различает.
+SECTOR_INDEX_IDS: tuple[str, ...] = (
+    "MOEXOG",  # нефть и газ
+    "MOEXMM",  # металлы и добыча
+    "MOEXFN",  # финансы
+    "MOEXTN",  # телекоммуникации
+    "MOEXEU",  # электроэнергетика
+    "MOEXTL",  # потребительский сектор
+    "MOEXCH",  # химия и нефтехимия
+    "MOEXIT",  # информационные технологии
+    "MOEXCN",  # потребительские услуги
+    "MOEXRE",  # недвижимость
+    "MOEXINN",  # инновации
+)
+
+
+class ReferenceEmptyError(RuntimeError):
+    """Раздел ответил, но значений не принёс.
+
+    Отдельный тип, а не ноль строк: ровно так оба справочника и были сломаны —
+    ответ приходил, строки писались, значений в них не было, и прогон считался
+    успешным (FR-018).
+    """
 
 
 async def sync_sectors(
     client: IssClient, repository: MarketDataRepository, session_date: dt.date
 ) -> int:
-    """Обновить отраслевую принадлежность эмитентов."""
-    rows = await client.fetch_session_rows(session_date.isoformat(), SECTOR_COLUMNS)
-    written = await repository.upsert_sectors(rows_to_sectors(rows))
-    logger.info("секторы: получено %d, записано %d", len(rows), written)
-    return written
+    """Обновить отраслевую принадлежность эмитентов.
 
+    Сектор бумаги — тот отраслевой индекс, в котором её вес наибольший. Берётся
+    **текущий** состав индексов: у справочника нет оси сессий, и состав на дату
+    ему не нужен.
 
-def rows_to_sectors(rows: list[dict[str, object]]) -> dict[str, str | None]:
-    """Преобразовать ответ биржи в справочник отраслей.
-
-    Отсутствие отрасли остаётся ``None``: «отрасль неизвестна» и «отрасль
-    отсутствует» для справочника одно и то же, но подставлять сюда строку-
-    заглушку нельзя — она попала бы в признаки как настоящая категория.
+    Одиннадцать обращений на весь справочник плюс одно за именами индексов —
+    независимо от числа бумаг.
     """
-    sectors: dict[str, str | None] = {}
-    for row in rows:
-        secid = row.get("SECID")
-        if not isinstance(secid, str) or not secid.strip():
-            continue
-        name = row.get("SECTORNAME") or row.get("SECTORID")
-        sectors[asset_id_for(secid.strip().upper())] = (
-            str(name).strip() if isinstance(name, str) and name.strip() else None
+    titles = await client.fetch_index_titles()
+
+    # ticker -> (вес, дата, индекс). Ключ сравнения тот же, что в оригинале:
+    # бумага может входить в несколько отраслевых индексов, и выбор не должен
+    # зависеть от порядка ответа биржи.
+    best: dict[str, tuple[Decimal, str, str]] = {}
+
+    for index_id in SECTOR_INDEX_IDS:
+        rows = await client.fetch_index_analytics(index_id)
+        for ticker, weight, trade_date in _weights_from_analytics(rows):
+            if weight is None:
+                continue
+            candidate = (weight, trade_date, index_id)
+            current = best.get(ticker)
+            if current is None or candidate > current:
+                best[ticker] = candidate
+
+    if not best:
+        raise ReferenceEmptyError(
+            "отраслевые индексы не принесли ни одной бумаги: раздел аналитики изменился"
         )
-    return sectors
+
+    sectors: dict[str, str | None] = {
+        asset_id_for(ticker): titles.get(index_id) or index_id
+        for ticker, (_, _, index_id) in best.items()
+    }
+
+    written = await repository.upsert_sectors(sectors)
+    logger.info(
+        "секторы: бумаг с отраслью %d по %d отраслевым индексам, записано %d",
+        len(sectors),
+        len(SECTOR_INDEX_IDS),
+        written,
+    )
+    return written
 
 
 async def sync_index_constituents(
@@ -68,11 +123,25 @@ async def sync_index_constituents(
     index_id: str = "IMOEX",
 ) -> int:
     """Собрать дневной состав индекса и веса бумаг."""
-    rows = await client.fetch_session_rows(session_date.isoformat(), CONSTITUENT_COLUMNS)
+    rows = await client.fetch_index_analytics(index_id, session_date.isoformat())
+    weights = rows_to_weights(rows, session_date, index_id)
+
+    if rows and not weights:
+        raise ReferenceEmptyError(
+            f"состав индекса {index_id} за {session_date}: строк {len(rows)}, весов ни одного"
+        )
+
     written = 0
-    for series_id, values in rows_to_weights(rows, session_date, index_id).items():
+    for series_id, values in weights.items():
         written += await repository.upsert_global_values(series_id, values)
-    logger.info("состав индекса %s за %s: рядов %d", index_id, session_date, written)
+
+    logger.info(
+        "состав индекса %s за %s: бумаг %d, записано %d",
+        index_id,
+        session_date,
+        len(weights),
+        written,
+    )
     return written
 
 
@@ -84,13 +153,44 @@ def rows_to_weights(
     Отсутствие бумаги в составе — не нулевой вес, а отсутствие ряда на эту
     дату: иначе выбывшая из индекса бумага выглядела бы как бумага с нулевым
     весом, что для модели другое утверждение.
+
+    Строки без веса пропускаются вовсе. Записанные, они выглядели бы собранным
+    наблюдением и не дали бы догону собрать сессию заново — именно это и
+    произошло с 62 584 строками прежнего источника.
     """
     out: dict[str, dict[dt.date, Decimal | None]] = {}
-    for row in rows:
-        secid = row.get("SECID")
-        if not isinstance(secid, str) or not secid.strip():
+    for ticker, weight, trade_date in _weights_from_analytics(rows):
+        if weight is None:
             continue
-        day = parse_date(row.get("TRADEDATE")) or session_date
-        series_id = f"{INDEX_WEIGHT_PREFIX}{index_id}_{secid.strip().upper()}"
-        out.setdefault(series_id, {})[day] = to_decimal(row.get("WEIGHT"))
+        # Дата наблюдения — запрошенная, а не пришедшая: раздел отдаёт состав на
+        # ближайшую доступную дату, и записать его как наблюдение о запрошенной
+        # сессии значило бы передатировать.
+        day = parse_date(trade_date) or session_date
+        if day != session_date:
+            continue
+        series_id = f"{INDEX_WEIGHT_PREFIX}{index_id}_{ticker}"
+        out.setdefault(series_id, {})[day] = weight
+    return out
+
+
+def _weights_from_analytics(
+    rows: list[dict[str, object]],
+) -> list[tuple[str, Decimal | None, str]]:
+    """Тикер, вес и дата из строк раздела аналитики.
+
+    Имена колонок раздела — в нижнем регистре, в отличие от истории торгов.
+    """
+    out: list[tuple[str, Decimal | None, str]] = []
+    for row in rows:
+        ticker = row.get("ticker")
+        if not isinstance(ticker, str) or not ticker.strip():
+            continue
+        trade_date = row.get("tradedate")
+        out.append(
+            (
+                ticker.strip().upper(),
+                to_decimal(row.get("weight")),
+                str(trade_date) if trade_date else "",
+            )
+        )
     return out

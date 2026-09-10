@@ -151,3 +151,50 @@ async def test_range_covers_the_whole_gap(
 
     ranges = {(f, t) for _, f, t in iss.history_calls}
     assert (SHORT[1].isoformat(), SHORT[2].isoformat()) in ranges
+
+
+# --- бесполезные обращения (FR-022, FR-023, SC-007) --------------------------
+
+
+async def test_cbr_is_asked_once_per_run_not_once_per_session(
+    db_session: AsyncSession,
+) -> None:
+    """Страницы ЦБ принимают период — перебор дат был бы потерей.
+
+    Считаются настоящие обращения к cbr.ru: две страницы, ключевая ставка и
+    кривая доходности, независимо от того, сколько сессий в дыре.
+    """
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        from financial_ai.market_data.sources import cbr as cbr_module
+        from tests.market_data.conftest import KEY_RATE_HTML, ZCYC_HTML
+
+        if cbr_module.ZCYC_URL in str(request.url):
+            return httpx.Response(200, text=ZCYC_HTML)
+        return httpx.Response(200, text=KEY_RATE_HTML)
+
+    await _seed(db_session, LONG)
+    settings = Settings(market_data_catchup_window_sessions=len(LONG))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    await ingest.catch_up(db_session, settings, LONG[-1], CountingIss(LONG), client)
+
+    assert len(requests) == 2
+
+
+async def test_range_sources_are_not_asked_per_session(db_session: AsyncSession) -> None:
+    """Обращения по датам не касаются рядов, отдающих период целиком."""
+    await _seed(db_session, LONG)
+    settings = Settings(market_data_catchup_window_sessions=len(LONG))
+    iss = CountingIss(LONG)
+    silent = httpx.MockTransport(lambda request: httpx.Response(200, text=""))
+    client = httpx.AsyncClient(transport=silent)
+
+    await ingest.catch_up(db_session, settings, LONG[-1], iss, client)
+
+    # Диапазонных обращений ровно столько, сколько рядов: длина дыры на них
+    # не влияет, хотя сессий в ней четырнадцать.
+    assert len(iss.history_calls) == len(global_series.ISS_SERIES)
+    assert len(iss.session_calls) > len(iss.history_calls)

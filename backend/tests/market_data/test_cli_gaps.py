@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,17 +162,142 @@ async def test_stats_shows_what_triggered_the_run(
     assert "catchup" in out
 
 
-async def test_catchup_dry_run_touches_nothing(
-    db_session: AsyncSession, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Показывает, что было бы собрано, и к источникам не обращается."""
-    await _seed(db_session, [SESSIONS[0], SESSIONS[3]])
+# --- команда как тонкий клиент (FR-010) --------------------------------------
 
-    code = await cli._catchup(ASOF, dry_run=True)
+
+class FakeWorker:
+    """Подделка внутреннего интерфейса worker'а.
+
+    Команда обязана быть клиентом, а не вторым исполнителем сбора: иначе
+    «следить» означало бы смотреть в собственный терминал, а интерфейс, когда
+    появится, управлять догоном не смог бы.
+    """
+
+    def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
+        self.payload = payload
+        self.status_code = status_code
+        self.calls: list[tuple[str, str, object]] = []
+
+    def __call__(
+        self,
+        method: str,
+        url: str,
+        json: object = None,
+        params: object = None,
+        timeout: float = 0,
+    ) -> httpx.Response:
+        self.calls.append((method, url, json))
+        return httpx.Response(self.status_code, json=self.payload)
+
+
+async def test_catchup_command_asks_the_worker_and_collects_nothing(
+    db_session: AsyncSession,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сбор идёт в worker, а не в процессе команды."""
+    await _seed(db_session, [SESSIONS[0], SESSIONS[3]])
+    worker = FakeWorker(
+        {
+            "status": "running",
+            "groups": ["quotes"],
+            "date_from": SESSIONS[1].isoformat(),
+            "date_till": SESSIONS[2].isoformat(),
+            "clamped": False,
+            "requested_sessions": 2,
+        }
+    )
+    monkeypatch.setattr(cli.httpx, "request", worker)
+
+    code = cli._catchup(["quotes"], SESSIONS[1], SESSIONS[2])
     out = capsys.readouterr().out
 
     assert code == 0
-    assert "было бы собрано сессий: 2" in out
+    assert "догон запущен: сессий 2" in out
 
+    method, url, payload = worker.calls[0]
+    assert method == "POST"
+    assert url.endswith("/internal/catchup")
+    assert payload == {
+        "groups": ["quotes"],
+        "date_from": SESSIONS[1].isoformat(),
+        "date_till": SESSIONS[2].isoformat(),
+    }
+
+    # Ничего не собралось: команда не является вторым сборщиком.
     repository = MarketDataRepository(db_session)
     assert await repository.sessions_with_daily_bars(SESSIONS) == {SESSIONS[0], SESSIONS[3]}
+
+
+def test_catchup_reports_a_clamped_range(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Обрезку диапазона человек должен увидеть, а не угадать."""
+    worker = FakeWorker(
+        {
+            "status": "running",
+            "groups": ["quotes"],
+            "date_from": SESSIONS[0].isoformat(),
+            "date_till": SESSIONS[3].isoformat(),
+            "clamped": True,
+            "requested_sessions": 4,
+        }
+    )
+    monkeypatch.setattr(cli.httpx, "request", worker)
+
+    assert cli._catchup(None, dt.date(2020, 1, 1), None) == 0
+    assert "обрезан по окну" in capsys.readouterr().out
+
+
+def test_catchup_status_shows_progress(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        cli.httpx,
+        "request",
+        FakeWorker(
+            {
+                "status": "running",
+                "requested": 62,
+                "closed": 17,
+                "failed": 0,
+                "remaining": 45,
+                "current": SESSIONS[1].isoformat(),
+                "reason": None,
+            }
+        ),
+    )
+
+    assert cli._catchup_status() == 0
+    out = capsys.readouterr().out
+    assert "состояние: running" in out
+    assert "осталось:  45" in out
+
+
+def test_catchup_stop_asks_the_worker(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Остановка мягкая, и команда сообщает именно это."""
+    worker = FakeWorker({"status": "stopping", "current": SESSIONS[1].isoformat()})
+    monkeypatch.setattr(cli.httpx, "request", worker)
+
+    assert cli._catchup_stop() == 0
+    assert worker.calls[0][0] == "DELETE"
+    assert "доводится до конца" in capsys.readouterr().out
+
+
+def test_backfill_required_is_not_a_crash(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """На пустом хранилище нужна первичная загрузка, а не догон."""
+    monkeypatch.setattr(
+        cli.httpx,
+        "request",
+        FakeWorker(
+            {"detail": {"code": "backfill_required", "message": "нужна первичная загрузка"}},
+            status_code=422,
+        ),
+    )
+
+    assert cli._catchup(None, None, None) == 1
+    assert "нужна первичная загрузка" in capsys.readouterr().out

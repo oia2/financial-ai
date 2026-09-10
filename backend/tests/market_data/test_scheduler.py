@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 
 from financial_ai.config import Settings
+from financial_ai.market_data import ingest
 from financial_ai.market_data.scheduler import MarketDataScheduler
 
 MOSCOW_DAY = dt.date(2026, 8, 28)
@@ -74,3 +76,36 @@ async def test_disabled_scheduler_does_not_start() -> None:
     await scheduler.start()
     await scheduler.stop()
     assert scheduler._task is None
+
+
+# --- догон не запускается сам (FR-001, SC-001) -------------------------------
+
+
+async def test_daily_run_makes_no_catchup_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Ежедневный прогон собирает текущую сессию и НЕ порождает догона.
+
+    Неуправляемый догон ушёл на 2909 обращений к бирже без спроса и без
+    возможности вмешаться — один прогон на живых данных это показал. Теперь
+    историю добирает человек, и проверяется это по факту вызова, а не по тексту.
+    """
+    calls: list[object] = []
+
+    async def spy_catch_up(*args: object, **kwargs: object) -> ingest.CatchupResult:
+        calls.append(args)
+        return ingest.CatchupResult()
+
+    async def fake_ingest(*args: object, **kwargs: object) -> ingest.IngestResult:
+        return ingest.IngestResult(run_id="run", session_date=MOSCOW_DAY)
+
+    monkeypatch.setattr(ingest, "catch_up", spy_catch_up)
+    monkeypatch.setattr(ingest, "ingest_session", fake_ingest)
+
+    await _scheduler()._ingest_once()
+
+    assert calls == []
+
+
+def test_daily_pipeline_does_not_call_catchup() -> None:
+    """И полный цикл «сбор → набор → ранжирование» тоже не догоняет."""
+    source = inspect.getsource(ingest.ingest_and_rank)
+    assert "await catch_up(" not in source

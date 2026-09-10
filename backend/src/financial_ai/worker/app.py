@@ -14,12 +14,13 @@ from fastapi import FastAPI
 from financial_ai.config import get_settings
 from financial_ai.db.engine import dispose_engine
 from financial_ai.logging import setup_logging
+from financial_ai.market_data.runner import CatchupRunner
 from financial_ai.market_data.scheduler import MarketDataScheduler
 from financial_ai.sync.factory import build_sync_service
 from financial_ai.sync.lock import SingleFlight
 from financial_ai.sync.scheduler import SyncScheduler
 from financial_ai.sync.service import SyncResult
-from financial_ai.worker.routes import health, sync
+from financial_ai.worker.routes import catchup, coverage, health, sync
 
 
 @asynccontextmanager
@@ -41,8 +42,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.market_data_scheduler = market_data
     await market_data.start()
 
+    # Догон истории НЕ запускается сам: он стартует только по команде человека.
+    # Владелец задания живёт в этом процессе, поэтому перезапуск снимает
+    # состояние «идёт» сам собой.
+    application.state.catchup_runner = CatchupRunner(settings)
+
     yield
 
+    await application.state.catchup_runner.shutdown()
     await market_data.stop()
 
     # Остановка дожидается текущей синхронизации: транзакция не должна
@@ -61,3 +68,5 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/internal")
 app.include_router(sync.router, prefix="/internal")
+app.include_router(catchup.router, prefix="/internal")
+app.include_router(coverage.router, prefix="/internal")

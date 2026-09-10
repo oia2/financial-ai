@@ -16,7 +16,7 @@ from financial_ai.market_data.sources.equity_agg import rows_to_aggregates
 from financial_ai.market_data.sources.global_series import ISS_SERIES, rows_to_values
 from financial_ai.market_data.sources.reference import (
     INDEX_WEIGHT_PREFIX,
-    rows_to_sectors,
+    SECTOR_INDEX_IDS,
     rows_to_weights,
 )
 
@@ -94,32 +94,46 @@ def test_index_series_live_in_the_index_market() -> None:
 
 
 # --- секторы ----------------------------------------------------------------
+#
+# Колонок `SECTORID`/`SECTORNAME` у биржи нет ни в одном разделе: сектор
+# выводится из принадлежности к отраслевым индексам. Прежние тесты проверяли
+# разбор выдуманных колонок и потому проходили, пока справочник был пуст.
 
 
-def test_sector_name_is_preferred_over_id() -> None:
-    rows = [{"SECID": "SBER", "SECTORID": "FIN", "SECTORNAME": "Финансы"}]
-    assert rows_to_sectors(rows) == {"EQ_AST_SBER": "Финансы"}
-
-
-def test_sector_falls_back_to_id() -> None:
-    rows = [{"SECID": "SBER", "SECTORID": "FIN", "SECTORNAME": ""}]
-    assert rows_to_sectors(rows) == {"EQ_AST_SBER": "FIN"}
-
-
-def test_unknown_sector_is_none_not_placeholder() -> None:
-    """Строка-заглушка попала бы в признаки как настоящая категория."""
-    rows = [{"SECID": "SBER", "SECTORID": "", "SECTORNAME": ""}]
-    assert rows_to_sectors(rows) == {"EQ_AST_SBER": None}
+def test_sector_indices_match_the_original() -> None:
+    """Перечень отраслевых индексов перенесён, а не собран по догадке."""
+    assert SECTOR_INDEX_IDS[:3] == ("MOEXOG", "MOEXMM", "MOEXFN")
+    assert len(SECTOR_INDEX_IDS) == 11
+    assert all(index_id.startswith("MOEX") for index_id in SECTOR_INDEX_IDS)
 
 
 # --- состав индекса ---------------------------------------------------------
+#
+# Имена колонок раздела аналитики — в нижнем регистре, в отличие от истории
+# торгов. Образец снят с живого ответа 2026-09-04.
+
+
+def _row(ticker: str, weight: str | None, day: str = "2026-08-28") -> dict[str, object]:
+    return {
+        "indexid": "IMOEX",
+        "tradedate": day,
+        "ticker": ticker,
+        "shortnames": "Сбербанк",
+        "secids": ticker,
+        "weight": weight,
+    }
 
 
 def test_weight_series_id_carries_index_and_ticker() -> None:
-    rows = [{"SECID": "SBER", "TRADEDATE": "2026-08-28", "WEIGHT": "13.87"}]
-    out = rows_to_weights(rows, SESSION, "IMOEX")
+    out = rows_to_weights([_row("SBER", "13.87")], SESSION, "IMOEX")
     assert list(out) == [f"{INDEX_WEIGHT_PREFIX}IMOEX_SBER"]
     assert out[f"{INDEX_WEIGHT_PREFIX}IMOEX_SBER"] == {SESSION: Decimal("13.87")}
+
+
+def test_weight_precision_is_exact() -> None:
+    """Вес — доля процента: float исказил бы её последними знаками."""
+    out = rows_to_weights([_row("SBER", "13.876543210")], SESSION, "IMOEX")
+    assert out[f"{INDEX_WEIGHT_PREFIX}IMOEX_SBER"][SESSION] == Decimal("13.876543210")
 
 
 def test_absent_ticker_produces_no_series() -> None:
@@ -127,7 +141,22 @@ def test_absent_ticker_produces_no_series() -> None:
     assert rows_to_weights([], SESSION, "IMOEX") == {}
 
 
-def test_weight_date_falls_back_to_session() -> None:
-    rows = [{"SECID": "SBER", "WEIGHT": "13.87"}]
-    out = rows_to_weights(rows, SESSION, "IMOEX")
-    assert out[f"{INDEX_WEIGHT_PREFIX}IMOEX_SBER"] == {SESSION: Decimal("13.87")}
+def test_row_without_weight_is_dropped() -> None:
+    """Пустая строка веса — не наблюдение.
+
+    Записанная, она выглядела бы собранной и не дала бы догону вернуться за
+    настоящим весом. Так и накопились 62 584 строки без единого значения.
+    """
+    assert rows_to_weights([_row("SBER", None)], SESSION, "IMOEX") == {}
+
+
+def test_snapshot_for_another_date_is_dropped() -> None:
+    """Раздел отдаёт ближайший доступный состав — передатировать его нельзя."""
+    out = rows_to_weights([_row("SBER", "13.87", day="2026-08-27")], SESSION, "IMOEX")
+    assert out == {}
+
+
+def test_uppercase_history_columns_are_not_read() -> None:
+    """Именно на этом источник и был сломан: он просил колонки истории торгов."""
+    rows = [{"SECID": "SBER", "TRADEDATE": "2026-08-28", "WEIGHT": "13.87"}]
+    assert rows_to_weights(rows, SESSION, "IMOEX") == {}

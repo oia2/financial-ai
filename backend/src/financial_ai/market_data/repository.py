@@ -15,9 +15,10 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from financial_ai.market_data.models import (
     AssetSector,
@@ -33,6 +34,17 @@ from financial_ai.market_data.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class GroupCoverageRaw:
+    """Сырые числа покрытия одной группы. Тип, а не словарь: значения разные."""
+
+    sessions_covered: int | None
+    period_from: dt.date | None
+    period_till: dt.date | None
+    rows_total: int
+    rows_with_values: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +387,38 @@ class MarketDataRepository:
         await self._session.execute(statement)
         return len(payload)
 
+    async def assets_with_positions(self, session_date: dt.date) -> set[str]:
+        """Активы, по которым за эту сессию уже есть непустая строка.
+
+        Нужно источнику позиций: его единица обращения — «инструмент и дата»,
+        и «сессия собрана» не означает «все инструменты собраны». Без этого
+        повторный догон стоил бы столько же, сколько первый (FR-024c).
+
+        Пустые строки не в счёт: строка без значений — это не собранные данные,
+        и запрашивать пару заново как раз нужно.
+        """
+        rows = await self._session.scalars(
+            select(FuturesPosition.asset_id).where(
+                FuturesPosition.session_date == session_date,
+                _positions_filled(),
+            )
+        )
+        return set(rows.all())
+
+    async def first_position_dates(self) -> dict[str, dt.date]:
+        """Первая сессия со значениями по каждому активу.
+
+        Отметка первой доступной даты инструмента **выводится из данных**, а не
+        хранится отдельно: состояние в стороне от данных может с ними
+        разойтись — то же правило, что и у прогресса первичной загрузки.
+        """
+        rows = await self._session.execute(
+            select(FuturesPosition.asset_id, func.min(FuturesPosition.session_date))
+            .where(_positions_filled())
+            .group_by(FuturesPosition.asset_id)
+        )
+        return dict(rows.all())  # type: ignore[arg-type]
+
     async def positions_for_window(self, sessions: list[dt.date]) -> list[FuturesPosition]:
         if not sessions:
             return []
@@ -487,6 +531,69 @@ class MarketDataRepository:
         )
         await self._session.execute(statement)
 
+    # --- покрытие по группам (spec 005) ------------------------------------
+
+    async def group_coverage(
+        self,
+        model: type,
+        session_column: str | None,
+        value_columns: tuple[str, ...],
+        sessions: list[dt.date] | None,
+    ) -> GroupCoverageRaw:
+        """Покрытие и наполненность одной группы наблюдений.
+
+        Метод намеренно **не знает о группах**: модель, столбец сессии и
+        столбцы значений приходят снаружи. Иначе хранилище пришлось бы править
+        при каждом изменении состава групп.
+
+        Считаются два разных числа: сколько сессий покрыто и сколько строк
+        содержат хоть одно значение. Дефект позиций жил ровно в зазоре между
+        ними — покрытие полное, значений нет.
+        """
+        filled = or_(*(getattr(model, name).is_not(None) for name in value_columns))
+
+        if session_column is None:
+            # Справочник текущего состояния: оси сессий нет, окна тоже.
+            total = await self._session.scalar(select(func.count()).select_from(model)) or 0
+            with_values = (
+                await self._session.scalar(select(func.count()).select_from(model).where(filled))
+                or 0
+            )
+            return GroupCoverageRaw(
+                sessions_covered=None,
+                period_from=None,
+                period_till=None,
+                rows_total=int(total),
+                rows_with_values=int(with_values),
+            )
+
+        column = getattr(model, session_column)
+        scope = column.in_(sessions) if sessions else column.is_not(None)
+
+        row = (
+            await self._session.execute(
+                select(
+                    func.count(func.distinct(column)),
+                    func.min(column),
+                    func.max(column),
+                    func.count(),
+                ).where(scope)
+            )
+        ).one()
+
+        with_values = (
+            await self._session.scalar(select(func.count()).select_from(model).where(scope, filled))
+            or 0
+        )
+
+        return GroupCoverageRaw(
+            sessions_covered=int(row[0] or 0),
+            period_from=row[1],
+            period_till=row[2],
+            rows_total=int(row[3] or 0),
+            rows_with_values=int(with_values),
+        )
+
     # --- поиск пропусков (spec 004) ----------------------------------------
 
     async def has_any_daily_bars(self) -> bool:
@@ -560,3 +667,13 @@ class MarketDataRepository:
             .order_by(IngestRun.started_at)
         )
         return list(rows.all())
+
+
+def _positions_filled() -> ColumnElement[bool]:
+    """Условие «в строке позиций есть хоть одно значение»."""
+    return or_(
+        FuturesPosition.fiz_long.is_not(None),
+        FuturesPosition.fiz_short.is_not(None),
+        FuturesPosition.jur_long.is_not(None),
+        FuturesPosition.jur_short.is_not(None),
+    )

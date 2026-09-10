@@ -359,3 +359,142 @@ async def test_disabled_catchup_does_nothing(
 
     assert result.requested == []
     assert iss.quote_calls == []
+
+
+# --- порядок источников (FR-016, US3/AC1) ------------------------------------
+
+
+class OrderTrackingIss(FakeIss):
+    """Подделка биржи, помнящая ПОРЯДОК обращений.
+
+    Проверяется не число вызовов, а очерёдность: дефект был именно в ней.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.order: list[str] = []
+
+    async def fetch_security_history(
+        self,
+        secid: str,
+        date_from: str,
+        date_till: str,
+        columns: tuple[str, ...],
+        **kwargs: object,
+    ) -> list[dict[str, object]]:
+        self.order.append(f"range:{secid}")
+        return await super().fetch_security_history(secid, date_from, date_till, columns, **kwargs)
+
+    async def fetch_session_rows(
+        self, session_date: str, columns: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        self.order.append(f"session:{session_date}")
+        return await super().fetch_session_rows(session_date, columns)
+
+
+async def test_range_sources_go_before_the_date_loop(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Диапазонные источники собираются ПЕРВЫМИ.
+
+    Раньше они шли после цикла по датам, и прогон, остановленный на 224-й
+    сессии из 309, не собрал их вовсе: индексы имели по 1 сессии, USD и
+    ставка — по 2.
+    """
+    await _seed(db_session, [SESSIONS[4]])
+    iss = OrderTrackingIss()
+
+    await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
+
+    ranges = [i for i, step in enumerate(iss.order) if step.startswith("range:")]
+    sessions = [i for i, step in enumerate(iss.order) if step.startswith("session:")]
+    assert ranges, "диапазонные источники не собирались"
+    assert sessions, "источники по датам не собирались"
+    assert max(ranges) < min(sessions)
+
+
+async def test_interrupted_catchup_keeps_range_sources_collected(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Прерывание после первых сессий диапазонные источники не теряет."""
+    await _seed(db_session, [SESSIONS[4]])
+    iss = OrderTrackingIss()
+    visited: list[dt.date] = []
+
+    def stop_after_first() -> bool:
+        return len(visited) >= 1
+
+    def on_done(day: dt.date, closed: bool) -> None:
+        visited.append(day)
+
+    await ingest.catch_up(
+        db_session,
+        settings,
+        ASOF,
+        iss,
+        cbr_client,
+        sessions=SESSIONS[:4],
+        on_session_done=on_done,
+        should_stop=stop_after_first,
+    )
+
+    assert len(visited) == 1
+    assert [step for step in iss.order if step.startswith("range:")]
+
+
+# --- прекращение опроса недоступного источника (FR-024, SC-007) --------------
+
+
+class BrokenQuotesIss(FakeIss):
+    """Биржа, у которой котировки не отвечают никогда."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.quote_attempts = 0
+
+    async def fetch_session_rows(
+        self, session_date: str, columns: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        if "OPEN" in columns:
+            self.quote_attempts += 1
+            raise IssError("биржа недоступна")
+        return await super().fetch_session_rows(session_date, columns)
+
+
+async def test_failing_source_is_dropped_after_a_streak(
+    db_session: AsyncSession, cbr_client: httpx.AsyncClient
+) -> None:
+    """Источник, проваливший подряд несколько сессий, дальше не спрашивается.
+
+    Иначе при длинной дыре каждая сессия стоит семь обращений впустую — шесть
+    повторов плюс попытка.
+    """
+    await _seed(db_session, [SESSIONS[4]])
+    settings = Settings(
+        market_data_catchup_window_sessions=5,
+        market_data_source_failure_streak=2,
+    )
+    iss = BrokenQuotesIss()
+
+    result = await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
+
+    # Четыре пропущенные сессии, но спрашивали только до порога.
+    assert len(result.requested) == 4
+    assert iss.quote_attempts == 2
+
+
+async def test_single_failure_does_not_close_the_source(
+    db_session: AsyncSession, cbr_client: httpx.AsyncClient
+) -> None:
+    """Единичный сбой сети закрывать источник на весь прогон не должен."""
+    await _seed(db_session, [SESSIONS[4]])
+    settings = Settings(
+        market_data_catchup_window_sessions=5,
+        market_data_source_failure_streak=3,
+    )
+    iss = FakeIss(fail_quotes_on={SESSIONS[0]})
+
+    await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
+
+    # Все четыре сессии спрошены: одна неудача не оборвала прогон.
+    assert len(iss.quote_calls) == 4

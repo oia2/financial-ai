@@ -138,6 +138,25 @@ class Settings(BaseSettings):
         """
         return self.market_data_catchup_window_sessions or self.market_data_price_window_sessions
 
+    # --- управление сбором (spec 005) ---------------------------------------
+
+    # Источник позиций спрашивает ИНСТРУМЕНТ И ДАТУ, а не дату целиком, поэтому
+    # становится самым нагруженным в системе. Темп — вопрос эксплуатации, а не
+    # свойство кода: допустимая нагрузка на чужой бесплатный сервер может
+    # измениться без единой правки логики.
+    market_data_positions_batch_size: int = Field(default=25, ge=1)
+    market_data_positions_batch_pause_seconds: float = Field(default=1.0, ge=0)
+    market_data_positions_retries: int = Field(default=4, ge=1)
+    market_data_positions_retry_backoff_seconds: float = Field(default=1.0, ge=0)
+
+    # Шаг редкой сетки при поиске первой доступной даты инструмента. Поиск
+    # выполняется однократно и только когда собранных данных ещё нет.
+    market_data_positions_discover_step: int = Field(default=50, ge=1)
+
+    # Сколько сессий подряд источник должен провалиться, чтобы прогон перестал
+    # его опрашивать. Единичный сбой сети закрывать источник не должен.
+    market_data_source_failure_streak: int = Field(default=3, ge=1)
+
     market_data_http_timeout_seconds: float = Field(default=60.0, gt=0)
     market_data_http_retries: int = Field(default=6, ge=1)
     market_data_iss_page_limit: int = Field(default=100, ge=1)

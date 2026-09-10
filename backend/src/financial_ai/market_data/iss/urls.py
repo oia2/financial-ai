@@ -12,16 +12,26 @@ from __future__ import annotations
 
 
 def history_by_date_url(
-    base_url: str, board: str, engine: str = "stock", market: str = "shares"
+    base_url: str, board: str | None, engine: str = "stock", market: str = "shares"
 ) -> str:
-    """Адрес для ежедневного добора: одна дата, все бумаги доски.
+    """Адрес для ежедневного добора: одна дата, все бумаги раздела.
 
     Дата передаётся параметром запроса, а не путём: см. :func:`history_by_date_params`.
+
+    **Доска необязательна, и это не мелочь.** Оригинал для срочного рынка
+    строит адрес БЕЗ сегмента `boards/`
+    (`br_continuous_history_sync/pipeline.py:148`). Прежняя версия вставляла
+    доску всегда, поэтому в адрес срочного рынка подставлялась `TQBR` — доска
+    акций, — и получалось сочетание, которого на бирже не существует: Brent не
+    собирался ни разу, а в лог на каждой сессии шло «подходящего контракта не
+    нашлось».
     """
-    return (
-        f"{base_url.rstrip('/')}/history/engines/{engine.strip('/')}"
-        f"/markets/{market.strip('/')}/boards/{board.strip('/').upper()}/securities.json"
+    prefix = (
+        f"{base_url.rstrip('/')}/history/engines/{engine.strip('/')}/markets/{market.strip('/')}"
     )
+    if board:
+        return f"{prefix}/boards/{board.strip('/').upper()}/securities.json"
+    return f"{prefix}/securities.json"
 
 
 def history_by_security_url(
@@ -71,3 +81,45 @@ def history_by_security_params(
         "iss.meta": "off",
         "history.columns": ",".join(columns),
     }
+
+
+def futures_series_url(base_url: str) -> str:
+    """Адрес списка серий срочного рынка.
+
+    Отсюда берётся соответствие «базовый актив → код контракта»: правилом код
+    не выводится (`SBER` → `SBRF`, `NVTK` → `NOTKM`), а файла соответствий
+    оригинала в репозитории нет.
+    """
+    return f"{base_url.rstrip('/')}/statistics/engines/futures/markets/forts/series.json"
+
+
+def futures_securities_url(base_url: str) -> str:
+    """Адрес списка контрактов срочного рынка.
+
+    Нужен ради открытого интереса: он разрешает выбор, когда у одной акции
+    несколько кодов контракта.
+    """
+    return f"{base_url.rstrip('/')}/engines/futures/markets/forts/securities.json"
+
+
+def index_analytics_url(base_url: str, index_id: str) -> str:
+    """Адрес состава индекса с весами бумаг.
+
+    **Это раздел аналитики, а не истории торгов.** Вес бумаги в индексе в истории
+    торгов не публикуется вовсе: биржа отвечает `200`, строки приходят, колонки
+    веса в них нет. Так в хранилище и накопились 62 584 строки без единого
+    значения. Оригинал берёт веса отсюда
+    (`iss_index_constituents_daily_sync/pipeline.py:150`).
+    """
+    return (
+        f"{base_url.rstrip('/')}/statistics/engines/stock/markets/index"
+        f"/analytics/{index_id.strip('/').upper()}.json"
+    )
+
+
+def index_titles_url(base_url: str) -> str:
+    """Адрес перечня индексов с их краткими именами.
+
+    Нужен секторам: название сектора — это имя отраслевого индекса.
+    """
+    return f"{base_url.rstrip('/')}/statistics/engines/stock/markets/index/analytics.json"
