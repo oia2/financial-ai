@@ -1,5 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
+import { RouteLink, useRoute } from '@/app/router';
+import { coverageQueryKey } from '@/entities/market-data';
 import type { PortfolioDto } from '@/entities/portfolio';
 import { RefreshIntervalForm } from '@/features/refresh-interval-setting/RefreshIntervalForm';
 import { useRefreshNow } from '@/features/refresh-now/useRefreshNow';
@@ -15,6 +18,8 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const controlRef = useRef<HTMLDivElement>(null);
   const refresh = useRefreshNow();
+  const route = useRoute();
+  const queryClient = useQueryClient();
 
   // Меню закрывается кликом вне его — как в прототипе.
   useEffect(() => {
@@ -32,20 +37,39 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
   const interval = data?.sync.refresh_interval_seconds;
   const busy = refresh.isPending || (data?.sync.in_progress ?? false);
 
+  // В разделе рыночных данных то же действие перечитывает сводку: обращаться
+  // к брокеру там незачем, данные раздела к счёту не привязаны (FR-018).
+  const onMarketData = route === 'market-data';
+  const refreshCoverage = () => void queryClient.invalidateQueries({ queryKey: coverageQueryKey });
+
   return (
     <header className="app-header">
       <div className="brand">
         <span className="brand-name">FINANCIAL AI</span>
       </div>
 
+      {/*
+        Два раздела, активный отмечается текстом и нижней линией (FR-001).
+        Сайдбар для двух разделов не нужен: оболочка масштабируется
+        добавлением реальных разделов, а не пустых вкладок.
+      */}
+      <nav className="app-nav" aria-label="Разделы">
+        <RouteLink route="portfolio" aria-current={route === 'portfolio' ? 'page' : undefined}>
+          Портфель
+        </RouteLink>
+        <RouteLink route="market-data" aria-current={onMarketData ? 'page' : undefined}>
+          Рыночные данные
+        </RouteLink>
+      </nav>
+
       <div className="header-actions" ref={controlRef}>
         <button
           className="icon-button"
           type="button"
-          aria-label="Обновить данные"
-          onClick={() => refresh.run()}
-          disabled={busy}
-          aria-busy={busy}
+          aria-label={onMarketData ? 'Обновить сводку рыночных данных' : 'Обновить данные'}
+          onClick={onMarketData ? refreshCoverage : () => refresh.run()}
+          disabled={onMarketData ? false : busy}
+          aria-busy={onMarketData ? false : busy}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 11a8 8 0 0 0-14.9-4M4 4v4h4M4 13a8 8 0 0 0 14.9 4M20 20v-4h-4" />
@@ -55,7 +79,7 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
         <button
           className="interval-shortcut"
           type="button"
-          aria-label="Настроить интервал автообновления"
+          aria-label="Интервал автообновления портфеля"
           onClick={() => setMenuOpen((open) => !open)}
         >
           <span className="interval-shortcut-label">Авто</span>

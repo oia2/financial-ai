@@ -1,0 +1,93 @@
+/** Запросы раздела «Рыночные данные» к Backend-API. */
+
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+
+import { apiDelete, apiGet, apiPost } from '@/shared/api/client';
+
+import {
+  isCatchupActive,
+  type CatchupStartResultDto,
+  type CatchupStateDto,
+  type CoverageDto,
+  type LaunchRequest,
+} from './types';
+
+export const coverageQueryKey = ['market-data', 'coverage'] as const;
+export const catchupQueryKey = ['market-data', 'catchup'] as const;
+
+/**
+ * Частота чтения состояния прогона.
+ *
+ * Сессия котировок занимает 1–2 секунды, сессия позиций — около 2,5 минут:
+ * чаще опрашивать бессмысленно, реже — рвано для быстрых прогонов. Это
+ * свойство интерфейса, а не пользовательская настройка; настройка интервала
+ * относится к портфелю (research.md R5).
+ */
+export const CATCHUP_POLL_MS = 3000;
+
+export function fetchCoverage(): Promise<CoverageDto> {
+  return apiGet<CoverageDto>('/api/market-data/coverage');
+}
+
+export function fetchCatchupState(): Promise<CatchupStateDto> {
+  return apiGet<CatchupStateDto>('/api/market-data/catchup');
+}
+
+export function startCatchup(request: LaunchRequest): Promise<CatchupStartResultDto> {
+  const payload: Record<string, unknown> = {};
+  if (request.groups !== null) payload.groups = request.groups;
+  if (request.date_from !== null) payload.date_from = request.date_from;
+  if (request.date_till !== null) payload.date_till = request.date_till;
+
+  return apiPost<CatchupStartResultDto>('/api/market-data/catchup', payload);
+}
+
+export function stopCatchup(): Promise<{ status: string; current: string | null }> {
+  return apiDelete<{ status: string; current: string | null }>('/api/market-data/catchup');
+}
+
+export function useCoverage(): UseQueryResult<CoverageDto> {
+  return useQuery({ queryKey: coverageQueryKey, queryFn: fetchCoverage });
+}
+
+/**
+ * Состояние прогона.
+ *
+ * Опрос идёт, пока прогон активен, и прекращается, когда он неактивен: при
+ * `idle`, `stopped`, `finished` и `failed` новых чисел не появится, пока
+ * человек не запустит сбор заново.
+ *
+ * Владелец этого запроса — оболочка приложения, а не страница: баннер
+ * процесса виден в обоих разделах и не должен гаснуть при переходе в
+ * портфель (FR-006, FR-035).
+ */
+export function useCatchupState(): UseQueryResult<CatchupStateDto> {
+  return useQuery({
+    queryKey: catchupQueryKey,
+    queryFn: fetchCatchupState,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status !== undefined && isCatchupActive(status) ? CATCHUP_POLL_MS : false;
+    },
+  });
+}
+
+export function useStartCatchup() {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: startCatchup,
+    // Состояние прогона после запуска перечитывается с сервера: показывать
+    // «идёт» по факту нажатия нельзя (FR-032).
+    onSuccess: () => client.invalidateQueries({ queryKey: catchupQueryKey }),
+  });
+}
+
+export function useStopCatchup() {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: stopCatchup,
+    onSuccess: () => client.invalidateQueries({ queryKey: catchupQueryKey }),
+  });
+}

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from financial_ai.api.routes import health, portfolio, settings
+from financial_ai.api.routes import health, market_data, portfolio, settings
 from financial_ai.config import get_settings
 from financial_ai.db.engine import dispose_engine
 from financial_ai.logging import setup_logging
@@ -37,3 +37,4 @@ app = FastAPI(
 app.include_router(health.router, prefix="/api")
 app.include_router(portfolio.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(market_data.router, prefix="/api")

@@ -90,8 +90,46 @@ async def test_report_has_the_contract_shape(
         "rows_total",
         "rows_with_values",
         "value_ratio",
+        "looks_collected_but_empty",
     ):
         assert required in quotes
+
+
+async def test_report_carries_the_catchup_window(
+    worker_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Границы окна догона приходят из ответа, а не выводятся из строк сводки.
+
+    Окна групп различаются, а форме запуска нужно одно — то, по которому
+    планируется прогон (FR-013b).
+    """
+    await _seed(db_session)
+
+    payload = (
+        await worker_client.get("/internal/coverage", params={"asof": ASOF.isoformat()})
+    ).json()
+    window = payload["catchup_window"]
+
+    assert window["sessions"] == len(SESSIONS)
+    assert window["date_from"] == SESSIONS[0].isoformat()
+    assert window["date_till"] == ASOF.isoformat()
+
+
+async def test_collected_group_is_not_marked_as_empty(
+    worker_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Вывод «покрыто, но пусто» делает ответ, а не тот, кто его читает.
+
+    Здесь проверяется, что собранная группа признаком не помечается; сам
+    признак разбирается в `tests/market_data/test_coverage.py` (FR-013a).
+    """
+    await _seed(db_session)
+
+    payload = (
+        await worker_client.get("/internal/coverage", params={"asof": ASOF.isoformat()})
+    ).json()
+
+    assert _group(payload, "quotes")["looks_collected_but_empty"] is False
 
 
 async def test_reference_row_has_no_window_fields(

@@ -23,13 +23,37 @@ import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+import httpx
+from sqlalchemy.exc import SQLAlchemyError
+
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.market_data import gaps, groups, ingest
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
+from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import MarketDataRepository
 
 logger = logging.getLogger(__name__)
+
+
+def describe_failure(error: BaseException) -> str:
+    """Причина прерывания в виде, пригодном для показа человеку.
+
+    Текст исключения сюда не попадает намеренно. `repr` ошибки `httpx` несёт
+    адрес, по которому шло обращение, а он может быть внутренним; на экране
+    это раскрывало бы конфигурацию развёртывания (FR-005a фичи 005, FR-043
+    фичи 006). Подробности не теряются: полный трейсбек пишет
+    `logger.exception` строкой ниже места, где эта функция вызывается.
+    """
+    if isinstance(error, IssError):
+        return "источник данных ответил ошибкой"
+    if isinstance(error, httpx.TimeoutException):
+        return "источник данных не ответил вовремя"
+    if isinstance(error, httpx.HTTPError):
+        return "источник данных недоступен"
+    if isinstance(error, SQLAlchemyError):
+        return "не удалось записать собранное в хранилище"
+    return "прогон прерван внутренней ошибкой"
 
 
 class CatchupStatus(StrEnum):
@@ -219,7 +243,7 @@ class CatchupRunner:
                 )
         except Exception as error:
             self._state.status = CatchupStatus.FAILED
-            self._state.reason = repr(error)
+            self._state.reason = describe_failure(error)
             self._state.finished_at = dt.datetime.now(dt.UTC)
             logger.exception("догон завершился ошибкой")
             return

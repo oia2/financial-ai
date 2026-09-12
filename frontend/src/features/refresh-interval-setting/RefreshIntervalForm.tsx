@@ -62,7 +62,7 @@ export function RefreshIntervalForm() {
 
   return (
     <form className="interval-form" onSubmit={handleSubmit} noValidate>
-      <label htmlFor="refresh-interval-input">Интервал автообновления</label>
+      <label htmlFor="refresh-interval-input">Автообновление портфеля</label>
 
       <div className="interval-control-row">
         <div className="interval-input-wrap">
@@ -95,7 +95,8 @@ export function RefreshIntervalForm() {
       </div>
 
       <p className="field-hint" id="interval-hint">
-        Целое число от {min_seconds} до {max_seconds} секунд.
+        Целое число от {min_seconds} до {max_seconds} секунд. Интервал относится к брокерскому счёту
+        и на рыночные данные не влияет.
       </p>
 
       <p className="field-error" id="interval-error" role="alert" hidden={error === null}>

@@ -1,0 +1,127 @@
+/**
+ * Ответы раздела «Рыночные данные» для тестов.
+ *
+ * Числа взяты из снимка стенда на 2026-09-03, приведённого в брифе дизайна:
+ * котировки 255/314 и 96,1% строк со значениями, агрегаты 224/314, глобальные
+ * ряды 18/314, позиции 9/82. Строка `positions` в сценарии аномалии
+ * воспроизводит настоящий дефект: покрытие 82/82 при нулевой доле значений.
+ */
+
+import type {
+  CatchupStateDto,
+  CatchupStatus,
+  CoverageDto,
+  GroupCoverageDto,
+} from '@/entities/market-data';
+
+export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageDto {
+  return {
+    asof_date: '2026-09-03',
+    catchup_window: {
+      date_from: '2026-04-20',
+      date_till: '2026-09-03',
+      sessions: 314,
+    },
+    groups: [
+      historyGroup('quotes', 'котировки', 255, 314, 0.961),
+      historyGroup('aggregates', 'агрегаты', 224, 314, 1.0),
+      historyGroup('global', 'глобальные ряды', 18, 314, 1.0),
+      historyGroup('positions', 'позиции по фьючерсам', 9, 82, 1.0),
+      {
+        group: 'reference',
+        title: 'справочники',
+        has_history: false,
+        rows_total: 506,
+        rows_with_values: 506,
+        value_ratio: 1.0,
+        looks_collected_but_empty: false,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function historyGroup(
+  group: GroupCoverageDto['group'],
+  title: string,
+  covered: number,
+  window: number,
+  valueRatio: number | null,
+): GroupCoverageDto {
+  return {
+    group,
+    title,
+    has_history: true,
+    window_sessions: window,
+    sessions_covered: covered,
+    coverage_ratio: Number((covered / window).toFixed(4)),
+    period_from: '2025-06-10',
+    period_till: '2026-09-03',
+    gaps: window - covered,
+    // Абсолютных чисел строк в снимке стенда нет: интерфейс показывает
+    // прочерк, а не выдумывает значение (FR-015).
+    rows_total: null,
+    rows_with_values: null,
+    value_ratio: valueRatio,
+    looks_collected_but_empty: false,
+  };
+}
+
+/** Сводка, в которой одна группа покрыта полностью и пуста (FR-016). */
+export function anomalyCoverageFixture(): CoverageDto {
+  const report = coverageFixture();
+  const groups = report.groups.map((row) =>
+    row.group === 'positions'
+      ? {
+          ...row,
+          window_sessions: 82,
+          sessions_covered: 82,
+          coverage_ratio: 1.0,
+          gaps: 0,
+          period_from: '2026-05-08',
+          period_till: '2026-09-02',
+          value_ratio: 0.0,
+          looks_collected_but_empty: true,
+        }
+      : row,
+  );
+  return { ...report, groups };
+}
+
+export function catchupFixture(
+  status: CatchupStatus = 'idle',
+  overrides: Partial<CatchupStateDto> = {},
+): CatchupStateDto {
+  const base: CatchupStateDto = {
+    status,
+    groups: [],
+    date_from: null,
+    date_till: null,
+    clamped: false,
+    requested: 0,
+    closed: 0,
+    failed: 0,
+    remaining: 0,
+    current: null,
+    started_at: null,
+    finished_at: null,
+    reason: null,
+  };
+
+  if (status === 'idle') return { ...base, ...overrides };
+
+  return {
+    ...base,
+    groups: ['quotes', 'aggregates', 'global', 'positions', 'reference'],
+    date_from: '2026-04-20',
+    date_till: '2026-09-03',
+    requested: 90,
+    closed: 18,
+    failed: 1,
+    remaining: 71,
+    current: status === 'running' || status === 'stopping' ? '2026-05-14' : null,
+    started_at: '2026-09-10T09:12:04Z',
+    finished_at: status === 'running' || status === 'stopping' ? null : '2026-09-10T09:40:00Z',
+    ...overrides,
+  };
+}
