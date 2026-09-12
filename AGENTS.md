@@ -81,7 +81,11 @@ docs/daily-ml-model.md        — модель ранжирования Daily ML
 
 - к T-Bank обращается **только** `backend-worker`; `backend-api` — никогда;
 - токен брокера передаётся **только** контейнеру `backend-worker`;
-- внутренний REST worker'а наружу не проксируется.
+- внутренний REST worker'а наружу не проксируется. Интерфейс к нему не обращается: сводку
+  рыночных данных и управление догоном он получает через публичные маршруты
+  `/api/market-data/*`, а `backend-api` передаёт их внутреннему интерфейсу worker'а;
+- полноту данных `backend-api` **не считает сам**: окно сбора задаётся конфигурацией
+  worker'а, и второй счёт разошёлся бы с фактическим окном при первом же её изменении.
 
 Наличие компонента на диаграмме **НЕ ОЗНАЧАЕТ**, что его функциональность должна быть
 реализована сейчас. Диаграмма фиксирует границы ответственности, а не план работ, и не
@@ -194,8 +198,9 @@ docs/daily-ml-model.md        — модель ранжирования Daily ML
 
 Происхождение перенесённых парсеров — `backend/src/financial_ai/market_data/PROVENANCE.md`.
 Контекст фич — [`specs/003-moex-data-ingestion/`](specs/003-moex-data-ingestion/),
-[`specs/004-market-data-catchup/`](specs/004-market-data-catchup/) и
-[`specs/005-market-data-control/`](specs/005-market-data-control/).
+[`specs/004-market-data-catchup/`](specs/004-market-data-catchup/),
+[`specs/005-market-data-control/`](specs/005-market-data-control/) и
+[`specs/006-market-data-ui/`](specs/006-market-data-ui/) — раздел интерфейса поверх них.
 
 ### Источник истины о модели ранжирования
 

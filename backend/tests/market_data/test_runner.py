@@ -11,11 +11,13 @@ import asyncio
 import datetime as dt
 from decimal import Decimal
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import ingest
+from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.runner import (
     BackfillRequiredError,
@@ -23,6 +25,7 @@ from financial_ai.market_data.runner import (
     CatchupRunner,
     CatchupStatus,
     NothingToCatchUpError,
+    describe_failure,
 )
 
 pytestmark = pytest.mark.db
@@ -150,6 +153,41 @@ async def test_failure_gives_failed_status(
     state = instance.status()
     assert state["status"] == CatchupStatus.FAILED.value
     assert state["reason"] is not None
+
+
+async def test_failure_reason_is_fit_to_be_shown(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Причина уходит на экран, поэтому текста исключения в ней нет.
+
+    `repr` ошибки `httpx` несёт адрес обращения, а он может быть внутренним:
+    показывать конфигурацию развёртывания пользователю нельзя (FR-005a фичи
+    005, FR-043 фичи 006). Подробности остаются в журнале.
+    """
+    await _seed(db_session, [SESSIONS[4]])
+
+    async def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise httpx.ConnectError("[Errno 111] Connection refused to http://backend-worker:8000")
+
+    monkeypatch.setattr(ingest, "catch_up", boom)
+
+    instance = CatchupRunner(settings)
+    await instance.start()
+    await _wait_until_idle(instance)
+
+    reason = instance.status()["reason"]
+    assert isinstance(reason, str)
+    assert reason == "источник данных недоступен"
+    assert "backend-worker" not in reason
+    assert "Errno" not in reason
+
+
+def test_every_failure_class_has_its_own_wording() -> None:
+    """Разные причины различимы: «недоступен» и «не ответил» — не одно и то же."""
+    assert describe_failure(httpx.ConnectError("x")) == "источник данных недоступен"
+    assert describe_failure(httpx.ReadTimeout("x")) == "источник данных не ответил вовремя"
+    assert describe_failure(IssError("x")) == "источник данных ответил ошибкой"
+    assert describe_failure(RuntimeError("x")) == "прогон прерван внутренней ошибкой"
 
 
 # --- мягкая остановка (FR-006, SC-002) ---------------------------------------

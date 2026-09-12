@@ -52,9 +52,9 @@ Backend / PostgreSQL / Frontend
 
 | Контейнер | Технология | Ответственность | Состояние |
 |---|---|---|---|
-| **Frontend** | TS / React | Веб-интерфейс портфеля | реализован |
+| **Frontend** | TS / React | Веб-интерфейс: разделы «Портфель» и «Рыночные данные» в общей оболочке | реализован |
 | **Nginx** | Nginx | Отдаёт статику, проксирует запросы к API | см. отступление ниже |
-| **Backend-API** | Python / FastAPI | Публичный HTTP API: отдаёт сохранённое состояние счёта, статус синхронизации, настройки; транслирует команду ручного обновления | реализован |
+| **Backend-API** | Python / FastAPI | Публичный HTTP API: отдаёт сохранённое состояние счёта, статус синхронизации, настройки; транслирует команду ручного обновления, а также сводку полноты рыночных данных и управление догоном — передавая их внутреннему интерфейсу worker'а | реализован |
 | **Backend-Worker** | Python | Синхронизация с T-Bank Invest API; сбор рыночных данных с MOEX раз в торговую сессию; управляемый догон пропущенных сессий и сводка состояния данных; материализация набора входных данных и запрос ранжирования | реализован |
 | **PostgreSQL** | PostgreSQL | Состояние счёта, статус синхронизации, настройки | реализован |
 | **Daily ML** | ML inference | Ранжирование активов на дату решения | **не реализован**, представлен эмулятором |
@@ -197,6 +197,8 @@ MOEX → backend-worker → PostgreSQL → набор входных данны�
 | Эмулятор Daily ML: назначение и границы | [`../daily-ml-emulator/README.md`](../daily-ml-emulator/README.md) |
 | Контракт эндпоинтов эмулятора | [`../specs/002-daily-ml-emulator/contracts/daily-ml-emulator-api.md`](../specs/002-daily-ml-emulator/contracts/daily-ml-emulator-api.md) |
 | Контракты Backend-API и внутреннего REST worker'а | [`../specs/001-investment-account-state/contracts/`](../specs/001-investment-account-state/contracts/) |
+| Публичные маршруты рыночных данных | [`../specs/006-market-data-ui/contracts/market-data-api.md`](../specs/006-market-data-ui/contracts/market-data-api.md) |
+| Состояния интерфейса и соответствие дизайну | [`../specs/006-market-data-ui/contracts/ui-states.md`](../specs/006-market-data-ui/contracts/ui-states.md) |
 | Архитектурные решения первой фичи и их обоснование | [`../specs/001-investment-account-state/plan.md`](../specs/001-investment-account-state/plan.md) |
 | Рассмотренные и отвергнутые альтернативы | [`../specs/001-investment-account-state/research.md`](../specs/001-investment-account-state/research.md) |
 | Схема хранения | [`../specs/001-investment-account-state/data-model.md`](../specs/001-investment-account-state/data-model.md) |

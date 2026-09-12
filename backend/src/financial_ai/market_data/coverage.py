@@ -79,6 +79,10 @@ class GroupCoverage:
             "rows_total": self.rows_total,
             "rows_with_values": self.rows_with_values,
             "value_ratio": self.value_ratio,
+            # Вывод делает ответ, а не тот, кто его читает. Иначе порог
+            # пришлось бы повторить в команде и ещё раз в интерфейсе, и при
+            # первом же уточнении они разошлись бы (FR-013a).
+            "looks_collected_but_empty": self.looks_collected_but_empty,
         }
         if self.has_history:
             # У справочника этих полей НЕТ вовсе, а не нули: ноль читался бы
@@ -128,7 +132,18 @@ async def build_report(
             )
         )
 
+    # Окно догона — не окно группы: у групп они разные (314 сессий у котировок,
+    # 82 у позиций), а планирование прогона считает своё. Форме запуска нужно
+    # именно оно, и взять его она должна из того же источника, каким
+    # пользуется планирование, а не выводить из строк сводки (FR-013b).
+    catchup_window = await calendar.window(asof_date, settings.catchup_window_sessions)
+
     return {
         "asof_date": asof_date.isoformat(),
+        "catchup_window": {
+            "date_from": catchup_window[0].isoformat() if catchup_window else None,
+            "date_till": catchup_window[-1].isoformat() if catchup_window else None,
+            "sessions": len(catchup_window),
+        },
         "groups": [row.to_dict() for row in rows],
     }

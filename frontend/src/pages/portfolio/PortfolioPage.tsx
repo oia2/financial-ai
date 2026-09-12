@@ -4,7 +4,6 @@ import {
   type PortfolioDto,
   type PortfolioViewState,
 } from '@/entities/portfolio';
-import { AppHeader } from '@/widgets/app-header/AppHeader';
 import { CapitalStrip } from '@/widgets/capital-strip/CapitalStrip';
 import { PositionsSection } from '@/widgets/positions-section/PositionsSection';
 import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner';
@@ -12,52 +11,51 @@ import { SyncStatusBanner } from '@/widgets/sync-status-banner/SyncStatusBanner'
 /**
  * Раздел «Портфель».
  *
- * Композиция повторяет утверждённый дизайн Open Design (FR-017): шапка,
- * заголовок со строкой подключения, баннер состояния, полоса капитала,
- * секция позиций. Все состояния (FR-015) выводятся из одного ответа API и
- * факта его наличия — страница ничего не вычисляет сама.
+ * Композиция повторяет утверждённый дизайн Open Design (FR-017): заголовок
+ * со строкой подключения, баннер состояния, полоса капитала, секция позиций.
+ * Все состояния (FR-015) выводятся из одного ответа API и факта его наличия —
+ * страница ничего не вычисляет сама.
+ *
+ * Шапка и баннер идущего сбора живут в оболочке (`app/App.tsx`): разделов два,
+ * и оба они общие (фича 006, FR-003, FR-006).
  */
 export function PortfolioPage() {
   const query = usePortfolioQuery();
   const state = selectPortfolioState(query.data, query.error, query.isPending);
 
   return (
-    <div className="app-shell">
-      <AppHeader data={query.data} />
-
-      <main>
-        {state === 'loading' ? (
-          <div className="skeleton-shell" aria-live="polite">
-            <div className="skeleton-line skeleton-heading" />
-            <div className="skeleton-block skeleton-summary" />
-            <div className="skeleton-line skeleton-row" />
-            <div className="skeleton-line skeleton-row" />
-            <div className="skeleton-line skeleton-row" />
-            <span className="sr-only">Обновляем данные портфеля</span>
-          </div>
-        ) : (
-          <div>
-            <div className="page-heading">
-              <div>
-                <p className="eyebrow">Текущее состояние капитала</p>
-                <h1>Портфель</h1>
-              </div>
-              <ConnectionLine state={state} data={query.data} />
+    <main>
+      {state === 'loading' ? (
+        <div className="skeleton-shell" aria-live="polite">
+          <div className="skeleton-line skeleton-heading" />
+          <div className="skeleton-block skeleton-summary" />
+          <div className="skeleton-line skeleton-row" />
+          <div className="skeleton-line skeleton-row" />
+          <div className="skeleton-line skeleton-row" />
+          <span className="sr-only">Обновляем данные портфеля</span>
+        </div>
+      ) : (
+        <div>
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">Текущее состояние капитала</p>
+              <h1>Портфель</h1>
             </div>
-
-            <SyncStatusBanner
-              state={state}
-              sync={query.data?.sync}
-              ageSeconds={query.data?.snapshot?.age_seconds}
-              onRetry={() => void query.refetch()}
-              retrying={query.isFetching}
-            />
-
-            <PortfolioBody state={state} data={query.data} />
+            <ConnectionLine state={state} data={query.data} />
           </div>
-        )}
-      </main>
-    </div>
+
+          <SyncStatusBanner
+            state={state}
+            sync={query.data?.sync}
+            ageSeconds={query.data?.snapshot?.age_seconds}
+            onRetry={() => void query.refetch()}
+            retrying={query.isFetching}
+          />
+
+          <PortfolioBody state={state} data={query.data} />
+        </div>
+      )}
+    </main>
   );
 }
 

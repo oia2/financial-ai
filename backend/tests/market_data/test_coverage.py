@@ -156,6 +156,29 @@ async def test_collected_but_empty_is_distinguishable_from_collected(
     assert positions["value_ratio"] == 0.0
     assert positions["rows_total"] == len(SESSIONS)
     assert positions["rows_with_values"] == 0
+    # Вывод делает сам ответ: иначе порог повторился бы в команде и в
+    # интерфейсе и при первом уточнении разошёлся (FR-013a).
+    assert positions["looks_collected_but_empty"] is True
+    assert _group(report, "quotes")["looks_collected_but_empty"] is False
+
+
+async def test_report_carries_the_catchup_window(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Окно догона приходит из ответа, а не выводится из строк сводки.
+
+    Окна групп различаются, а форме запуска нужно одно — то, по которому
+    планируется прогон (FR-013b).
+    """
+    await _seed(db_session, quotes=SESSIONS)
+
+    report = await coverage.build_report(db_session, settings, ASOF)
+    window = report["catchup_window"]
+    assert isinstance(window, dict)
+
+    assert window["sessions"] == len(SESSIONS)
+    assert window["date_from"] == SESSIONS[0].isoformat()
+    assert window["date_till"] == ASOF.isoformat()
 
 
 async def test_partial_values_are_not_read_as_empty(

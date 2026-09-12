@@ -1,0 +1,124 @@
+/**
+ * Доступность раздела «Рыночные данные» (FR-051–FR-057).
+ *
+ * Проверяется то, что проверяемо разметкой: смысл состояний передан текстом, а
+ * не только цветом; индикатор хода объявлен и озвучен; панели закрываются по
+ * Escape и возвращают фокус; индикатор активности скрыт от чтения с экрана и
+ * процентом готовности не притворяется.
+ *
+ * Высота элементов от 44 px и перестроение таблицы на узком экране заданы
+ * стилями артефакта и здесь не дублируются: jsdom не считает вёрстку, и
+ * «проверка», не считающая её, давала бы ложную уверенность. Эти два правила
+ * проверяются сверкой с артефактом (contracts/ui-states.md).
+ */
+
+import { QueryClient } from '@tanstack/react-query';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+
+import { AppShell } from '@/app/App';
+import { AppProviders } from '@/app/providers';
+import { navigate } from '@/app/router';
+
+import { anomalyCoverageFixture, catchupFixture } from './msw/market-data';
+import { http, HttpResponse, server } from './msw/server';
+
+function renderMarketData() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchInterval: false } },
+  });
+
+  window.history.pushState(null, '', '/market-data');
+  navigate('market-data');
+
+  return render(
+    <AppProviders client={client}>
+      <AppShell />
+    </AppProviders>,
+  );
+}
+
+describe('доступность раздела', () => {
+  it('индикатор хода озвучивает все четыре числа', async () => {
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('running'))),
+    );
+
+    renderMarketData();
+
+    const progress = await screen.findByRole('progressbar', { name: 'Закрытые сессии' });
+    expect(progress).toHaveAttribute(
+      'aria-valuetext',
+      'Закрыто 18 из 90; не закрыто 1; осталось обработать 71',
+    );
+  });
+
+  it('малый индикатор активности не читается с экрана', async () => {
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('running'))),
+    );
+
+    const { container } = renderMarketData();
+    await screen.findByText('Идёт сбор');
+
+    // Он показывает активность процесса, а не процент готовности сессии
+    // (FR-057), поэтому от чтения с экрана скрыт.
+    for (const glyph of container.querySelectorAll('.process-glyph')) {
+      expect(glyph).toHaveAttribute('aria-hidden', 'true');
+    }
+  });
+
+  it('расхождение «покрыто, но пусто» названо текстом, а не только цветом', async () => {
+    server.use(
+      http.get('*/api/market-data/coverage', () => HttpResponse.json(anomalyCoverageFixture())),
+    );
+
+    renderMarketData();
+
+    const table = await screen.findByRole('table');
+    const row = table.querySelector('.anomaly-row');
+    expect(row).not.toBeNull();
+    // Выделение строки цветом — не единственный носитель смысла (FR-052).
+    expect(within(row as HTMLElement).getByText('Значения отсутствуют')).toBeInTheDocument();
+  });
+
+  it('форма запуска закрывается по Escape и возвращает фокус', async () => {
+    renderMarketData();
+
+    const trigger = await screen.findByRole('button', { name: 'Настроить запуск' });
+    await userEvent.click(trigger);
+    expect(await screen.findByRole('dialog', { name: 'Запустить догон' })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: 'Запустить догон' })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('ошибка ввода объявляется и связана с полем', async () => {
+    renderMarketData();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Настроить запуск' }));
+    const form = await screen.findByRole('dialog', { name: 'Запустить догон' });
+    await userEvent.click(within(form).getByLabelText('Всё доступное окно'));
+
+    const from = within(form).getByLabelText('Начало');
+    await userEvent.clear(from);
+    await userEvent.type(from, 'не дата');
+    await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
+
+    const alert = within(form).getByRole('alert');
+    expect(alert).toHaveAttribute('id', 'launchError');
+    expect(from).toHaveAttribute('aria-describedby', 'launchError');
+    expect(from).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('колонки сводки подписаны так, что покрытие не выдаётся за качество', async () => {
+    renderMarketData();
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Доля сессий окна')).toBeInTheDocument();
+    expect(within(table).getByText('Доля записанных строк')).toBeInTheDocument();
+  });
+});

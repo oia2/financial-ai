@@ -10,9 +10,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
+import { AppShell } from '@/app/App';
 import { AppProviders } from '@/app/providers';
 import { selectPortfolioState, type PortfolioDto } from '@/entities/portfolio';
-import { PortfolioPage } from '@/pages/portfolio/PortfolioPage';
 import { ServerUnreachableError } from '@/shared/api/client';
 
 import { portfolioFixture } from './msw/fixtures';
@@ -23,9 +23,11 @@ function renderPage() {
     defaultOptions: { queries: { retry: false, refetchInterval: false } },
   });
 
+  // Шапка с действием «Обновить данные» живёт в оболочке, а не на странице
+  // (фича 006, FR-003), поэтому раздел проверяется в ней.
   return render(
     <AppProviders client={client}>
-      <PortfolioPage />
+      <AppShell />
     </AppProviders>,
   );
 }

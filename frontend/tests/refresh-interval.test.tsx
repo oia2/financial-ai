@@ -45,7 +45,7 @@ describe('настройка интервала', () => {
 
     expect(await screen.findByText(/Целое число от 15 до 3600 секунд/)).toBeInTheDocument();
     expect(screen.getByText('60 с')).toBeInTheDocument();
-    expect(await screen.findByLabelText(/Интервал автообновления/)).toHaveValue(60);
+    expect(await screen.findByLabelText(/Автообновление портфеля/)).toHaveValue(60);
   });
 
   it('сохраняет допустимое значение', async () => {
@@ -59,7 +59,7 @@ describe('настройка интервала', () => {
     );
 
     renderSetting();
-    const input = await screen.findByLabelText(/Интервал автообновления/);
+    const input = await screen.findByLabelText(/Автообновление портфеля/);
 
     await userEvent.clear(input);
     await userEvent.type(input, '120');
@@ -80,7 +80,7 @@ describe('настройка интервала', () => {
     );
 
     renderSetting();
-    const input = await screen.findByLabelText(/Интервал автообновления/);
+    const input = await screen.findByLabelText(/Автообновление портфеля/);
 
     await userEvent.clear(input);
     await userEvent.type(input, '5');
@@ -103,7 +103,7 @@ describe('настройка интервала', () => {
     );
 
     renderSetting();
-    const input = await screen.findByLabelText(/Интервал автообновления/);
+    const input = await screen.findByLabelText(/Автообновление портфеля/);
 
     await userEvent.clear(input);
     await userEvent.type(input, '60.5');
@@ -115,7 +115,7 @@ describe('настройка интервала', () => {
 
   it('помечает поле как некорректное при ошибке', async () => {
     renderSetting();
-    const input = await screen.findByLabelText(/Интервал автообновления/);
+    const input = await screen.findByLabelText(/Автообновление портфеля/);
 
     await userEvent.clear(input);
     await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
@@ -125,7 +125,7 @@ describe('настройка интервала', () => {
 
   it('снимает ошибку при новом вводе', async () => {
     renderSetting();
-    const input = await screen.findByLabelText(/Интервал автообновления/);
+    const input = await screen.findByLabelText(/Автообновление портфеля/);
 
     await userEvent.clear(input);
     await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));

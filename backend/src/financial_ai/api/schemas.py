@@ -12,7 +12,7 @@ import datetime as dt
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, PlainSerializer, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, StrictInt
 
 
 def _decimal_to_str(value: Decimal) -> str:
@@ -108,3 +108,16 @@ class RefreshIntervalIn(BaseModel):
     # принимаются быть не должны (US2 AS4). Диапазон проверяется отдельно,
     # чтобы ответ нёс код interval_out_of_range из контракта.
     interval_seconds: StrictInt
+
+
+class CatchupStartIn(BaseModel):
+    """Что и за какой период догонять. Всё необязательно (фича 006, FR-019).
+
+    Ответов рыночных данных здесь нет намеренно: их форму задаёт контракт
+    фичи 005, и Backend-API передаёт её как есть. Повторное описание моделью
+    стёрло бы значимую разницу между «поля нет» и «поле равно null».
+    """
+
+    groups: list[str] | None = Field(default=None, description="Группы источников. Пусто — все")
+    date_from: dt.date | None = Field(default=None, description="Начало диапазона")
+    date_till: dt.date | None = Field(default=None, description="Конец диапазона")
