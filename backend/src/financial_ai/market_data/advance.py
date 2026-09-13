@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import ingest
+from financial_ai.market_data import groups, ingest
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -116,23 +116,77 @@ async def pending_sessions(
 
     last_closed = closed[-1]
 
-    # Два признака собранности, как у поиска пропусков в управляемом догоне:
-    # наблюдения в таблице баров и успешный исход источника. Первое без второго
-    # бывает после первичной загрузки, второе без первого — когда биржа честно
-    # ответила пустотой.
-    with_bars = await repository.sessions_with_daily_bars(closed)
-    with_run = await repository.sessions_with_successful_run(closed, equity_d1.SOURCE_ID)
-
-    missing = [day for day in closed if day not in with_bars and day not in with_run]
+    missing = await _incomplete_sessions(repository, calendar, settings, closed, last_closed)
     if not missing:
         return [], last_closed
 
+    # Предел попыток. Источник, недоступный за конкретную дату по своей природе,
+    # иначе перевыбирался бы вечно: сессия остаётся неполной, значит остаётся в
+    # списке, значит собирается снова — и так каждые пятнадцать минут без конца.
+    attempts = await repository.attempts_by_session(missing)
+    within_limit = [
+        day for day in missing if attempts.get(day, 0) < settings.market_data_session_max_attempts
+    ]
+    for day in missing:
+        if day not in within_limit:
+            logger.warning(
+                "сессия %s не закрылась за %d попыток: нужен управляемый догон",
+                day,
+                attempts.get(day, 0),
+            )
+
+    # Отметка времени берётся по котировкам: `ingest_session` гонит все источники
+    # за дату одним заходом и котировки — первыми, поэтому их последняя попытка и
+    # есть «когда мы в последний раз брались за этот день», какой бы источник ни
+    # оставался незакрытым.
     return _after_retry_delay(
-        missing,
-        await repository.last_attempt_by_session(missing, equity_d1.SOURCE_ID),
+        within_limit,
+        await repository.last_attempt_by_session(within_limit, equity_d1.SOURCE_ID),
         settings,
         moment,
     ), last_closed
+
+
+async def _incomplete_sessions(
+    repository: MarketDataRepository,
+    calendar: TradingCalendar,
+    settings: Settings,
+    closed: list[dt.date],
+    last_closed: dt.date,
+) -> list[dt.date]:
+    """Закрытые сессии, за которые обязательный вход неполон.
+
+    Признак собранности — не наличие баров, а **успешный исход каждого
+    обязательного источника**. Прежде считались бары: котировки записывались,
+    остальные источники могли упасть, и день навсегда числился собранным. Дыра
+    в позициях или агрегатах не закрывалась никогда, а ранжирование из-за неё не
+    запускалось, потому что полнота требуется по всему окну.
+
+    Окно у каждой группы своё, и это не мелочь: позиции нужны модели на 82
+    сессии, остальное — на 314. Требовать позиции за сессию трёхсотдневной
+    давности значило бы ходить на биржу за данными, которых там нет и которые
+    модели не нужны.
+
+    Группы без оси сессий пропускаются: у справочника нет окна, и «недобранным»
+    он не бывает.
+    """
+    incomplete: set[dt.date] = set()
+    closed_set = set(closed)
+
+    for group in groups.required(settings):
+        depth = group.window_sessions(settings)
+        if depth is None:
+            continue
+
+        window = [day for day in await calendar.window(last_closed, depth) if day in closed_set]
+        if not window:
+            continue
+
+        for source_id in group.source_ids:
+            done = await repository.sessions_with_successful_run(window, source_id)
+            incomplete.update(day for day in window if day not in done)
+
+    return sorted(incomplete)
 
 
 def _after_retry_delay(
@@ -156,10 +210,15 @@ def _after_retry_delay(
     if delay <= dt.timedelta(0):
         return missing
 
+    # Момент может прийти наивным — так его передают проверки закрытости сессии.
+    # Отметки в хранилище осведомлённые, и вычитание одного из другого падает.
+    # Наивное время здесь означает московское: другого пояса у этого кода нет.
+    current = now if now.tzinfo is not None else now.replace(tzinfo=MOSCOW)
+
     ready: list[dt.date] = []
     for day in missing:
         attempted = last_attempt.get(day)
-        if attempted is not None and now - attempted.astimezone(MOSCOW) < delay:
+        if attempted is not None and current - attempted.astimezone(MOSCOW) < delay:
             logger.debug("сессия %s пропущена: попытка была %s", day, attempted)
             continue
         ready.append(day)

@@ -41,13 +41,12 @@ class Readiness:
 def required_groups(settings: Settings) -> tuple[groups.SourceGroup, ...]:
     """Группы, входящие в обязательный вход модели.
 
-    Перечень — конфигурация, а не константа кода: состав входа определяет
-    модель, и он меняется без нас. Дивиденды в умолчание не входят — они не
-    являются входом модели и на стенде регулярно отказывают из-за
-    ненастроенного брокера.
+    Перечень объявлен в реестре групп: его спрашивают и готовность, и сбор, а
+    второе объявление одного факта однажды разойдётся с первым. Дивиденды в
+    умолчание не входят — они не являются входом модели и на стенде регулярно
+    отказывают из-за ненастроенного брокера.
     """
-    wanted = {name.strip() for name in settings.daily_ml_required_data_groups if name.strip()}
-    return tuple(group for group in groups.GROUPS if group.group_id.value in wanted)
+    return groups.required(settings)
 
 
 async def evaluate(session: AsyncSession, settings: Settings, asof_date: dt.date) -> Readiness:

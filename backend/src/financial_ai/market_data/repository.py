@@ -659,6 +659,24 @@ class MarketDataRepository:
         )
         return {day for day in rows.all() if day is not None}
 
+    async def attempts_by_session(self, sessions: list[dt.date]) -> dict[dt.date, int]:
+        """Сколько раз сессию пытались собрать. Прогон, а не источник.
+
+        Считаются различные `run_id`: один заход `ingest_session` пишет по
+        строке на источник, и счёт по строкам дал бы десятку за одну попытку.
+
+        Нужно пределу попыток: источник, недоступный за конкретную дату по своей
+        природе, иначе перевыбирался бы вечно.
+        """
+        if not sessions:
+            return {}
+        rows = await self._session.execute(
+            select(IngestRun.session_date, func.count(func.distinct(IngestRun.run_id)))
+            .where(IngestRun.session_date.in_(sessions))
+            .group_by(IngestRun.session_date)
+        )
+        return {day: count for day, count in rows.all() if day is not None}
+
     async def latest_ingest_at(self) -> dt.datetime | None:
         """Когда в хранилище в последний раз что-нибудь собирали.
 

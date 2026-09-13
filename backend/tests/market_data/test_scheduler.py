@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import advance, ingest
+from financial_ai.market_data import advance, groups, ingest
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.scheduler import MarketDataScheduler
 from financial_ai.market_data.sources import trading_calendar
@@ -52,13 +52,36 @@ def _bar(day: dt.date) -> DailyBar:
     )
 
 
-async def _seed(session: AsyncSession, collected: list[dt.date]) -> None:
+async def _seed(
+    session: AsyncSession, collected: list[dt.date], *, settings: Settings | None = None
+) -> None:
+    """Календарь, актив и собранные сессии — с барами И исходами сбора.
+
+    Исходы засеиваются наравне с барами: собранность определяется именно ими, и
+    реальный сбор пишет то и другое. Фикстура, писавшая только бары, изображала
+    состояние, которого в системе не бывает.
+    """
     repository = MarketDataRepository(session)
     await repository.add_trading_sessions(SESSIONS)
     await repository.upsert_asset("EQ_AST_SBER", "SBER", ASOF)
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
+
     if collected:
         await repository.upsert_daily_bars([_bar(day) for day in collected])
+
+    moment = dt.datetime(2026, 8, 1, tzinfo=dt.UTC)
+    for day in collected:
+        for group in groups.required(settings or Settings()):
+            for source_id in group.source_ids:
+                await repository.record_run(
+                    run_id=f"seed-{day}",
+                    source_id=source_id,
+                    status="ok",
+                    started_at=moment,
+                    finished_at=moment,
+                    session_date=day,
+                )
+
     await session.commit()
 
 

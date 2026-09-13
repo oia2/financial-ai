@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import advance
+from financial_ai.market_data import advance, groups
 from financial_ai.market_data.calendar import MOSCOW
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 
@@ -54,13 +54,46 @@ def _bar(day: dt.date) -> DailyBar:
     )
 
 
-async def _seed(session: AsyncSession, collected: list[dt.date]) -> MarketDataRepository:
+async def _seed(
+    session: AsyncSession,
+    collected: list[dt.date],
+    *,
+    settings: Settings | None = None,
+    incomplete: dict[dt.date, str] | None = None,
+) -> MarketDataRepository:
+    """Календарь, актив и собранные сессии — с барами И исходами сбора.
+
+    Исходы засеиваются наравне с барами, потому что собранность определяется
+    именно ими: реальный сбор пишет и то, и другое. Фикстура, писавшая только
+    бары, изображала состояние, которого в системе не бывает.
+
+    `incomplete` оставляет источник незакрытым за указанную дату — так
+    выглядит день, у которого котировки прошли, а что-то ещё упало.
+    """
     repository = MarketDataRepository(session)
     await repository.add_trading_sessions(SESSIONS)
     await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSIONS[-1])
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSIONS[-1])
+
     if collected:
         await repository.upsert_daily_bars([_bar(day) for day in collected])
+
+    required = groups.required(settings or Settings())
+    broken = incomplete or {}
+    moment = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    for day in collected:
+        for group in required:
+            for source_id in group.source_ids:
+                status = "failed" if broken.get(day) == source_id else "ok"
+                await repository.record_run(
+                    run_id=f"seed-{day}",
+                    source_id=source_id,
+                    status=status,
+                    started_at=moment,
+                    finished_at=moment,
+                    session_date=day,
+                )
+
     await session.commit()
     return repository
 
@@ -260,6 +293,73 @@ def test_retry_delay_holds_back_a_recent_attempt(settings: Settings) -> None:
     # Ноль отключает выдержку целиком.
     off = settings.model_copy(update={"market_data_retry_after_minutes": 0})
     assert advance._after_retry_delay([day], recent, off, now) == [day]
+
+
+async def test_session_with_a_failed_source_is_collected_again(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """День с упавшим источником не считается собранным.
+
+    Котировки записались, позиции упали — раньше день навсегда числился
+    собранным, потому что признаком были бары. Дыра не закрывалась никогда, а
+    ранжирование из-за неё не запускалось: полнота требуется по всему окну.
+    """
+    broken = SESSIONS[2]
+    await _seed(
+        db_session,
+        collected=SESSIONS,
+        settings=settings,
+        incomplete={broken: "futures_positions"},
+    )
+
+    collected: list[dt.date] = []
+
+    async def collect(_session: object, _settings: object, day: dt.date) -> object:
+        collected.append(day)
+        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    result = await advance.advance(db_session, settings, FRIDAY_EVENING)
+
+    assert collected == [broken], "день с незакрытым источником не перевыбран"
+    assert result.collected == [broken]
+
+
+async def test_session_stops_being_retried_after_the_attempt_limit(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Вечно падающий источник не дёргает биржу бесконечно.
+
+    Источник, недоступный за конкретную дату по своей природе, оставлял бы день
+    неполным навсегда — а значит и в списке к сбору навсегда. Предел передаёт
+    такой день человеку и управляемому догону, который предела не знает.
+    """
+    broken = SESSIONS[2]
+    capped = settings.model_copy(update={"market_data_session_max_attempts": 1})
+    await _seed(
+        db_session,
+        collected=SESSIONS,
+        settings=settings,
+        incomplete={broken: "futures_positions"},
+    )
+
+    called: list[dt.date] = []
+
+    async def never(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        called.append(dt.date.today())
+        raise AssertionError("сбор не должен выполняться сверх предела попыток")
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", never)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    result = await advance.advance(db_session, capped, FRIDAY_EVENING)
+
+    assert called == []
+    assert result.collected == []
 
 
 async def _noop(*args: object, **kwargs: object) -> int:

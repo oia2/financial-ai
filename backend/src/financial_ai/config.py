@@ -203,6 +203,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    market_data_session_max_attempts: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Сколько раз автоматический сбор пытается закрыть одну сессию, "
+            "прежде чем оставить её человеку. Источник, недоступный за "
+            "конкретную дату по своей природе, иначе перевыбирался бы вечно. "
+            "Управляемый догон предела не знает: это явная команда."
+        ),
+    )
+
     market_data_startup_recovery_max_sessions: int = Field(
         default=0,
         ge=0,

@@ -146,6 +146,18 @@ def resolve(raw: list[str] | None) -> tuple[SourceGroup, ...]:
     return tuple(resolved)
 
 
+def required(settings: Settings) -> tuple[SourceGroup, ...]:
+    """Группы, входящие в обязательный вход модели.
+
+    Перечень — конфигурация, а не константа кода: состав входа определяет
+    модель, и он меняется без нас. Живёт здесь, а не рядом с расчётом
+    готовности, потому что спрашивают его двое — готовность и сбор, — а второе
+    объявление одного факта однажды разойдётся с первым.
+    """
+    wanted = {name.strip() for name in settings.daily_ml_required_data_groups if name.strip()}
+    return tuple(group for group in GROUPS if group.group_id.value in wanted)
+
+
 def source_ids_for(groups: tuple[SourceGroup, ...]) -> frozenset[str]:
     """Идентификаторы источников выбранных групп."""
     return frozenset(source_id for group in groups for source_id in group.source_ids)
