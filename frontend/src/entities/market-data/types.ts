@@ -58,6 +58,16 @@ export interface CoverageDto {
   groups: GroupCoverageDto[];
 }
 
+/**
+ * Идёт ли автоматический сбор рыночных данных.
+ *
+ * Это НЕ пауза ранжирования: переключатели разные, и один другой не заменяет.
+ * Пауза ранжирования сбор данных не останавливает и никогда не останавливала.
+ */
+export interface CollectionSettingsDto {
+  paused: boolean;
+}
+
 export type CatchupStatus = 'idle' | 'running' | 'stopping' | 'stopped' | 'finished' | 'failed';
 
 export interface CatchupStateDto {

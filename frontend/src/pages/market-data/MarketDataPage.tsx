@@ -21,7 +21,9 @@ import {
   coverageQueryKey,
   isCatchupActive,
   useCatchupState,
+  useCollectionSettings,
   useCoverage,
+  useSetCollectionPaused,
   type GroupCoverageDto,
 } from '@/entities/market-data';
 import { ClampNotice } from '@/features/catchup-launch/ClampNotice';
@@ -38,8 +40,14 @@ export function MarketDataPage() {
   const coverage = useCoverage();
   const catchup = useCatchupState();
   const control = useCatchupControl();
+  const collection = useCollectionSettings();
+  const setCollectionPaused = useSetCollectionPaused();
   const queryClient = useQueryClient();
   const [details, setDetails] = useState<GroupCoverageDto | null>(null);
+
+  // Пока состояние не прочитано, сбор считается идущим: это умолчание сборщика,
+  // и мигать надписью «остановлено» на первом кадре незачем.
+  const collectionPaused = collection.data?.paused ?? false;
 
   // Пустое хранилище — состояние системы, а не авария: сборщик отвечает
   // `calendar_empty`, пока не выполнена первичная загрузка (FR-026).
@@ -120,6 +128,24 @@ export function MarketDataPage() {
           )}
 
           {/*
+            Остановка автоматического сбора. Отдельно от паузы ранжирования: это
+            разные механизмы, и слитое прочтение дороже прочих ошибок на этих
+            экранах (FR-029e). Состояние читается с сервера, а не запоминается
+            здесь: оно живёт в процессе сборщика, и перезапуск возвращает сбор.
+          */}
+          <button
+            className="secondary-button"
+            type="button"
+            aria-pressed={collectionPaused}
+            aria-describedby="collectionHint"
+            data-od-id="pause-collection"
+            disabled={collection.isPending || setCollectionPaused.isPending}
+            onClick={() => setCollectionPaused.mutate(!collectionPaused)}
+          >
+            {collectionPaused ? 'Возобновить сбор' : 'Остановить сбор'}
+          </button>
+
+          {/*
             Кнопка запуска в заголовке — из артефакта. Во время работы она
             меняет подпись и становится вторичной: прогон уже идёт, и
             предлагать «запустить» было бы неверно. На пустом хранилище она
@@ -138,6 +164,11 @@ export function MarketDataPage() {
                 : 'Запустить догон'}
           </button>
         </div>
+        <p className="snapshot-note" id="collectionHint" data-od-id="collection-state-hint">
+          {collectionPaused
+            ? 'Автоматический сбор остановлен. Догон по кнопке продолжает работать, ранжирование — тоже: у него своя пауза.'
+            : 'Сбор идёт автоматически. Остановка не отменяет догон по кнопке и не влияет на ранжирование — у него своя пауза.'}
+        </p>
       </div>
 
       {coverage.data !== undefined && <EmptyValuesAlert groups={coverage.data.groups} />}

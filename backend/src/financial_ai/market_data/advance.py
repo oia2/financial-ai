@@ -34,7 +34,7 @@ from financial_ai.market_data import ingest
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
-from financial_ai.market_data.sources import trading_calendar
+from financial_ai.market_data.sources import equity_d1, trading_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,27 @@ def session_is_closed(
 async def pending_sessions(
     session: AsyncSession, settings: Settings, now: dt.datetime | None = None
 ) -> tuple[list[dt.date], dt.date | None]:
-    """Закрытые сессии, которые ещё не собраны, и последняя закрытая."""
+    """Закрытые сессии окна без собранных котировок, и последняя закрытая.
+
+    **Ищется нехватка во всём окне, а не отставание границы.** Прежде список
+    считался как «дни после последнего собранного», и пропуск ВНУТРИ окна в него
+    не попадал вовсе: собрано 04.09, дыра 05.09, собрано 08.09 — граница стоит на
+    08.09, и 05.09 не догонялся никогда. Ранжирование при этом не запускалось,
+    потому что полнота требуется по всему окну, а причина не была видна нигде
+    (FR-029a).
+
+    Признак собранности — успешный сбор котировок: они задают пространство строк,
+    и без них сессии в наборе нет. Успех при нуле наблюдений тоже считается
+    собранным — биржа ответила, данных за день нет.
+
+    Сессия, которую недавно уже пытались собрать, пропускается: см.
+    `market_data_retry_after_minutes`.
+    """
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
 
-    today = (now or moscow_now()).date()
+    moment = now or moscow_now()
+    today = moment.date()
     known = await calendar.window(
         await repository.latest_trading_session(today) or today,
         settings.catchup_window_sessions,
@@ -93,17 +109,60 @@ async def pending_sessions(
     if not known:
         return [], None
 
-    closed = [day for day in known if session_is_closed(day, settings, now)]
+    closed = [day for day in known if session_is_closed(day, settings, moment)]
     if not closed:
         return [], None
 
     last_closed = closed[-1]
 
-    collected = await repository.sessions_with_daily_bars(closed)
-    latest_collected = max(collected) if collected else None
+    # Два признака собранности, как у поиска пропусков в управляемом догоне:
+    # наблюдения в таблице баров и успешный исход источника. Первое без второго
+    # бывает после первичной загрузки, второе без первого — когда биржа честно
+    # ответила пустотой.
+    with_bars = await repository.sessions_with_daily_bars(closed)
+    with_run = await repository.sessions_with_successful_run(closed, equity_d1.SOURCE_ID)
 
-    pending = [day for day in closed if latest_collected is None or day > latest_collected]
-    return pending, last_closed
+    missing = [day for day in closed if day not in with_bars and day not in with_run]
+    if not missing:
+        return [], last_closed
+
+    return _after_retry_delay(
+        missing,
+        await repository.last_attempt_by_session(missing, equity_d1.SOURCE_ID),
+        settings,
+        moment,
+    ), last_closed
+
+
+def _after_retry_delay(
+    missing: list[dt.date],
+    last_attempt: dict[dt.date, dt.datetime],
+    settings: Settings,
+    now: dt.datetime,
+) -> list[dt.date]:
+    """Отсеять сессии, которые пытались собрать слишком недавно.
+
+    Без этого поиск нехватки по всему окну превращает устойчивую ошибку в
+    непрерывный поток обращений: тик раз в минуту, сессия не собирается, и та же
+    неудачная попытка повторяется шестьдесят раз в час по одному и тому же
+    неотвечающему адресу (FR-029c).
+
+    Отметка берётся из таблицы исходов, а не из памяти процесса: перезапуск не
+    должен обнулять выдержку — иначе цикл падений и рестартов даёт тот же
+    поток.
+    """
+    delay = dt.timedelta(minutes=settings.market_data_retry_after_minutes)
+    if delay <= dt.timedelta(0):
+        return missing
+
+    ready: list[dt.date] = []
+    for day in missing:
+        attempted = last_attempt.get(day)
+        if attempted is not None and now - attempted.astimezone(MOSCOW) < delay:
+            logger.debug("сессия %s пропущена: попытка была %s", day, attempted)
+            continue
+        ready.append(day)
+    return ready
 
 
 async def _calendar_is_due(repository: MarketDataRepository, now: dt.datetime | None) -> bool:

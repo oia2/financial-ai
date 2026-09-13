@@ -303,6 +303,21 @@ async def catch_up(
     else:
         result.requested = list(sessions)
 
+    # Незакрытая сессия не собирается и по команде человека (FR-029b). Правило
+    # жило только в автоматическом пути, и кнопка могла забрать сегодняшний день
+    # посреди торгов: дневные бары внутри сессии ещё меняются, а незавершённая
+    # сессия в признаках модели — утечка будущего. Диапазон при этом не
+    # отвергается целиком: собирается всё закрытое, а сегодняшнее ждёт вечера.
+    from financial_ai.market_data.advance import session_is_closed
+
+    withheld = [day for day in result.requested if not session_is_closed(day, settings)]
+    if withheld:
+        logger.info(
+            "догон: сессий отложено до закрытия — %s",
+            ", ".join(str(day) for day in withheld),
+        )
+        result.requested = [day for day in result.requested if day not in set(withheld)]
+
     if not result.requested:
         return result
 

@@ -289,3 +289,34 @@ async def test_gap_beyond_the_limit_is_not_collected_even_over_many_ticks(
         await scheduler._ingest_once()
 
     assert attempts == [], "разрыв сверх предела собран автоматически"
+
+
+async def test_paused_scheduler_collects_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Остановленный сбор не создаёт работы и на биржу не ходит.
+
+    Останавливается создание НОВОЙ работы: тик просто ничего не делает.
+    Возобновление возвращает сбор без перезапуска системы (FR-029d).
+    """
+    called: list[str] = []
+
+    async def spy_advance(*args: object, **kwargs: object) -> object:
+        called.append("advance")
+        raise AssertionError("остановленный сбор не должен ходить за данными")
+
+    monkeypatch.setattr(advance, "advance", spy_advance)
+
+    scheduler = MarketDataScheduler(Settings())
+
+    assert scheduler.paused is False
+    scheduler.set_paused(True)
+    assert scheduler.paused is True
+
+    await scheduler._ingest_once()
+    assert called == []
+
+    # Возобновление снимает остановку: работа снова ищется.
+    scheduler.set_paused(False)
+    assert scheduler.paused is False
+    with pytest.raises(AssertionError):
+        await scheduler._ingest_once()
+    assert called == ["advance"]

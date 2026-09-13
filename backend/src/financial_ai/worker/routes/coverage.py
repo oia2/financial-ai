@@ -9,16 +9,51 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from financial_ai.config import get_settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.market_data import coverage as coverage_module
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.repository import MarketDataRepository
+from financial_ai.market_data.scheduler import MarketDataScheduler
 
 router = APIRouter(tags=["coverage"])
+
+
+class CollectionPauseIn(BaseModel):
+    """Остановка и возобновление автоматического сбора."""
+
+    paused: bool
+
+
+def _scheduler(request: Request) -> MarketDataScheduler | None:
+    scheduler = getattr(request.app.state, "market_data_scheduler", None)
+    return scheduler if isinstance(scheduler, MarketDataScheduler) else None
+
+
+@router.get("/market-data/settings")
+async def read_collection_settings(request: Request) -> dict[str, bool]:
+    """Идёт ли автоматический сбор."""
+    scheduler = _scheduler(request)
+    return {"paused": scheduler.paused if scheduler is not None else False}
+
+
+@router.put("/market-data/settings")
+async def set_collection_paused(payload: CollectionPauseIn, request: Request) -> dict[str, bool]:
+    """Остановить или возобновить автоматический сбор.
+
+    Останавливается создание НОВОЙ работы: начатая сессия доводится до конца.
+    Ранжирование этим переключателем не управляется — у него своя пауза, и это
+    разные механизмы (FR-029e). Управляемый догон тоже продолжает работать: он
+    запускается явной командой человека (FR-029g).
+    """
+    scheduler = _scheduler(request)
+    if scheduler is not None:
+        scheduler.set_paused(payload.paused)
+    return {"paused": payload.paused}
 
 
 @router.get("/coverage")

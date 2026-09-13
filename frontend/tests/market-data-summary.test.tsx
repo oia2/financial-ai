@@ -184,3 +184,42 @@ describe('сводка полноты', () => {
     expect(within(panel as HTMLElement).getByText(/первичная загрузка/)).toBeInTheDocument();
   });
 });
+
+describe('остановка сбора', () => {
+  it('переключает сбор и говорит, что ранжирования это не касается', async () => {
+    let paused = false;
+    server.use(
+      http.get('*/api/market-data/settings', () => HttpResponse.json({ paused })),
+      http.put('*/api/market-data/settings', async ({ request }) => {
+        const body = (await request.json()) as { paused: boolean };
+        paused = body.paused;
+        return HttpResponse.json({ paused });
+      }),
+    );
+
+    renderMarketData();
+
+    const button = await screen.findByRole('button', { name: 'Остановить сбор' });
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+
+    // FR-029e: переключатели разные, и экран обязан это говорить. Слитое
+    // прочтение с паузой ранжирования дороже прочих ошибок здесь.
+    expect(screen.getByText(/не влияет на ранжирование/)).toBeInTheDocument();
+
+    await userEvent.click(button);
+
+    const resumed = await screen.findByRole('button', { name: 'Возобновить сбор' });
+    expect(resumed).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(/Догон по кнопке продолжает работать/)).toBeInTheDocument();
+  });
+
+  it('после перезапуска сборщика показывает, что сбор снова идёт', async () => {
+    // Состояние живёт в процессе сборщика: перезапуск возвращает сбор, и экран
+    // обязан читать это с сервера, а не помнить прошлое нажатие (FR-029f).
+    server.use(http.get('*/api/market-data/settings', () => HttpResponse.json({ paused: false })));
+
+    renderMarketData();
+
+    expect(await screen.findByRole('button', { name: 'Остановить сбор' })).toBeInTheDocument();
+  });
+});

@@ -192,6 +192,17 @@ class Settings(BaseSettings):
 
     daily_ml_tick_seconds: float = Field(default=60.0, gt=0)
 
+    market_data_retry_after_minutes: int = Field(
+        default=15,
+        ge=0,
+        description=(
+            "Через сколько минут повторять сессию, сбор которой не удался. Тик "
+            "планировщика — раз в минуту, и без выдержки устойчивая ошибка даёт "
+            "шестьдесят обращений в час по одному неотвечающему адресу. Ноль "
+            "отключает выдержку и возвращает поведение «пробовать каждый тик»."
+        ),
+    )
+
     market_data_startup_recovery_max_sessions: int = Field(
         default=0,
         ge=0,

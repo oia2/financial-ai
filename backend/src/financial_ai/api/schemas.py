@@ -121,3 +121,13 @@ class CatchupStartIn(BaseModel):
     groups: list[str] | None = Field(default=None, description="Группы источников. Пусто — все")
     date_from: dt.date | None = Field(default=None, description="Начало диапазона")
     date_till: dt.date | None = Field(default=None, description="Конец диапазона")
+
+
+class CollectionPauseIn(BaseModel):
+    """Остановка и возобновление автоматического сбора рыночных данных.
+
+    Это не пауза ранжирования: переключатели разные, и слитое прочтение дороже
+    прочих ошибок на этих экранах (FR-029e).
+    """
+
+    paused: bool = Field(description="true — сбор остановлен")

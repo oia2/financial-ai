@@ -659,6 +659,28 @@ class MarketDataRepository:
         )
         return {day for day in rows.all() if day is not None}
 
+    async def last_attempt_by_session(
+        self, sessions: list[dt.date], source_id: str
+    ) -> dict[dt.date, dt.datetime]:
+        """Когда по каждой сессии в последний раз ПЫТАЛИСЬ собрать источник.
+
+        Успех попыткой тоже считается: вопрос здесь не «получилось ли», а «как
+        давно ходили». Отметка нужна задержке перед повтором, и живёт она в
+        хранилище, а не в памяти процесса, — иначе перезапуск снимал бы её и
+        сбор начинал бы долбить биржу заново.
+        """
+        if not sessions:
+            return {}
+        rows = await self._session.execute(
+            select(IngestRun.session_date, func.max(IngestRun.started_at))
+            .where(
+                IngestRun.session_date.in_(sessions),
+                IngestRun.source_id == source_id,
+            )
+            .group_by(IngestRun.session_date)
+        )
+        return {day: at for day, at in rows.all() if day is not None and at is not None}
+
     async def failed_runs_for_sessions(self, sessions: list[dt.date]) -> list[IngestRun]:
         """Источники, оставшиеся незакрытыми за сессии окна.
 

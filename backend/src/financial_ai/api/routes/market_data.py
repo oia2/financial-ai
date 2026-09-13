@@ -30,7 +30,7 @@ from typing import Annotated, Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from financial_ai.api.schemas import CatchupStartIn
+from financial_ai.api.schemas import CatchupStartIn, CollectionPauseIn
 from financial_ai.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,25 @@ async def read_coverage(
     """
     params = {"asof": asof.isoformat()} if asof else None
     return await _worker("GET", "/internal/coverage", params=params)
+
+
+@router.get("/market-data/settings")
+async def read_collection_settings() -> Response:
+    """Идёт ли автоматический сбор рыночных данных."""
+    return await _worker("GET", "/internal/market-data/settings")
+
+
+@router.put("/market-data/settings")
+async def set_collection_paused(payload: CollectionPauseIn) -> Response:
+    """Остановить или возобновить автоматический сбор.
+
+    Это НЕ пауза ранжирования: переключатели разные, и один другой не заменяет
+    (FR-029e). Состояние живёт в процессе сборщика и перезапуск его снимает —
+    так же, как у паузы ранжирования (FR-029f).
+    """
+    return await _worker(
+        "PUT", "/internal/market-data/settings", payload=payload.model_dump(mode="json")
+    )
 
 
 @router.get("/market-data/catchup")

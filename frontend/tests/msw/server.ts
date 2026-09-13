@@ -18,6 +18,12 @@ export const server = setupServer(
   ),
   http.get('*/api/market-data/coverage', () => HttpResponse.json(coverageFixture())),
   http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('idle'))),
+  // Сбор по умолчанию идёт: это умолчание сборщика, и тесты видят то же, что
+  // человек на свежем запуске.
+  http.get('*/api/market-data/settings', () => HttpResponse.json({ paused: false })),
+  http.put('*/api/market-data/settings', async ({ request }) =>
+    HttpResponse.json(await request.json()),
+  ),
   // Оболочка читает состояние ранжирования в любом разделе: без этих ответов
   // упали бы все тесты, а не только тесты раздела.
   http.get('*/api/daily-ml/status', () => HttpResponse.json(statusFixture())),

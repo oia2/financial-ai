@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import advance
+from financial_ai.market_data.calendar import MOSCOW
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 
 pytestmark = pytest.mark.db
@@ -204,6 +205,61 @@ async def test_default_collects_the_whole_gap(
     assert result.collected == SESSIONS[1:]
     assert result.pending == []
     assert result.gap_sessions == 0
+
+
+async def test_hole_inside_the_window_is_collected(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Пропуск ВНУТРИ окна догоняется, а не только отставание границы.
+
+    Прежде список считался как «дни после последнего собранного», и дыра
+    посреди окна не попадала в него никогда: граница стояла на более поздней
+    сессии. Дыра не закрывалась, а ранжирование из-за неё не запускалось —
+    полнота требуется по всему окну (FR-029a).
+    """
+    # Собрано всё, кроме одной сессии посередине. Граница при этом на последней.
+    hole = SESSIONS[2]
+    await _seed(db_session, collected=[day for day in SESSIONS if day != hole])
+
+    collected: list[dt.date] = []
+
+    async def collect(_session: object, _settings: object, day: dt.date) -> object:
+        collected.append(day)
+        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    result = await advance.advance(db_session, settings, FRIDAY_EVENING)
+
+    assert collected == [hole]
+    assert result.collected == [hole]
+    assert not result.limit_exceeded
+
+
+def test_retry_delay_holds_back_a_recent_attempt(settings: Settings) -> None:
+    """Сессию, которую только что пытались собрать, повторять рано.
+
+    Без выдержки тик раз в минуту превращает устойчивую ошибку в шестьдесят
+    обращений в час по одному неотвечающему адресу (FR-029c).
+    """
+    day = SESSIONS[0]
+    waited = settings.model_copy(update={"market_data_retry_after_minutes": 15})
+    now = dt.datetime(2026, 9, 11, 20, 0, tzinfo=MOSCOW)
+
+    recent = {day: now - dt.timedelta(minutes=5)}
+    assert advance._after_retry_delay([day], recent, waited, now) == []
+
+    old = {day: now - dt.timedelta(minutes=20)}
+    assert advance._after_retry_delay([day], old, waited, now) == [day]
+
+    # Ни одной попытки ещё не было — ждать нечего.
+    assert advance._after_retry_delay([day], {}, waited, now) == [day]
+
+    # Ноль отключает выдержку целиком.
+    off = settings.model_copy(update={"market_data_retry_after_minutes": 0})
+    assert advance._after_retry_delay([day], recent, off, now) == [day]
 
 
 async def _noop(*args: object, **kwargs: object) -> int:
