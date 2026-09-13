@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import groups
+from financial_ai.market_data import completeness, groups
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import trading_calendar
@@ -76,11 +76,12 @@ async def evaluate(session: AsyncSession, settings: Settings, asof_date: dt.date
             missing.append(group.group_id.value)
             continue
 
-        for source_id in group.source_ids:
-            collected = await repository.sessions_with_successful_run(window, source_id)
-            if len(collected) < len(window):
-                missing.append(group.group_id.value)
-                break
+        # Полнота считается общим правилом — тем же, которым пользуется поиск
+        # недостающих сессий у сборщика. Своего счёта здесь больше нет: два
+        # расчёта одного факта разошлись на диапазонных источниках, и группа
+        # «глобальные ряды» не могла стать полной ни при каком догоне.
+        if await completeness.missing_sessions(repository, group, window):
+            missing.append(group.group_id.value)
 
     if missing:
         return Readiness(

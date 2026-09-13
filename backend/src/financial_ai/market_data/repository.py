@@ -554,6 +554,33 @@ class MarketDataRepository:
 
     # --- покрытие по группам (spec 005) ------------------------------------
 
+    async def sessions_with_observations(
+        self,
+        model: type,
+        session_column: str,
+        value_columns: tuple[str, ...],
+        sessions: list[dt.date],
+    ) -> set[dt.date]:
+        """Сессии окна, за которые в таблице группы есть непустые наблюдения.
+
+        Полнота меряется данными, а не записями о прогонах. Для источников,
+        забираемых одним запросом за весь период, запись о прогоне ставится на
+        одну дату — конец периода, — и счёт по журналу объявлял бы пустыми
+        сотни сессий, данные за которые лежат рядом.
+
+        Метод намеренно **не знает о группах**: модель и столбцы приходят
+        снаружи, как и у `group_coverage`.
+        """
+        if not sessions:
+            return set()
+
+        column = getattr(model, session_column)
+        filled = or_(*(getattr(model, name).is_not(None) for name in value_columns))
+        rows = await self._session.scalars(
+            select(column).where(column.in_(sessions), filled).distinct()
+        )
+        return set(rows.all())
+
     async def group_coverage(
         self,
         model: type,

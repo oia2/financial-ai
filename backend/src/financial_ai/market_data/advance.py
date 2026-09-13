@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import groups, ingest
+from financial_ai.market_data import completeness, groups, ingest
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -182,9 +182,7 @@ async def _incomplete_sessions(
         if not window:
             continue
 
-        for source_id in group.source_ids:
-            done = await repository.sessions_with_successful_run(window, source_id)
-            incomplete.update(day for day in window if day not in done)
+        incomplete.update(await completeness.missing_sessions(repository, group, window))
 
     return sorted(incomplete)
 

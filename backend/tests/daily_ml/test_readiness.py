@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,3 +180,77 @@ async def test_changed_window_reopens_the_expensive_check(
     )
 
     assert stale is True
+
+
+async def test_range_source_is_complete_by_observations(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Диапазонный источник закрывает окно наблюдениями, а не журналом прогонов.
+
+    Ряды ЦБ, Brent, индекс и глобальные ряды забираются одним запросом за весь
+    период, а исход записывается на одну дату — конец периода. Счёт по журналу
+    объявлял пустыми все остальные сессии, данные за которые лежат рядом.
+    Из-за этого группа «глобальные ряды» не могла стать полной ни при каком
+    догоне, и обязательным входом пришлось оставить одни котировки.
+    """
+    from financial_ai.market_data import completeness, groups
+    from financial_ai.market_data.models import GlobalDailySeries
+    from financial_ai.market_data.repository import MarketDataRepository
+
+    repository = await seed(db_session)
+    global_group = next(g for g in groups.GROUPS if g.group_id.value == "global")
+
+    # Наблюдения есть за каждую сессию окна, а прогон записан только за
+    # последнюю — ровно так выглядит диапазонная выборка.
+    for day in SESSIONS:
+        db_session.add(
+            GlobalDailySeries(series_id="CBR_KEY_RATE", session_date=day, value=Decimal("16.5"))
+        )
+    await repository.record_run(
+        run_id="range-run",
+        source_id="cbr",
+        status="ok",
+        started_at=dt.datetime.now(dt.UTC),
+        session_date=ASOF,
+    )
+    await db_session.commit()
+
+    missing = await completeness.missing_sessions(
+        MarketDataRepository(db_session), global_group, list(SESSIONS)
+    )
+
+    assert missing == [], "наблюдения есть, а группа числится неполной"
+
+
+async def test_empty_exchange_answer_still_closes_the_session(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Успешный прогон без наблюдений сессию всё равно закрывает.
+
+    Биржа ответила, данных за день нет — это законный исход, и наблюдений после
+    него не появится никогда. Считать такую сессию несобранной значило бы
+    перевыбирать её вечно.
+    """
+    from financial_ai.market_data import completeness, groups
+    from financial_ai.market_data.repository import MarketDataRepository
+
+    repository = await seed(db_session, collected=[])
+    quotes = next(g for g in groups.GROUPS if g.group_id.value == "quotes")
+
+    now = dt.datetime.now(dt.UTC)
+    for day in SESSIONS:
+        await repository.record_run(
+            run_id=f"empty-{day.isoformat()}",
+            source_id="equity_d1",
+            status="ok",
+            started_at=now,
+            session_date=day,
+            rows_written=0,
+        )
+    await db_session.commit()
+
+    missing = await completeness.missing_sessions(
+        MarketDataRepository(db_session), quotes, list(SESSIONS)
+    )
+
+    assert missing == []
