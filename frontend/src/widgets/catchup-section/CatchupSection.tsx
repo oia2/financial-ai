@@ -15,7 +15,7 @@
  */
 
 import type { CatchupStateDto, CoverageDto } from '@/entities/market-data';
-import { formatIsoDate, formatMoscowStamp } from '@/shared/lib/market-format';
+import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
 
 import { ProgressTrack } from './ProgressTrack';
 
@@ -186,10 +186,10 @@ export function CatchupSection({
               </span>
             </span>
             <span>
-              Начало: <span className="mono">{formatMoscowStamp(state.started_at)}</span>
+              Начало: <span className="mono">{formatShortStamp(state.started_at)}</span>
               {state.finished_at !== null && (
                 <>
-                  {' · '}Конец: <span className="mono">{formatMoscowStamp(state.finished_at)}</span>
+                  {' · '}Конец: <span className="mono">{formatShortStamp(state.finished_at)}</span>
                 </>
               )}
             </span>

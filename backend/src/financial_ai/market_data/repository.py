@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -182,6 +182,27 @@ class MarketDataRepository:
             )
         )
         await self._session.execute(statement)
+
+    async def update_lot_sizes(self, lots: dict[str, int]) -> int:
+        """Проставить размеры лотов известным активам.
+
+        Активы, которых в хранилище нет, не заводятся: справочник дополняет уже
+        собранное, а не подменяет собой сбор.
+        """
+        if not lots:
+            return 0
+
+        updated = 0
+        for asset_id, lot in lots.items():
+            touched = await self._session.scalars(
+                update(MarketAsset)
+                .where(MarketAsset.asset_id == asset_id)
+                .values(lot_size=lot)
+                .returning(MarketAsset.asset_id)
+            )
+            updated += len(touched.all())
+
+        return updated
 
     async def upsert_price_series(
         self, price_series_id: str, asset_id: str, session_date: dt.date
@@ -659,6 +680,56 @@ class MarketDataRepository:
             )
         )
         return [run for run in rows.all() if run.status == "failed"]
+
+    async def collected_since(
+        self, moment: dt.datetime, exclude_sources: tuple[str, ...] = ()
+    ) -> bool:
+        """Собиралось ли хоть что-нибудь после указанного момента.
+
+        Дешёвый ответ на дорогой вопрос. Содержимое набора — функция от
+        сохранённых данных, а данные попадают в хранилище только через сбор, и
+        каждый сбор здесь записан. Значит «после этого момента ничего не
+        собирали» означает «вход измениться не мог» — и пересобирать набор ради
+        дайджеста не нужно.
+
+        Прогон, **не записавший ни строки**, сбором здесь не считается: он
+        ничего не изменил. Иначе ежедневная сверка календаря, которая обычно не
+        добавляет ни одной сессии, открывала бы дорогую ветку на весь день.
+
+        Незавершённый прогон считается сбором: он может писать прямо сейчас.
+
+        `exclude_sources` — источники, чьё влияние вызывающий проверяет иначе.
+        Так исключается календарь: новые торговые дни появляются каждый день, но
+        на окно ПРОШЕДШЕЙ даты влияют, только если попали внутрь него, а это
+        видно по сдвигу границ окна.
+        """
+        conditions = [
+            IngestRun.status == "ok",
+            or_(
+                IngestRun.finished_at.is_(None),
+                and_(IngestRun.finished_at > moment, IngestRun.rows_written > 0),
+            ),
+        ]
+        if exclude_sources:
+            conditions.append(IngestRun.source_id.not_in(exclude_sources))
+
+        found = await self._session.scalar(select(IngestRun.id).where(*conditions).limit(1))
+        return found is not None
+
+    async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
+        """Когда источник в последний раз отработал успешно — по любой дате.
+
+        Нужно для источников, у которых спрашивать чаще раза в сутки нечего:
+        торговый календарь меняется раз в день, и тик в минуту не должен
+        превращаться в тысячу обращений к бирже. Признак берётся из хранилища
+        исходов, а не из памяти процесса: перезапуск не должен его терять.
+        """
+        return await self._session.scalar(
+            select(func.max(IngestRun.started_at)).where(
+                IngestRun.source_id == source_id,
+                IngestRun.status == "ok",
+            )
+        )
 
     async def runs_for_session(self, session_date: dt.date) -> list[IngestRun]:
         rows = await self._session.scalars(

@@ -168,6 +168,55 @@ class Settings(BaseSettings):
 
     daily_ml_timeout_seconds: float = Field(default=60.0, gt=0)
 
+    # --- жизненный цикл Daily ML (spec 007) ---------------------------------
+
+    daily_ml_enabled: bool = Field(
+        default=True,
+        description="Считать ли ранжирование автоматически по готовности данных.",
+    )
+
+    daily_ml_required_data_groups: list[str] = Field(
+        default=["quotes", "aggregates", "global", "positions", "reference"],
+        description=(
+            "Группы, входящие в ОБЯЗАТЕЛЬНЫЙ вход модели. Перечень задаётся "
+            "конфигурацией, потому что состав входа определяет модель, а не мы. "
+            "Дивиденды сюда не входят: они не признак и запрещены как ex-ante."
+        ),
+    )
+
+    daily_ml_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Сколько раз повторять прогон, прежде чем остановиться.",
+    )
+
+    daily_ml_tick_seconds: float = Field(default=60.0, gt=0)
+
+    market_data_startup_recovery_max_sessions: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Насколько глубокий разрыв данных восстанавливается автоматически. Ноль "
+            "означает «без предела — на всю глубину окна догона»: сессия старше окна "
+            "в набор не попадёт, и догонять её незачем. Положительное число задаёт "
+            "предел явно. Плата за ноль известна и принята: после долгого простоя "
+            "восстановление обращается к бирже столько раз, сколько сессий пропущено. "
+            "Прежнее умолчание 3 стояло из-за догона, ушедшего на 2909 обращений без "
+            "спроса; теперь эту цену платят осознанно, а рычаг остался тем же."
+        ),
+    )
+
+    @property
+    def startup_recovery_max_sessions(self) -> int:
+        """Фактический предел автоматического восстановления.
+
+        Ноль означает «без предела», а не «ничего не собирать»: границу и так
+        задаёт окно догона — глубже него сессия до модели не доходит. Так же
+        устроен `catchup_window_sessions`, и второго правила для одного вопроса
+        здесь не заводится.
+        """
+        return self.market_data_startup_recovery_max_sessions or self.catchup_window_sessions
+
     @property
     def broker_token_configured(self) -> bool:
         """Задан ли непустой токен.

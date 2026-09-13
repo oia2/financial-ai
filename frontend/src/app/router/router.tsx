@@ -28,10 +28,12 @@ import {
   type ReactNode,
 } from 'react';
 
-export type RouteName = 'portfolio' | 'market-data';
+export type RouteName = 'portfolio' | 'portfolio-plan' | 'daily-ml' | 'market-data';
 
 const PATHS: Record<RouteName, string> = {
   portfolio: '/',
+  'portfolio-plan': '/portfolio-plan',
+  'daily-ml': '/daily-ml',
   'market-data': '/market-data',
 };
 
@@ -40,7 +42,13 @@ export function pathOf(route: RouteName): string {
 }
 
 function routeOf(pathname: string): RouteName {
-  return pathname.replace(/\/+$/, '') === '/market-data' ? 'market-data' : 'portfolio';
+  const normalized = pathname.replace(/\/+$/, '');
+  for (const [route, path] of Object.entries(PATHS) as [RouteName, string][]) {
+    if (route !== 'portfolio' && normalized === path) return route;
+  }
+  // Портфель — раздел по умолчанию: неизвестный адрес открывает его, а не
+  // пустой экран. Прямая ссылка на несуществующий раздел ведёт домой.
+  return 'portfolio';
 }
 
 const listeners = new Set<() => void>();

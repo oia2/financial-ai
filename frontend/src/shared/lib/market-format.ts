@@ -34,17 +34,25 @@ export function formatIsoDate(value: string | null | undefined): string {
   return value.slice(0, 10).split('-').reverse().join('.');
 }
 
-/** Отметка времени прогона в московском времени, как в артефакте. */
-export function formatMoscowStamp(value: string | null | undefined): string {
+/**
+ * Отметка времени прогона без года: день, месяц, часы, минуты.
+ *
+ * Год опущен намеренно — догон показывается по свежим прогонам. Именно этим
+ * функция отличается от `formatStamp` в `daily-ml-format.ts`, и потому носит
+ * своё имя: два разных вывода под одним именем однажды разойдутся молча.
+ *
+ * Пояс не задаётся и подписи не имеет: момент приходит со смещением, перевод
+ * делает браузер (FR-073). Подпись «мск» здесь была, а в соседнем модуле её
+ * забыли — одно и то же время в двух разделах читалось по-разному.
+ */
+export function formatShortStamp(value: string | null | undefined): string {
   if (!value) return DASH;
-  const formatted = new Intl.DateTimeFormat('ru-RU', {
+  return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Moscow',
   }).format(new Date(value));
-  return `${formatted} мск`;
 }
 
 /** Целое число с разделителями разрядов. */

@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from financial_ai.config import get_settings
-from financial_ai.db.engine import dispose_engine
+from financial_ai.daily_ml import reconcile as daily_ml_reconcile
+from financial_ai.daily_ml.scheduler import DailyMlScheduler
+from financial_ai.db.engine import dispose_engine, get_session_factory
 from financial_ai.logging import setup_logging
 from financial_ai.market_data.runner import CatchupRunner
 from financial_ai.market_data.scheduler import MarketDataScheduler
@@ -21,6 +23,7 @@ from financial_ai.sync.lock import SingleFlight
 from financial_ai.sync.scheduler import SyncScheduler
 from financial_ai.sync.service import SyncResult
 from financial_ai.worker.routes import catchup, coverage, health, sync
+from financial_ai.worker.routes import daily_ml as daily_ml_routes
 
 
 @asynccontextmanager
@@ -43,12 +46,24 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     await market_data.start()
 
     # Догон истории НЕ запускается сам: он стартует только по команде человека.
-    # Владелец задания живёт в этом процессе, поэтому перезапуск снимает
+    # Владелец заданияживёт в этом процессе, поэтому перезапуск снимает
     # состояние «идёт» сам собой.
     application.state.catchup_runner = CatchupRunner(settings)
 
+    # Прогоны Daily ML, в отличие от догона, хранятся: это история решений.
+    # Значит «выполняется», переживший падение, надо снять явно — иначе запись
+    # останется в работе навсегда.
+    factory = get_session_factory()
+    async with factory() as session:
+        await daily_ml_reconcile.recover_interrupted(session, settings)
+
+    daily_ml = DailyMlScheduler(settings)
+    application.state.daily_ml_scheduler = daily_ml
+    await daily_ml.start()
+
     yield
 
+    await daily_ml.stop()
     await application.state.catchup_runner.shutdown()
     await market_data.stop()
 
@@ -70,3 +85,4 @@ app.include_router(health.router, prefix="/internal")
 app.include_router(sync.router, prefix="/internal")
 app.include_router(catchup.router, prefix="/internal")
 app.include_router(coverage.router, prefix="/internal")
+app.include_router(daily_ml_routes.router, prefix="/internal")

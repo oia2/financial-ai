@@ -122,21 +122,25 @@ describe('баннер идущего сбора', () => {
     renderApp('/');
 
     const rail = await screen.findByRole('status');
-    expect(rail).toHaveTextContent('Идёт сбор рыночных данных');
+    // Процессов в баннере два, поэтому каждый назван своим именем: без этого
+    // две строки читались бы как одна работа.
+    expect(rail).toHaveTextContent('Догон данных продолжается');
     // Закрытые из запрошенных — те же числа, что и на странице (FR-007).
     expect(rail).toHaveTextContent('18 / 90');
 
     await userEvent.click(screen.getByRole('link', { name: 'Рыночные данные' }));
     await screen.findByRole('heading', { name: 'Рыночные данные' });
 
-    expect(screen.getByRole('status')).toHaveTextContent('Идёт сбор рыночных данных');
+    expect(screen.getByRole('status')).toHaveTextContent('Догон данных продолжается');
   });
 
   it('во время остановки говорит о завершении текущей сессии', async () => {
     withCatchup(catchupFixture('stopping'));
     renderApp('/');
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Завершаем текущую сессию');
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Догон данных · завершаем текущую сессию',
+    );
   });
 
   it('скрыт, когда прогон не идёт', async () => {

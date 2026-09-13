@@ -19,24 +19,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 LOCK_CLASS_ID = 1094795585  # 'FAI1'
 LOCK_OBJECT_ID = 1
 
+# Обработчик очереди Daily ML. Тот же класс, другой объект: блокировки
+# различимы в pg_locks и не мешают друг другу — синхронизация счёта и
+# ранжирование это разные работы, и одновременность запрещена у каждой своя.
+DAILY_ML_OBJECT_ID = 2
 
-async def try_acquire(session: AsyncSession) -> bool:
+
+async def try_acquire(session: AsyncSession, objid: int = LOCK_OBJECT_ID) -> bool:
     """Пытается взять блокировку, не дожидаясь освобождения."""
     result = await session.execute(
         text("select pg_try_advisory_lock(:classid, :objid)"),
-        {"classid": LOCK_CLASS_ID, "objid": LOCK_OBJECT_ID},
+        {"classid": LOCK_CLASS_ID, "objid": objid},
     )
     return bool(result.scalar())
 
 
-async def release(session: AsyncSession) -> None:
+async def release(session: AsyncSession, objid: int = LOCK_OBJECT_ID) -> None:
     await session.execute(
         text("select pg_advisory_unlock(:classid, :objid)"),
-        {"classid": LOCK_CLASS_ID, "objid": LOCK_OBJECT_ID},
+        {"classid": LOCK_CLASS_ID, "objid": objid},
     )
 
 
-async def is_held(session: AsyncSession) -> bool:
+async def is_held(session: AsyncSession, objid: int = LOCK_OBJECT_ID) -> bool:
     """Держит ли кто-нибудь блокировку — то есть идёт ли синхронизация.
 
     Читается из ``pg_locks``, поэтому ответ одинаков для Backend-API и
@@ -50,6 +55,6 @@ async def is_held(session: AsyncSession) -> bool:
             "    and objid = :objid and granted"
             ")"
         ),
-        {"classid": LOCK_CLASS_ID, "objid": LOCK_OBJECT_ID},
+        {"classid": LOCK_CLASS_ID, "objid": objid},
     )
     return bool(result.scalar())

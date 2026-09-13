@@ -170,21 +170,33 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         # Тот же дайджест — тот же набор. Пересобирать нечего: он неизменяем.
         logger.info("набор %s уже материализован", path.name)
     else:
-        _write(
-            path,
-            asof_date,
-            price_sessions,
-            position_sessions,
-            prices,
-            globals_payload,
-            positions_payload,
-            aggregates,
-            sector_map,
-            incomplete,
-            assets,
-            windows,
-            digest,
-        )
+        try:
+            _write(
+                path,
+                asof_date,
+                price_sessions,
+                position_sessions,
+                prices,
+                globals_payload,
+                positions_payload,
+                aggregates,
+                sector_map,
+                incomplete,
+                assets,
+                windows,
+                digest,
+            )
+        except OSError as error:
+            # Нехватка прав на томе, переполненный диск, недоступный каталог —
+            # это отказ сборки набора, а не внутренняя ошибка платформы. Тип
+            # решает, что увидит человек: «не удалось собрать входной набор» с
+            # возможностью повтора вместо «прогон прерван внутренней ошибкой».
+            #
+            # Текст ошибки в сообщение НЕ вкладывается: `OSError` несёт путь
+            # внутреннего тома, а сообщение доходит до браузера через причину
+            # отказа. Подробности не теряются — их пишет `logger.exception`.
+            logger.exception("набор за %s не записан", asof_date)
+            raise DatasetError(f"не удалось записать набор за {asof_date}") from error
 
     return Dataset(
         ref=path.as_uri(),

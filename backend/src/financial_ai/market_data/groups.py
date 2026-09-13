@@ -116,7 +116,7 @@ GROUPS: tuple[SourceGroup, ...] = (
     SourceGroup(
         group_id=GroupId.REFERENCE,
         title="справочники",
-        source_ids=("equity_sectors",),
+        source_ids=("equity_sectors", "equity_lot_sizes"),
         model=AssetSector,
         session_column=None,
         value_columns=("sector",),

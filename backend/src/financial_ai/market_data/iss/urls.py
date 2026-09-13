@@ -102,6 +102,20 @@ def futures_securities_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/engines/futures/markets/forts/securities.json"
 
 
+def equity_securities_url(base_url: str, board: str) -> str:
+    """Адрес текущего состояния бумаг доски акций.
+
+    Отсюда берётся размер лота: у него нет истории, это свойство инструмента на
+    сегодня. Доска подставляется в адрес **своего** раздела — акций, а не
+    какого-нибудь другого: подстановка доски в чужой раздел уже однажды стоила
+    четырёх индексов, собранных по одной сессии из 314 (FR-019a фичи 005).
+    """
+    return (
+        f"{base_url.rstrip('/')}/engines/stock/markets/shares"
+        f"/boards/{board.strip('/').upper()}/securities.json"
+    )
+
+
 def index_analytics_url(base_url: str, index_id: str) -> str:
     """Адрес состава индекса с весами бумаг.
 

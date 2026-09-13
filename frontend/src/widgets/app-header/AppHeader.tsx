@@ -45,26 +45,51 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
   return (
     <header className="app-header">
       <div className="brand">
-        <span className="brand-name">FINANCIAL AI</span>
+        <span className="brand-name" data-od-id="product-wordmark">
+          FINANCIAL AI
+        </span>
       </div>
 
       {/*
-        Два раздела, активный отмечается текстом и нижней линией (FR-001).
-        Сайдбар для двух разделов не нужен: оболочка масштабируется
+        Четыре раздела, активный отмечается текстом и нижней линией (FR-001,
+        FR-046, FR-056). Сайдбар по-прежнему не нужен: оболочка масштабируется
         добавлением реальных разделов, а не пустых вкладок.
       */}
-      <nav className="app-nav" aria-label="Разделы">
-        <RouteLink route="portfolio" aria-current={route === 'portfolio' ? 'page' : undefined}>
+      <nav className="app-nav" aria-label="Разделы" data-od-id="app-navigation">
+        <RouteLink
+          route="portfolio"
+          aria-current={route === 'portfolio' ? 'page' : undefined}
+          data-od-id="nav-portfolio"
+        >
           Портфель
         </RouteLink>
-        <RouteLink route="market-data" aria-current={onMarketData ? 'page' : undefined}>
+        <RouteLink
+          route="portfolio-plan"
+          aria-current={route === 'portfolio-plan' ? 'page' : undefined}
+          data-od-id="nav-portfolio-plan"
+        >
+          План портфеля
+        </RouteLink>
+        <RouteLink
+          route="daily-ml"
+          aria-current={route === 'daily-ml' ? 'page' : undefined}
+          data-od-id="nav-daily-ml"
+        >
+          Ранжирование
+        </RouteLink>
+        <RouteLink
+          route="market-data"
+          aria-current={onMarketData ? 'page' : undefined}
+          data-od-id="nav-market-data"
+        >
           Рыночные данные
         </RouteLink>
       </nav>
 
-      <div className="header-actions" ref={controlRef}>
+      <div className="header-actions" ref={controlRef} data-od-id="account-control">
         <button
           className="icon-button"
+          data-od-id="refresh-control"
           type="button"
           aria-label={onMarketData ? 'Обновить сводку рыночных данных' : 'Обновить данные'}
           onClick={onMarketData ? refreshCoverage : () => refresh.run()}
@@ -79,6 +104,7 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
         <button
           className="interval-shortcut"
           type="button"
+          data-od-id="refresh-interval-shortcut"
           aria-label="Интервал автообновления портфеля"
           onClick={() => setMenuOpen((open) => !open)}
         >
@@ -107,7 +133,7 @@ export function AppHeader({ data }: { data: PortfolioDto | undefined }) {
           </svg>
         </button>
 
-        <div className="account-menu" role="menu" hidden={!menuOpen}>
+        <div className="account-menu" role="menu" hidden={!menuOpen} data-od-id="account-menu">
           <div className="menu-account">
             <strong>{account?.display_name ?? 'Брокерский счёт'}</strong>
             <span>

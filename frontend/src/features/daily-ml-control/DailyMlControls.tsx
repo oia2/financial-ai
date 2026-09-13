@@ -1,0 +1,60 @@
+/**
+ * Кнопки управления в шапке раздела.
+ *
+ * Подпись «Проверить сейчас» выбрана вместо «Запустить»: запуска по требованию
+ * в этой системе нет, есть проверка готовности (FR-022, FR-051).
+ *
+ * Прежняя подпись «Проверить новые данные» отвергнута — она обещала то, чего
+ * кнопка не делает. К бирже действие не обращается вовсе: оно смотрит на уже
+ * собранное и решает, есть ли работа ранжированию. Человек читал её как «сходи
+ * посмотри, не появилось ли данных», а при разрыве данных получал «готовых
+ * данных нет» и никакого движения — чинится это в разделе рыночных данных, куда
+ * и ведёт ссылка в состоянии `data_gap`.
+ */
+
+export function DailyMlControls({
+  paused,
+  busy,
+  onTogglePause,
+  onCheckNow,
+}: {
+  paused: boolean;
+  busy: boolean;
+  onTogglePause: () => void;
+  onCheckNow: () => void;
+}) {
+  return (
+    <div className="ml-controls" data-od-id="ranking-controls">
+      <div className="ml-automation-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          aria-pressed={paused}
+          aria-label={
+            paused
+              ? 'Возобновить автоматическое ранжирование'
+              : 'Поставить автоматическое ранжирование на паузу'
+          }
+          data-od-id="pause-ranking"
+          disabled={busy}
+          onClick={onTogglePause}
+        >
+          {paused ? 'Возобновить' : 'Пауза'}
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          data-od-id="check-ranking-now"
+          aria-describedby="checkHint"
+          disabled={busy}
+          onClick={onCheckNow}
+        >
+          Проверить сейчас
+        </button>
+      </div>
+      <p id="checkHint">
+        Смотрит, есть ли необработанный готовый вход. Данные с биржи не запрашиваются.
+      </p>
+    </div>
+  );
+}

@@ -122,7 +122,10 @@ async def db_session(database_available: bool, _schema: None) -> AsyncIterator[o
                 "market_price_series, market_asset, market_trading_session, "
                 "market_equity_aggregate, market_futures_position, market_asset_sector, "
                 "market_dividend_event, "
-                "market_ingest_run restart identity cascade"
+                "market_ingest_run, "
+                # Прогоны Daily ML (spec 007): успешный прогон одного теста
+                # делал бы работу следующего «уже выполненной».
+                "daily_ml_ranking_item, daily_ml_run restart identity cascade"
             )
         )
         await session.execute(
