@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import inspect
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,3 +321,55 @@ async def test_paused_scheduler_collects_nothing(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(AssertionError):
         await scheduler._ingest_once()
     assert called == ["advance"]
+
+
+async def test_automatic_collection_is_visible_as_a_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Автоматический сбор показывается тем же состоянием, что и сбор по кнопке.
+
+    Для человека это одна и та же работа: система идёт на биржу за сессиями.
+    Пока состояния не было, автоматический сбор оставался невидимым, хотя длится
+    он ровно столько же, сколько запущенный вручную.
+    """
+    days = [dt.date(2026, 8, 27), dt.date(2026, 8, 28)]
+    seen: list[str] = []
+
+    async def fake_advance(
+        _session: object,
+        _settings: object,
+        _now: object = None,
+        *,
+        on_plan=None,
+        on_session_start=None,
+        on_session_done=None,
+    ) -> object:
+        on_plan(days)
+        seen.append(scheduler.state.status.value)
+        for day in days:
+            on_session_start(day)
+            on_session_done(day, True)
+        return SimpleNamespace(limit_exceeded=False, pending=[], collected=days)
+
+    monkeypatch.setattr(advance, "advance", fake_advance)
+    monkeypatch.setattr("financial_ai.market_data.scheduler.moscow_now", lambda: dt.datetime.now())
+
+    scheduler = MarketDataScheduler(Settings())
+    # Реконсиляция ранжирования к этому тесту не относится и требует базы.
+    monkeypatch.setattr(scheduler, "_reconcile_daily_ml", _async_noop)
+
+    # До работы процесса нет: пустой тик не должен мигать баннером.
+    assert scheduler.state.status.value == "idle"
+
+    await scheduler._ingest_once()
+
+    # Во время работы состояние — «идёт», и его видит баннер процессов.
+    assert seen == ["running"]
+    # После — завершено, с посессионным итогом.
+    assert scheduler.state.status.value == "finished"
+    assert scheduler.state.closed == days
+    assert scheduler.state.current is None
+
+
+async def _async_noop(*args: object, **kwargs: object) -> None:
+    return None

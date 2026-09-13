@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -181,8 +182,18 @@ async def advance(
     session: AsyncSession,
     settings: Settings,
     now: dt.datetime | None = None,
+    *,
+    on_plan: Callable[[list[dt.date]], None] | None = None,
+    on_session_start: Callable[[dt.date], None] | None = None,
+    on_session_done: Callable[[dt.date, bool], None] | None = None,
 ) -> AdvanceResult:
-    """Синхронизировать календарь и собрать недостающие закрытые сессии."""
+    """Синхронизировать календарь и собрать недостающие закрытые сессии.
+
+    События о ходе работы — те же три, что у управляемого догона: план, начало
+    сессии, её исход. Благодаря им автоматический сбор виден в общем баннере
+    процессов ровно так же, как сбор по кнопке: человек не должен гадать, идёт
+    ли работа, по тому, каким путём она запущена.
+    """
     repository = MarketDataRepository(session)
 
     # Шаг 1: календарь. Без него новые сессии системе неизвестны: пропуски
@@ -231,13 +242,22 @@ async def advance(
             limit_exceeded=True,
         )
 
+    if on_plan is not None:
+        on_plan(list(pending))
+
     collected: list[dt.date] = []
     for day in pending:
+        if on_session_start is not None:
+            on_session_start(day)
+
         result = await ingest.ingest_session(session, settings, day)
         if result.succeeded:
             collected.append(day)
         else:
             logger.warning("сессия %s не собрана полностью: %s", day, result.unfinished_sources)
+
+        if on_session_done is not None:
+            on_session_done(day, result.succeeded)
 
     return AdvanceResult(
         last_closed_session=last_closed,

@@ -132,17 +132,25 @@ export function MarketDataPage() {
             разные механизмы, и слитое прочтение дороже прочих ошибок на этих
             экранах (FR-029e). Состояние читается с сервера, а не запоминается
             здесь: оно живёт в процессе сборщика, и перезапуск возвращает сбор.
+
+            Подпись говорит про АВТОСБОР, а не про «сбор»: «Остановить сбор»
+            читалось как остановка уже идущего прогона, чем кнопка не является —
+            она выключает автоматический режим, а начатую сессию доводит до конца.
           */}
           <button
             className="secondary-button"
             type="button"
             aria-pressed={collectionPaused}
-            aria-describedby="collectionHint"
+            aria-label={
+              collectionPaused
+                ? 'Возобновить автоматический сбор данных'
+                : 'Поставить автоматический сбор данных на паузу'
+            }
             data-od-id="pause-collection"
             disabled={collection.isPending || setCollectionPaused.isPending}
             onClick={() => setCollectionPaused.mutate(!collectionPaused)}
           >
-            {collectionPaused ? 'Возобновить сбор' : 'Остановить сбор'}
+            {collectionPaused ? 'Возобновить автосбор' : 'Пауза автосбора'}
           </button>
 
           {/*
@@ -164,11 +172,6 @@ export function MarketDataPage() {
                 : 'Запустить догон'}
           </button>
         </div>
-        <p className="snapshot-note" id="collectionHint" data-od-id="collection-state-hint">
-          {collectionPaused
-            ? 'Автоматический сбор остановлен. Догон по кнопке продолжает работать, ранжирование — тоже: у него своя пауза.'
-            : 'Сбор идёт автоматически. Остановка не отменяет догон по кнопке и не влияет на ранжирование — у него своя пауза.'}
-        </p>
       </div>
 
       {coverage.data !== undefined && <EmptyValuesAlert groups={coverage.data.groups} />}

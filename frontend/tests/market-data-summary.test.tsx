@@ -199,18 +199,22 @@ describe('остановка сбора', () => {
 
     renderMarketData();
 
-    const button = await screen.findByRole('button', { name: 'Остановить сбор' });
+    // FR-029e: подпись называет АВТОСБОР, а не «сбор». «Остановить сбор»
+    // читалось как остановка уже идущего прогона, чем кнопка не является: она
+    // выключает автоматический режим, а начатую сессию доводит до конца.
+    const button = await screen.findByRole('button', {
+      name: 'Поставить автоматический сбор данных на паузу',
+    });
+    expect(button).toHaveTextContent('Пауза автосбора');
     expect(button).toHaveAttribute('aria-pressed', 'false');
-
-    // FR-029e: переключатели разные, и экран обязан это говорить. Слитое
-    // прочтение с паузой ранжирования дороже прочих ошибок здесь.
-    expect(screen.getByText(/не влияет на ранжирование/)).toBeInTheDocument();
 
     await userEvent.click(button);
 
-    const resumed = await screen.findByRole('button', { name: 'Возобновить сбор' });
+    const resumed = await screen.findByRole('button', {
+      name: 'Возобновить автоматический сбор данных',
+    });
+    expect(resumed).toHaveTextContent('Возобновить автосбор');
     expect(resumed).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText(/Догон по кнопке продолжает работать/)).toBeInTheDocument();
   });
 
   it('после перезапуска сборщика показывает, что сбор снова идёт', async () => {
@@ -220,6 +224,8 @@ describe('остановка сбора', () => {
 
     renderMarketData();
 
-    expect(await screen.findByRole('button', { name: 'Остановить сбор' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Поставить автоматический сбор данных на паузу' }),
+    ).toBeInTheDocument();
   });
 });

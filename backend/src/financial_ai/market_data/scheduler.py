@@ -21,12 +21,14 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.market_data import advance
 from financial_ai.market_data.calendar import moscow_now
+from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +46,19 @@ class MarketDataScheduler:
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
         self._paused = False
+        # Ход работы в той же форме, что у управляемого догона. Форма общая
+        # намеренно: баннер процессов читает одно поле, и второй способ
+        # рассказать об одном и том же однажды разошёлся бы с первым.
+        self._state = CatchupState()
 
     @property
     def paused(self) -> bool:
         return self._paused
+
+    @property
+    def state(self) -> CatchupState:
+        """Ход автоматического сбора: та же форма, что у управляемого догона."""
+        return self._state
 
     def set_paused(self, paused: bool) -> None:
         """Остановить или возобновить автоматический сбор.
@@ -111,9 +122,41 @@ class MarketDataScheduler:
         if self._paused:
             return
 
+        def plan(days: list[dt.date]) -> None:
+            # Состояние заводится, только когда работа действительно есть:
+            # пустой план — обычный тик, и показывать по нему «идёт сбор»
+            # значило бы мигать баннером 1438 раз в сутки.
+            if not days:
+                return
+            self._state = CatchupState(
+                status=CatchupStatus.RUNNING,
+                requested=list(days),
+                date_from=days[0],
+                date_till=days[-1],
+                started_at=dt.datetime.now(dt.UTC),
+            )
+
+        def session_start(day: dt.date) -> None:
+            self._state.current = day
+
+        def session_done(day: dt.date, succeeded: bool) -> None:
+            (self._state.closed if succeeded else self._state.failed).append(day)
+            self._state.current = None
+
         factory = get_session_factory()
         async with factory() as session:
-            result = await advance.advance(session, self._settings, moscow_now())
+            result = await advance.advance(
+                session,
+                self._settings,
+                moscow_now(),
+                on_plan=plan,
+                on_session_start=session_start,
+                on_session_done=session_done,
+            )
+
+        if self._state.status is CatchupStatus.RUNNING:
+            self._state.status = CatchupStatus.FINISHED
+            self._state.finished_at = dt.datetime.now(dt.UTC)
 
         if result.limit_exceeded:
             # Разрыв показан человеку — в сводке раздела и в состоянии
