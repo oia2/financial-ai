@@ -135,11 +135,11 @@ describe('состояния раздела «Ранжирование»', () =>
   it('пауза: сказано, что сбор рыночных данных продолжается', async () => {
     renderWith({ status: 'paused', paused: true });
 
-    expect(await screen.findByText('Автоматический режим на паузе')).toBeInTheDocument();
+    expect(await screen.findByText('Автоматическое ранжирование остановлено')).toBeInTheDocument();
     // FR-055: пауза останавливает ранжирование, а не сбор. Слитое прочтение
     // этих двух механизмов — самая дорогая ошибка чтения экрана.
     expect(screen.getByText('Сбор рыночных данных продолжается.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Возобновить автоматическое/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Запустить автоматическое/ })).toBeInTheDocument();
   });
 
   it('разрыв данных: расчёт не обещан, предложен переход в рыночные данные', async () => {
@@ -193,13 +193,13 @@ describe('следующий запуск', () => {
     expect(next).toHaveTextContent('Если сессии не было, собирать нечего');
   });
 
-  it('на паузе запуск не планируется', async () => {
+  it('после остановки запуск не планируется', async () => {
     renderWith({ status: 'paused', paused: true });
 
-    await screen.findByText('Автоматический режим на паузе');
+    await screen.findByText('Автоматическое ранжирование остановлено');
     await userEvent.click(screen.getByText('Работа системы'));
 
-    expect(screen.getByText('Не запланирован — ранжирование на паузе.')).toBeInTheDocument();
+    expect(screen.getByText('Не запланирован — ранжирование остановлено.')).toBeInTheDocument();
   });
 });
 

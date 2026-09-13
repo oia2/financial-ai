@@ -116,7 +116,7 @@ describe('доступность раздела «Ранжирование»', (
 
     renderAt('daily-ml', '/daily-ml');
 
-    const pause = await screen.findByRole('button', { name: /Возобновить автоматическое/ });
+    const pause = await screen.findByRole('button', { name: /Запустить автоматическое/ });
     expect(pause).toHaveAttribute('aria-pressed', 'true');
   });
 });

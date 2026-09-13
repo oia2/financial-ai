@@ -200,6 +200,20 @@ async def build(
     }
 
 
+# Ответ об устаревании входа, посчитанный дорогим путём, и отметка сбора, при
+# которой он получен. Ключ — прогон и его дайджест; значение — момент последнего
+# сбора и сам ответ.
+#
+# Дешёвая ветка `is_stale` спасает, только пока после прогона ничего не
+# собирали. Стоит собрать одну сессию — и каждый расчёт плана снова пересобирает
+# набор: 314 сессий на сотни активов, секунды процессорного времени на запрос,
+# который человек ждёт. На стенде это выглядело как «план долго считается».
+#
+# Ответ при этом меняется ровно тогда, когда что-то собрали. Значит его можно не
+# пересчитывать, пока отметка сбора та же.
+_STALE_CACHE: dict[tuple[int, str], tuple[dt.datetime | None, bool]] = {}
+
+
 async def _ranking(session: AsyncSession, settings: Settings) -> DailyMlRun:
     run = await DailyMlRepository(session).latest_success()
     if run is None:
@@ -208,23 +222,40 @@ async def _ranking(session: AsyncSession, settings: Settings) -> DailyMlRun:
             "успешного ранжирования ещё не было: дождитесь первого прогона",
         )
 
-    # `since` — окончание прогона: если после него ничего не собирали, вход
-    # измениться не мог, и пересобирать набор ради дайджеста не нужно. Без этого
-    # расчёт плана стоил семнадцати секунд и держал весь процесс.
-    if await readiness.is_stale(
-        session,
-        settings,
-        run.asof_date,
-        run.dataset_digest,
-        since=run.finished_at,
-        window=(run.window_from, run.window_till),
-    ):
+    if await _is_stale_cached(session, settings, run):
         raise PlanError(
             "ranking_stale",
             "вход последнего ранжирования изменился: решение относится к другим данным",
         )
 
     return run
+
+
+async def _is_stale_cached(session: AsyncSession, settings: Settings, run: DailyMlRun) -> bool:
+    """Устарел ли вход прогона. Дорогой ответ переиспользуется между запросами.
+
+    `since` — окончание прогона: если после него ничего не собирали, вход
+    измениться не мог. Эта проверка внутри `is_stale` и остаётся первой.
+    Кэш нужен для второго случая — когда сбор ВСЁ-ТАКИ был: тогда дешёвая ветка
+    не срабатывает, и без кэша каждый расчёт платит пересборкой набора.
+    """
+    key = (run.id, run.dataset_digest)
+    marker = await MarketDataRepository(session).latest_ingest_at()
+
+    cached = _STALE_CACHE.get(key)
+    if cached is not None and cached[0] == marker:
+        return cached[1]
+
+    stale = await readiness.is_stale(
+        session,
+        settings,
+        run.asof_date,
+        run.dataset_digest,
+        since=run.finished_at,
+        window=(run.window_from, run.window_till),
+    )
+    _STALE_CACHE[key] = (marker, stale)
+    return stale
 
 
 async def _ranked_items(session: AsyncSession, run_id: int, count: int) -> list[DailyMlRankingItem]:

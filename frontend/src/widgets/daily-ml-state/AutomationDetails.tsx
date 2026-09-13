@@ -32,7 +32,7 @@ import { formatClock } from '@/shared/lib/daily-ml-format';
 import { stateName } from './DailyMlState';
 
 function startRule(status: DailyMlStatusDto): string {
-  if (status.paused) return 'Не запланирован — ранжирование на паузе.';
+  if (status.paused) return 'Не запланирован — ранжирование остановлено.';
   if (status.current) {
     return 'Текущий прогон уже идёт. Время начала следующего зависит от готовности данных.';
   }
@@ -49,7 +49,7 @@ function startRule(status: DailyMlStatusDto): string {
 }
 
 function summary(status: DailyMlStatusDto): string {
-  if (status.paused) return 'Авторанжирование на паузе';
+  if (status.paused) return 'Авторанжирование остановлено';
   if (status.current) return 'Идёт ранжирование';
 
   switch (stateName(status)) {

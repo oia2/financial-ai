@@ -659,6 +659,15 @@ class MarketDataRepository:
         )
         return {day for day in rows.all() if day is not None}
 
+    async def latest_ingest_at(self) -> dt.datetime | None:
+        """Когда в хранилище в последний раз что-нибудь собирали.
+
+        Отметка изменения данных целиком. По ней можно понять, мог ли вообще
+        измениться любой набор: если с прошлого раза не собирали ничего, ответ
+        о его устаревании остался прежним, и пересобирать набор незачем.
+        """
+        return await self._session.scalar(select(func.max(IngestRun.started_at)))
+
     async def last_attempt_by_session(
         self, sessions: list[dt.date], source_id: str
     ) -> dict[dt.date, dt.datetime]:

@@ -199,3 +199,34 @@ async def test_startup_tick_failure_does_not_stop_the_worker(
 
     await scheduler.start()
     await scheduler.stop()
+
+
+async def test_stale_ready_date_is_not_queued(
+    db_session: AsyncSession, settings: Settings, ranking_link: respx.MockRouter
+) -> None:
+    """Готовая, но отставшая дата заданием не становится.
+
+    Полнота окна и свежесть — разные вопросы. Окно предпоследней сессии остаётся
+    полным, когда последняя не собрана: раньше порядок активов считался за неё и
+    уходил в план как последнее решение. Сегодняшний план по позавчерашнему
+    рынку хуже отсутствия плана — отсутствие видно, а устаревание нет.
+    """
+    # Окно на одну сессию короче засеянного: тогда у предпоследней даты оно
+    # полно, а у ASOF — нет, потому что сама ASOF не собрана.
+    narrow = settings.model_copy(
+        update={
+            "market_data_price_window_sessions": len(SESSIONS) - 1,
+            "market_data_global_window_sessions": len(SESSIONS) - 1,
+            "market_data_positions_window_sessions": len(SESSIONS) - 1,
+        }
+    )
+    await seed(db_session, collected=SESSIONS[:-1])
+
+    result = await reconcile_module.reconcile(db_session, narrow)
+
+    assert result.queued == 0
+    assert result.latest_data_ready == SESSIONS[-2]
+    assert any("отстаёт от последней закрытой сессии" in note for note in result.notes)
+
+    _, total = await DailyMlRepository(db_session).history()
+    assert total == 0, "задание за отставшую дату всё-таки создано"

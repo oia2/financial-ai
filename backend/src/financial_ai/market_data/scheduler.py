@@ -26,7 +26,7 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import advance
+from financial_ai.market_data import advance, groups
 from financial_ai.market_data.calendar import moscow_now
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
@@ -147,6 +147,12 @@ class MarketDataScheduler:
                 return
             self._state = CatchupState(
                 status=CatchupStatus.RUNNING,
+                # Автоматический сбор идёт ПО ВСЕМ группам: `ingest_session`
+                # собирает каждый источник за дату. Пустой список читался экраном
+                # как «позиций тут нет», и он показывал оценку «котировки, 1–2 с
+                # на сессию», пока на деле шли позиции по фьючерсам — около
+                # 2,5 минуты на сессию. Обещание расходилось с работой в сто раз.
+                group_ids=[group.group_id.value for group in groups.GROUPS],
                 requested=list(days),
                 date_from=days[0],
                 date_till=days[-1],

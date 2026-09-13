@@ -32,14 +32,14 @@ export function DailyMlControls({
           aria-pressed={paused}
           aria-label={
             paused
-              ? 'Возобновить автоматическое ранжирование'
-              : 'Поставить автоматическое ранжирование на паузу'
+              ? 'Запустить автоматическое ранжирование'
+              : 'Остановить автоматическое ранжирование'
           }
           data-od-id="pause-ranking"
           disabled={busy}
           onClick={onTogglePause}
         >
-          {paused ? 'Возобновить' : 'Пауза'}
+          {paused ? 'Запустить' : 'Стоп'}
         </button>
         <button
           className="secondary-button"

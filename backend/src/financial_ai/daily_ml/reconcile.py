@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.daily_ml import readiness
 from financial_ai.daily_ml.repository import DailyMlRepository, RunInput
+from financial_ai.market_data import advance
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.ranking import client as ranking_client
@@ -139,6 +140,29 @@ async def reconcile(
             data_gap_sessions=gap,
             paused=paused,
             notes=["готовой даты нет: обязательный вход неполон"],
+        )
+
+    # Готовая, но УСТАРЕВШАЯ дата заданием не становится. Полнота окна и
+    # свежесть — разные вопросы, и система умела отказываться только от первого:
+    # при пропущенных 09–11 сентября окно 08-го оставалось полным, и порядок
+    # активов считался за 08-е, уходя в план как последнее решение. Сегодняшний
+    # план по позавчерашнему рынку хуже отсутствия плана: отсутствие видно, а
+    # устаревание — нет.
+    #
+    # Условие — именно последняя ЗАКРЫТАЯ сессия, а не последняя в календаре:
+    # сегодняшнюю до вечера собирать нельзя, и требовать её значило бы не
+    # считать никогда.
+    last_closed = (await advance.pending_sessions(session, settings))[1]
+    if last_closed is not None and ready_date < last_closed:
+        return ReconcileResult(
+            latest_data_ready=ready_date,
+            latest_ml_success=latest_ml,
+            data_gap_sessions=gap,
+            paused=paused,
+            notes=[
+                f"готовая дата {ready_date} отстаёт от последней закрытой сессии "
+                f"{last_closed}: сначала данные"
+            ],
         )
 
     if paused:
