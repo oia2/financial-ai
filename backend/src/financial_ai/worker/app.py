@@ -16,7 +16,7 @@ from financial_ai.daily_ml import reconcile as daily_ml_reconcile
 from financial_ai.daily_ml.scheduler import DailyMlScheduler
 from financial_ai.db.engine import dispose_engine, get_session_factory
 from financial_ai.logging import setup_logging
-from financial_ai.market_data.runner import CatchupRunner
+from financial_ai.market_data.runner import CatchupRunner, CatchupStatus
 from financial_ai.market_data.scheduler import MarketDataScheduler
 from financial_ai.sync.factory import build_sync_service
 from financial_ai.sync.lock import SingleFlight
@@ -57,7 +57,18 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     async with factory() as session:
         await daily_ml_reconcile.recover_interrupted(session, settings)
 
-    daily_ml = DailyMlScheduler(settings)
+    def collection_active() -> bool:
+        """Идёт ли прямо сейчас сбор рыночных данных — любым из двух путей.
+
+        Ранжированию это нужно, чтобы не искать работу посреди догона: готовая
+        дата в этот момент движется, и тик, попавший в середину, ставил задание
+        на раннюю дату.
+        """
+        return application.state.catchup_runner.is_active or (
+            market_data.state.status is CatchupStatus.RUNNING
+        )
+
+    daily_ml = DailyMlScheduler(settings, collection_active=collection_active)
     application.state.daily_ml_scheduler = daily_ml
     await daily_ml.start()
 

@@ -186,6 +186,7 @@ async def advance(
     on_plan: Callable[[list[dt.date]], None] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
     on_session_done: Callable[[dt.date, bool], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AdvanceResult:
     """Синхронизировать календарь и собрать недостающие закрытые сессии.
 
@@ -247,6 +248,12 @@ async def advance(
 
     collected: list[dt.date] = []
     for day in pending:
+        # Проверка МЕЖДУ сессиями, как у управляемого догона: начатую доводим до
+        # конца. День, собранный наполовину, неотличим от собранного полностью.
+        if should_stop is not None and should_stop():
+            logger.info("сбор остановлен перед сессией %s", day)
+            break
+
         if on_session_start is not None:
             on_session_start(day)
 

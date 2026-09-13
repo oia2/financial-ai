@@ -45,16 +45,12 @@ export function DailyMlControls({
           className="secondary-button"
           type="button"
           data-od-id="check-ranking-now"
-          aria-describedby="checkHint"
           disabled={busy}
           onClick={onCheckNow}
         >
           Проверить сейчас
         </button>
       </div>
-      <p id="checkHint">
-        Смотрит, есть ли необработанный готовый вход. Данные с биржи не запрашиваются.
-      </p>
     </div>
   );
 }

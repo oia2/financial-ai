@@ -115,10 +115,28 @@ async def catchup_status(request: Request) -> dict[str, object]:
 
 @router.delete("/catchup")
 async def stop_catchup(request: Request) -> dict[str, object]:
-    """Остановить.
+    """Остановить работающий сбор — запущенный по кнопке или автоматический.
+
+    Адресуется тому же прогону, который показан в состоянии: человек
+    останавливает то, что видит, а не тот из двух механизмов, о котором он
+    знать не обязан.
 
     Остановка мягкая: текущая сессия доводится до конца, дальнейшие не
     начинаются. День, собранный наполовину, неотличим от собранного полностью.
+
+    Автоматический сбор при этом останавливается как ОДИН прогон: на следующем
+    тике он начнётся снова. Чтобы он не начинался, есть пауза автосбора — это
+    разные вещи, и подменять одну другой нельзя.
     """
-    state = request.app.state.catchup_runner.stop()
+    runner = request.app.state.catchup_runner
+    if runner.is_active:
+        state = runner.stop()
+        return {"status": state["status"], "current": state["current"]}
+
+    scheduler = getattr(request.app.state, "market_data_scheduler", None)
+    if scheduler is not None and scheduler.state.status is CatchupStatus.RUNNING:
+        stopped = scheduler.request_stop().snapshot()
+        return {"status": stopped["status"], "current": stopped["current"]}
+
+    state = runner.stop()
     return {"status": state["status"], "current": state["current"]}

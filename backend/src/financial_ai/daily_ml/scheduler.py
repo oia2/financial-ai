@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import replace
 
 from financial_ai.config import Settings
@@ -26,8 +27,16 @@ logger = logging.getLogger(__name__)
 class DailyMlScheduler:
     """Фоновый цикл ранжирования."""
 
-    def __init__(self, settings: Settings, tick_seconds: float | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        tick_seconds: float | None = None,
+        collection_active: Callable[[], bool] | None = None,
+    ) -> None:
         self._settings = settings
+        # Идёт ли прямо сейчас сбор рыночных данных. Предикат, а не флаг:
+        # владелец состояния — сборщик, и второй его копии здесь не заводится.
+        self._collection_active = collection_active or (lambda: False)
         self._tick_seconds = tick_seconds or settings.daily_ml_tick_seconds
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
@@ -92,14 +101,32 @@ class DailyMlScheduler:
         """Один проход: найти работу и выполнить очередь."""
         factory = get_session_factory()
         async with factory() as session:
+            # Пока идёт сбор, работа НЕ ищется. Готовая дата в этот момент —
+            # движущаяся цель: сессии закрываются от старых к новым, и окно
+            # ранней даты становится полным раньше, чем окно последней. Тик
+            # ранжирования, попавший в середину догона, ставил задание на 04.09
+            # и считал порядок активов по дате, которая последней быть перестала
+            # через минуту. Наблюдалось на стенде.
+            if self._collection_active():
+                logger.debug("идёт сбор данных: поиск работы отложен до его окончания")
+                return self._carry(
+                    reconcile_module.ReconcileResult(notes=["идёт сбор рыночных данных"])
+                )
+
             result = await reconcile_module.reconcile(session, self._settings, self._paused)
 
             if not self._paused:
                 await runner.process_queue(session, self._settings)
 
-        # Пауза до вопроса об устаревании не доходит, и прошлый ответ остаётся
-        # последним, что система об этом знает: затирать его на `None` значило
-        # бы забыть наблюдение, а не обновить его.
+        return self._carry(result)
+
+    def _carry(self, result: reconcile_module.ReconcileResult) -> reconcile_module.ReconcileResult:
+        """Запомнить исход, не забыв того, что уже было известно.
+
+        Пауза и отложенный тик до вопроса об устаревании не доходят, и прошлый
+        ответ остаётся последним, что система об этом знает: затирать его на
+        `None` значило бы забыть наблюдение, а не обновить его.
+        """
         if result.stale_latest is None and self._last is not None:
             result = replace(result, stale_latest=self._last.stale_latest)
 

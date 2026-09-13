@@ -343,6 +343,7 @@ async def test_automatic_collection_is_visible_as_a_process(
         on_plan=None,
         on_session_start=None,
         on_session_done=None,
+        should_stop=None,
     ) -> object:
         on_plan(days)
         seen.append(scheduler.state.status.value)
@@ -373,3 +374,50 @@ async def test_automatic_collection_is_visible_as_a_process(
 
 async def _async_noop(*args: object, **kwargs: object) -> None:
     return None
+
+
+async def test_automatic_collection_can_be_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Идущий автоматический сбор останавливается той же командой, что и ручной.
+
+    Человек останавливает то, что видит на экране, а не тот из двух механизмов,
+    о котором знать не обязан. Остановка мягкая: начатая сессия доводится до
+    конца, следующая не начинается.
+    """
+    days = [dt.date(2026, 8, 27), dt.date(2026, 8, 28), dt.date(2026, 8, 31)]
+    done: list[dt.date] = []
+
+    async def fake_advance(
+        _session: object,
+        _settings: object,
+        _now: object = None,
+        *,
+        on_plan=None,
+        on_session_start=None,
+        on_session_done=None,
+        should_stop=None,
+    ) -> object:
+        on_plan(days)
+        for day in days:
+            if should_stop():
+                break
+            on_session_start(day)
+            on_session_done(day, True)
+            done.append(day)
+            # Останавливаем после первой же сессии.
+            scheduler.request_stop()
+        return SimpleNamespace(limit_exceeded=False, pending=[], collected=list(done))
+
+    monkeypatch.setattr(advance, "advance", fake_advance)
+    monkeypatch.setattr("financial_ai.market_data.scheduler.moscow_now", lambda: dt.datetime.now())
+
+    scheduler = MarketDataScheduler(Settings())
+    monkeypatch.setattr(scheduler, "_reconcile_daily_ml", _async_noop)
+
+    await scheduler._ingest_once()
+
+    assert done == days[:1], "остановка не прервала сбор между сессиями"
+    assert scheduler.state.status.value == "stopped"
+
+    # Остановка — про ОДИН прогон, а не про выключение режима: следующий тик
+    # снова ищет работу. Для «не начинать вовсе» есть пауза автосбора.
+    assert scheduler.paused is False

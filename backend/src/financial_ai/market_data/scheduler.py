@@ -50,10 +50,25 @@ class MarketDataScheduler:
         # намеренно: баннер процессов читает одно поле, и второй способ
         # рассказать об одном и том же однажды разошёлся бы с первым.
         self._state = CatchupState()
+        self._stop_requested = False
 
     @property
     def paused(self) -> bool:
         return self._paused
+
+    def request_stop(self) -> CatchupState:
+        """Остановить идущий автоматический сбор.
+
+        Мягко: текущая сессия доводится до конца, следующая не начинается. Это
+        остановка ОДНОГО прогона, а не выключение автоматического режима — для
+        второго есть пауза, и путать их нельзя: остановленный прогон возобновится
+        на следующем тике, снятая пауза — нет.
+        """
+        if self._state.status is CatchupStatus.RUNNING:
+            self._stop_requested = True
+            self._state.status = CatchupStatus.STOPPING
+            logger.info("автоматический сбор: запрошена остановка")
+        return self._state
 
     @property
     def state(self) -> CatchupState:
@@ -122,6 +137,8 @@ class MarketDataScheduler:
         if self._paused:
             return
 
+        self._stop_requested = False
+
         def plan(days: list[dt.date]) -> None:
             # Состояние заводится, только когда работа действительно есть:
             # пустой план — обычный тик, и показывать по нему «идёт сбор»
@@ -152,11 +169,15 @@ class MarketDataScheduler:
                 on_plan=plan,
                 on_session_start=session_start,
                 on_session_done=session_done,
+                should_stop=lambda: self._stop_requested,
             )
 
-        if self._state.status is CatchupStatus.RUNNING:
-            self._state.status = CatchupStatus.FINISHED
+        if self._state.status in (CatchupStatus.RUNNING, CatchupStatus.STOPPING):
+            self._state.status = (
+                CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
+            )
             self._state.finished_at = dt.datetime.now(dt.UTC)
+        self._stop_requested = False
 
         if result.limit_exceeded:
             # Разрыв показан человеку — в сводке раздела и в состоянии
