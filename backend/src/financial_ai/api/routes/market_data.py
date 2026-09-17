@@ -121,6 +121,19 @@ async def read_catchup() -> Response:
     return await _worker("GET", "/internal/catchup")
 
 
+@router.get("/market-data/runs")
+async def read_runs(
+    limit: Annotated[int, Query(ge=1, le=20, description="Сколько прогонов вернуть")] = 5,
+) -> Response:
+    """Журнал последних прогонов сбора.
+
+    Отвечает на вопрос «как прошёл сбор», когда ход работы уже не показать:
+    состояние прогона живёт в памяти сборщика и исчезает с перезапуском, а
+    журнал лежит в хранилище.
+    """
+    return await _worker("GET", "/internal/runs", params={"limit": limit})
+
+
 @router.post("/market-data/catchup")
 async def start_catchup(payload: CatchupStartIn) -> Response:
     """Запустить догон.

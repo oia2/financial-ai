@@ -64,21 +64,21 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Контрактный тест состояния прогона (режим, план источников, исходы сессий, причины пропусков) в `backend/tests/contract/test_collection_state_api.py` по [contracts/collection-state-api.md](./contracts/collection-state-api.md)
-- [ ] T012 [P] [US1] Контрактный тест журнала прогонов в `backend/tests/contract/test_runs_api.py`
-- [ ] T013 [P] [US1] Интеграционный тест: причины пропусков и итог прогона доступны после перезапуска сборщика в `backend/tests/integration/test_run_journal.py`
+- [X] T011 [P] [US1] Контрактный тест состояния прогона (режим, план источников, исходы сессий, причины пропусков) в `backend/tests/contract/test_collection_state_api.py` по [contracts/collection-state-api.md](./contracts/collection-state-api.md)
+- [X] T012 [P] [US1] Контрактный тест журнала прогонов в `backend/tests/contract/test_runs_api.py`
+- [X] T013 [P] [US1] Интеграционный тест: причины пропусков и итог прогона доступны после перезапуска сборщика в `backend/tests/integration/test_run_journal.py`
 - [ ] T014 [P] [US1] Интеграционный тест: сессия, закрывшаяся сегодня, берётся в сбор в тот же вечер в `backend/tests/integration/test_calendar_timing.py` (SC-010)
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Запись пропусков с причиной из четырёх мест решения в `backend/src/financial_ai/market_data/advance.py` и `ingest.py`: отложено до закрытия, выдержка после неудачи, исчерпан предел попыток, разрыв больше предела (FR-002)
-- [ ] T016 [US1] План источников текущей сессии с порядком, состоянием и областью (`session`, `period`, `daily`) в состоянии прогона в `backend/src/financial_ai/market_data/runner.py` (FR-003, FR-007)
-- [ ] T017 [US1] Режим прогона (`daily`, `manual`) и исходы сессий в состоянии прогона в `backend/src/financial_ai/market_data/runner.py` и `scheduler.py` (FR-001, FR-004)
-- [ ] T018 [US1] Чтение итога прогона и последних прогонов из таблицы исходов в новом `backend/src/financial_ai/market_data/journal.py` (FR-005, FR-006)
-- [ ] T019 [US1] Исход «прерван» для прогона, не завершённого из-за перезапуска, при старте сборщика в `backend/src/financial_ai/market_data/scheduler.py` (FR-041)
-- [ ] T020 [US1] Опрос календаря после порога и равнение сбора на последнюю дату календаря в `backend/src/financial_ai/market_data/advance.py`; убрать безусловный опрос календаря внутри `ingest.ingest_session` (FR-040, FR-043)
-- [ ] T021 [US1] Убрать дивиденды из ежедневного плана в `backend/src/financial_ai/market_data/ingest.py`, сохранив собранные события (FR-008)
-- [ ] T022 [US1] Внутренний маршрут журнала прогонов в `backend/src/financial_ai/worker/routes/` и публичный `GET /api/market-data/runs` в `backend/src/financial_ai/api/routes/market_data.py`
+- [X] T015 [US1] Запись пропусков с причиной из четырёх мест решения в `backend/src/financial_ai/market_data/advance.py` и `ingest.py`: отложено до закрытия, выдержка после неудачи, исчерпан предел попыток, разрыв больше предела (FR-002)
+- [X] T016 [US1] План источников текущей сессии с порядком, состоянием и областью (`session`, `period`, `daily`) в состоянии прогона в `backend/src/financial_ai/market_data/runner.py` (FR-003, FR-007)
+- [X] T017 [US1] Режим прогона (`daily`, `manual`) и исходы сессий в состоянии прогона в `backend/src/financial_ai/market_data/runner.py` и `scheduler.py` (FR-001, FR-004)
+- [X] T018 [US1] Чтение итога прогона и последних прогонов из таблицы исходов в новом `backend/src/financial_ai/market_data/journal.py` (FR-005, FR-006)
+- [X] T019 [US1] Исход «прерван» для прогона, не завершённого из-за перезапуска, при старте сборщика в `backend/src/financial_ai/market_data/scheduler.py` (FR-041)
+- [X] T020 [US1] Опрос календаря после порога и равнение сбора на последнюю дату календаря в `backend/src/financial_ai/market_data/advance.py`; убрать безусловный опрос календаря внутри `ingest.ingest_session` (FR-040, FR-043)
+- [X] T021 [US1] Убрать дивиденды из ежедневного плана в `backend/src/financial_ai/market_data/ingest.py`, сохранив собранные события (FR-008)
+- [X] T022 [US1] Внутренний маршрут журнала прогонов в `backend/src/financial_ai/worker/routes/` и публичный `GET /api/market-data/runs` в `backend/src/financial_ai/api/routes/market_data.py`
 - [ ] T023 [P] [US1] Типы состояния прогона и журнала в `frontend/src/entities/market-data/types.ts` и запросы в `api.ts`
 - [ ] T024 [US1] Панель прогона по макету в `frontend/src/widgets/catchup-section/`: план источников с идущим и следующим, причины пропусков, итог и журнал, состояния остановки и недоступности сборщика
 - [ ] T025 [P] [US1] Виджет календаря сессий в `frontend/src/widgets/collection-calendar/`: факт слева от сегодня, ожидание пунктиром, листание по месяцам (FR-023, FR-024)

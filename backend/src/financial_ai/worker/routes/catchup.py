@@ -113,6 +113,24 @@ async def catchup_status(request: Request) -> dict[str, object]:
     return runner.status()
 
 
+@router.get("/runs")
+async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
+    """Журнал последних прогонов.
+
+    Читается из таблицы исходов сбора, поэтому переживает перезапуск сборщика —
+    в отличие от хода работы, который живёт в памяти процесса намеренно. Именно
+    поэтому вопрос «как прошёл сбор» после перезапуска раньше оставался без
+    ответа (spec 008, FR-005).
+    """
+    from financial_ai.db.engine import get_session_factory
+    from financial_ai.market_data import journal
+
+    factory = get_session_factory()
+    async with factory() as session:
+        runs = await journal.recent_runs(session, limit=limit)
+    return {"runs": [run.to_dict() for run in runs]}
+
+
 @router.delete("/catchup")
 async def stop_catchup(request: Request) -> dict[str, object]:
     """Остановить работающий сбор — запущенный по кнопке или автоматический.
@@ -130,13 +148,17 @@ async def stop_catchup(request: Request) -> dict[str, object]:
     """
     runner = request.app.state.catchup_runner
     if runner.is_active:
-        state = runner.stop()
-        return {"status": state["status"], "current": state["current"]}
+        return _stop_result(runner.stop())
 
     scheduler = getattr(request.app.state, "market_data_scheduler", None)
     if scheduler is not None and scheduler.state.status is CatchupStatus.RUNNING:
-        stopped = scheduler.request_stop().snapshot()
-        return {"status": stopped["status"], "current": stopped["current"]}
+        return _stop_result(scheduler.request_stop().snapshot())
 
-    state = runner.stop()
-    return {"status": state["status"], "current": state["current"]}
+    return _stop_result(runner.stop())
+
+
+def _stop_result(state: dict[str, object]) -> dict[str, object]:
+    """Ответ об остановке: статус и сессия, которую доводим до конца."""
+    current = state.get("current")
+    session_date = current.get("session_date") if isinstance(current, dict) else None
+    return {"status": state["status"], "current": session_date}

@@ -266,6 +266,8 @@ async def catch_up(
     source_ids: frozenset[str] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
     on_session_done: Callable[[dt.date, bool], None] | None = None,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
+    on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> CatchupResult:
     """Догнать пропущенные сессии окна.
@@ -323,6 +325,11 @@ async def catch_up(
             "догон: сессий отложено до закрытия — %s",
             ", ".join(str(day) for day in withheld),
         )
+        # Причина отложения доходит до человека, а не остаётся в логе: без неё
+        # сессия просто исчезает из плана и выглядит потерянной (FR-002).
+        if on_skip is not None:
+            for day in withheld:
+                on_skip(day, "withheld_until_close", "сессия ещё не закрылась")
         result.requested = [day for day in result.requested if day not in set(withheld)]
 
     if not result.requested:
@@ -358,6 +365,7 @@ async def catch_up(
             result.requested[-1],
             cbr_client,
             source_ids,
+            on_source=on_source,
         )
         await session.commit()
 
@@ -381,6 +389,7 @@ async def catch_up(
                 positions_client=pos_client,
                 sessions=result.requested,
                 health=health,
+                on_source=on_source,
             )
             await session.commit()
 
@@ -420,6 +429,7 @@ async def _catch_up_session(
     positions_client: PositionsClient,
     sessions: list[dt.date],
     health: _SourceHealth,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> list[SourceOutcome]:
     """Собрать одну пропущенную сессию источниками с выборкой по дате.
 
@@ -459,7 +469,13 @@ async def _catch_up_session(
         if not health.is_open(source_id):
             continue
         outcome = await run_source(
-            repository, run_id, source_id, session_date, action, trigger=TRIGGER_CATCHUP
+            repository,
+            run_id,
+            source_id,
+            session_date,
+            action,
+            trigger=TRIGGER_CATCHUP,
+            on_source=on_source,
         )
         health.record(source_id, outcome.status != STATUS_FAILED)
         outcomes.append(outcome)
@@ -474,6 +490,7 @@ async def _catch_up_ranges(
     date_till: dt.date,
     cbr_client: httpx.AsyncClient | None,
     source_ids: frozenset[str] | None = None,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> None:
     """Закрыть дыру источниками, умеющими выборку за период.
 
@@ -492,6 +509,8 @@ async def _catch_up_ranges(
         date_till,
         lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
         trigger=TRIGGER_CATCHUP,
+        period=(date_from, date_till),
+        on_source=on_source,
     )
     await run_source(
         repository,
@@ -500,6 +519,8 @@ async def _catch_up_ranges(
         date_till,
         lambda: _sync_cbr_range(repository, date_from, date_till, cbr_client),
         trigger=TRIGGER_CATCHUP,
+        period=(date_from, date_till),
+        on_source=on_source,
     )
 
 

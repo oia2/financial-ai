@@ -223,7 +223,7 @@ async def test_default_collects_the_whole_gap(
 
     collected: list[dt.date] = []
 
-    async def collect(_session: object, _settings: object, day: dt.date) -> object:
+    async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
         return SimpleNamespace(succeeded=True, unfinished_sources=[])
 
@@ -256,7 +256,7 @@ async def test_hole_inside_the_window_is_collected(
 
     collected: list[dt.date] = []
 
-    async def collect(_session: object, _settings: object, day: dt.date) -> object:
+    async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
         return SimpleNamespace(succeeded=True, unfinished_sources=[])
 
@@ -314,7 +314,7 @@ async def test_session_with_a_failed_source_is_collected_again(
 
     collected: list[dt.date] = []
 
-    async def collect(_session: object, _settings: object, day: dt.date) -> object:
+    async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
         return SimpleNamespace(succeeded=True, unfinished_sources=[])
 

@@ -29,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.market_data import gaps, groups, ingest
+from financial_ai.market_data import plan as plan_module
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import MarketDataRepository
@@ -85,9 +86,16 @@ class NothingToCatchUpError(RuntimeError):
 
 @dataclass(slots=True)
 class CatchupState:
-    """Снимок состояния задания."""
+    """Снимок состояния задания.
+
+    Кроме счётчиков состояние несёт **план источников текущей сессии** и
+    **причины пропусков**. Без первого долгий источник неотличим от зависания;
+    без второго человек видит дыру и не знает, ждать ему или вмешиваться
+    (spec 008, FR-002, FR-003).
+    """
 
     status: CatchupStatus = CatchupStatus.IDLE
+    mode: str = plan_module.MODE_DAILY
     group_ids: list[str] = field(default_factory=list)
     date_from: dt.date | None = None
     date_till: dt.date | None = None
@@ -95,30 +103,104 @@ class CatchupState:
     requested: list[dt.date] = field(default_factory=list)
     closed: list[dt.date] = field(default_factory=list)
     failed: list[dt.date] = field(default_factory=list)
+
+    # Исход каждой сессии плана: collected | partial | failed | skipped.
+    outcomes: dict[dt.date, str] = field(default_factory=dict)
+
+    # Пропуски с причиной: (дата, причина, пояснение).
+    skips: list[tuple[dt.date, str, str | None]] = field(default_factory=list)
+
+    # Состояние источников ТЕКУЩЕЙ сессии: source_id → (состояние, подробность).
+    # Счёт идёт внутри одной сессии: следующая пройдёт тот же план заново.
+    sources: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+
     current: dt.date | None = None
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
+    last_response_at: dt.datetime | None = None
+    stop_requested: bool = False
     reason: str | None = None
 
     @property
     def remaining(self) -> int:
         return len(self.requested) - len(self.closed) - len(self.failed)
 
+    def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
+        """Отметить состояние источника и момент последнего ответа."""
+        self.sources[source_id] = (state, detail)
+        if state != "running":
+            self.last_response_at = dt.datetime.now(dt.UTC)
+
+    def begin_session(self, day: dt.date) -> None:
+        """Новая сессия — план источников начинается заново."""
+        self.current = day
+        self.sources = {}
+
+    def note_skip(self, day: dt.date, reason: str, detail: str | None = None) -> None:
+        self.outcomes[day] = "skipped"
+        self.skips.append((day, reason, detail))
+
+    def _session_plan(self) -> list[dict[str, object]]:
+        """План источников текущей сессии с состоянием каждого."""
+        rows: list[dict[str, object]] = []
+        for spec in plan_module.for_mode(self.mode):
+            state, detail = self.sources.get(spec.source_id, ("pending", None))
+            row: dict[str, object] = {
+                "source_id": spec.source_id,
+                "title": spec.title,
+                "scope": spec.scope,
+                "state": state,
+            }
+            if detail:
+                row["detail"] = detail
+            rows.append(row)
+        return rows
+
     def snapshot(self) -> dict[str, object]:
         """Состояние в виде, пригодном для ответа контракта."""
+        counts = {"collected": 0, "partial": 0, "failed": 0, "skipped": 0}
+        for outcome in self.outcomes.values():
+            if outcome in counts:
+                counts[outcome] += 1
+
         return {
             "status": self.status.value,
+            "mode": self.mode,
             "groups": list(self.group_ids),
             "date_from": self.date_from.isoformat() if self.date_from else None,
             "date_till": self.date_till.isoformat() if self.date_till else None,
             "clamped": self.clamped,
+            "sessions": {
+                "requested": len(self.requested),
+                **counts,
+                "pending": max(len(self.requested) - sum(counts.values()), 0),
+                "outcomes": [
+                    {"session_date": day.isoformat(), "outcome": self.outcomes[day]}
+                    for day in self.requested
+                    if day in self.outcomes
+                ],
+            },
+            "skips": [
+                {"session_date": day.isoformat(), "reason": reason, "detail": detail}
+                for day, reason, detail in self.skips
+            ],
+            "current": (
+                {"session_date": self.current.isoformat(), "sources": self._session_plan()}
+                if self.current
+                else None
+            ),
+            # Старые поля контракта фичи 005: интерфейс переезжает на новые, но
+            # ломать его одномоментно незачем.
             "requested": len(self.requested),
             "closed": len(self.closed),
             "failed": len(self.failed),
             "remaining": max(self.remaining, 0),
-            "current": self.current.isoformat() if self.current else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "last_response_at": (
+                self.last_response_at.isoformat() if self.last_response_at else None
+            ),
+            "stop_requested": self.stop_requested,
             "reason": self.reason,
         }
 
@@ -159,16 +241,17 @@ class CatchupRunner:
 
         selected = groups.resolve(group_ids)
 
-        plan = await self._plan(selected, date_from, date_till)
+        planned = await self._plan(selected, date_from, date_till)
 
         self._stop_requested = False
         self._state = CatchupState(
             status=CatchupStatus.RUNNING,
+            mode=plan_module.MODE_MANUAL,
             group_ids=[group.group_id.value for group in selected],
-            date_from=plan[0][0],
-            date_till=plan[0][-1],
-            clamped=plan[1],
-            requested=list(plan[0]),
+            date_from=planned[0][0],
+            date_till=planned[0][-1],
+            clamped=planned[1],
+            requested=list(planned[0]),
             started_at=dt.datetime.now(dt.UTC),
         )
 
@@ -181,6 +264,7 @@ class CatchupRunner:
             return self._state.snapshot()
 
         self._stop_requested = True
+        self._state.stop_requested = True
         self._state.status = CatchupStatus.STOPPING
         logger.info("догон: запрошена остановка на сессии %s", self._state.current)
         return self._state.snapshot()
@@ -239,6 +323,8 @@ class CatchupRunner:
                     source_ids=groups.source_ids_for(selected),
                     on_session_start=self._on_session_start,
                     on_session_done=self._on_session_done,
+                    on_source=self._on_source,
+                    on_skip=self._state.note_skip,
                     should_stop=lambda: self._stop_requested,
                 )
         except Exception as error:
@@ -285,13 +371,26 @@ class CatchupRunner:
             logger.exception("реконсиляция ранжирования после догона не выполнена")
 
     def _on_session_start(self, day: dt.date) -> None:
-        self._state.current = day
+        self._state.begin_session(day)
 
     def _on_session_done(self, day: dt.date, closed: bool) -> None:
         if closed:
             self._state.closed.append(day)
+            self._state.outcomes[day] = "collected"
         else:
             self._state.failed.append(day)
+            self._state.outcomes[day] = "failed"
+
+    def _on_source(self, source_id: str, status: str, outcome: object) -> None:
+        """Ход по источникам внутри сессии.
+
+        `running` приходит до обращения, исход — после. Так виден и текущий
+        источник, и время последнего ответа: долгий источник перестаёт быть
+        неотличимым от зависания.
+        """
+        state = {"running": "running", "ok": "done", "failed": "failed"}.get(status, "skipped")
+        detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
+        self._state.note_source(source_id, state, detail)
 
 
 def _clamp(

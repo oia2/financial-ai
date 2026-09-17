@@ -127,17 +127,38 @@ async def pending_sessions(
                 day,
                 attempts.get(day, 0),
             )
+            await repository.record_skip(
+                session_date=day,
+                reason="attempts_exhausted",
+                decided_at=dt.datetime.now(dt.UTC),
+                detail=(
+                    f"{attempts.get(day, 0)} попыток из {settings.market_data_session_max_attempts}"
+                ),
+            )
 
     # Отметка времени берётся по котировкам: `ingest_session` гонит все источники
     # за дату одним заходом и котировки — первыми, поэтому их последняя попытка и
     # есть «когда мы в последний раз брались за этот день», какой бы источник ни
     # оставался незакрытым.
-    return _after_retry_delay(
+    ready = _after_retry_delay(
         within_limit,
         await repository.last_attempt_by_session(within_limit, equity_d1.SOURCE_ID),
         settings,
         moment,
-    ), last_closed
+    )
+
+    # Сессия, отложенная выдержкой, не исчезает молча: человек видит, что она
+    # ждёт повтора, и через сколько (FR-002).
+    for day in within_limit:
+        if day not in ready:
+            await repository.record_skip(
+                session_date=day,
+                reason="retry_delay",
+                decided_at=dt.datetime.now(dt.UTC),
+                detail=f"повтор через {settings.market_data_retry_after_minutes} мин",
+            )
+
+    return ready, last_closed
 
 
 async def _incomplete_sessions(
@@ -276,6 +297,8 @@ async def advance(
     on_plan: Callable[[list[dt.date]], None] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
     on_session_done: Callable[[dt.date, bool], None] | None = None,
+    on_source: Callable[[str, str, object], None] | None = None,
+    on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> AdvanceResult:
     """Синхронизировать календарь и собрать недостающие закрытые сессии.
@@ -326,6 +349,17 @@ async def advance(
             len(pending),
             limit,
         )
+        for day in pending:
+            await repository.record_skip(
+                session_date=day,
+                reason="gap_over_limit",
+                decided_at=dt.datetime.now(dt.UTC),
+                detail=f"разрыв {len(pending)} сессий при пределе {limit}",
+            )
+            if on_skip is not None:
+                on_skip(day, "gap_over_limit", f"разрыв {len(pending)} сессий при пределе {limit}")
+        await session.commit()
+
         return AdvanceResult(
             last_closed_session=last_closed,
             pending=pending,
@@ -347,7 +381,7 @@ async def advance(
         if on_session_start is not None:
             on_session_start(day)
 
-        result = await ingest.ingest_session(session, settings, day)
+        result = await ingest.ingest_session(session, settings, day, on_source=on_source)
         if result.succeeded:
             collected.append(day)
         else:

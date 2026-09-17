@@ -26,7 +26,7 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import advance, groups
+from financial_ai.market_data import advance, groups, journal, plan
 from financial_ai.market_data.calendar import moscow_now
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
@@ -92,6 +92,15 @@ class MarketDataScheduler:
         if not self._settings.market_data_enabled:
             logger.info("сбор рыночных данных выключен настройкой")
             return
+
+        # Прогон, не завершившийся из-за перезапуска, помечается прерванным.
+        # Довести его было некому: тот, кто его вёл, больше не существует. Без
+        # этой отметки он остался бы «идущим» навсегда (spec 008, FR-041).
+        factory = get_session_factory()
+        async with factory() as session:
+            await journal.mark_interrupted(session, dt.datetime.now(dt.UTC))
+            await session.commit()
+
         self._task = asyncio.create_task(self._loop(), name="market-data-scheduler")
 
     async def stop(self) -> None:
@@ -139,7 +148,7 @@ class MarketDataScheduler:
 
         self._stop_requested = False
 
-        def plan(days: list[dt.date]) -> None:
+        def make_plan(days: list[dt.date]) -> None:
             # Состояние заводится, только когда работа действительно есть:
             # пустой план — обычный тик, и показывать по нему «идёт сбор»
             # значило бы мигать баннером 1438 раз в сутки.
@@ -147,6 +156,7 @@ class MarketDataScheduler:
                 return
             self._state = CatchupState(
                 status=CatchupStatus.RUNNING,
+                mode=plan.MODE_DAILY,
                 # Автоматический сбор идёт ПО ВСЕМ группам: `ingest_session`
                 # собирает каждый источник за дату. Пустой список читался экраном
                 # как «позиций тут нет», и он показывал оценку «котировки, 1–2 с
@@ -160,11 +170,20 @@ class MarketDataScheduler:
             )
 
         def session_start(day: dt.date) -> None:
-            self._state.current = day
+            self._state.begin_session(day)
 
         def session_done(day: dt.date, succeeded: bool) -> None:
             (self._state.closed if succeeded else self._state.failed).append(day)
+            self._state.outcomes[day] = "collected" if succeeded else "failed"
             self._state.current = None
+
+        def source_state(source_id: str, status: str, outcome: object) -> None:
+            state = {"running": "running", "ok": "done", "failed": "failed"}.get(status, "skipped")
+            detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
+            self._state.note_source(source_id, state, detail)
+
+        def skipped(day: dt.date, reason: str, detail: str | None) -> None:
+            self._state.note_skip(day, reason, detail)
 
         factory = get_session_factory()
         async with factory() as session:
@@ -172,9 +191,11 @@ class MarketDataScheduler:
                 session,
                 self._settings,
                 moscow_now(),
-                on_plan=plan,
+                on_plan=make_plan,
                 on_session_start=session_start,
                 on_session_done=session_done,
+                on_source=source_state,
+                on_skip=skipped,
                 should_stop=lambda: self._stop_requested,
             )
 

@@ -136,7 +136,9 @@ async def test_failed_attempt_does_not_block_a_retry_the_same_day(
 
     attempts: list[dt.date | None] = []
 
-    async def failing(session: object, settings: object, day: dt.date | None = None) -> object:
+    async def failing(
+        session: object, settings: object, day: dt.date | None = None, **_: object
+    ) -> object:
         attempts.append(day)
         return ingest.IngestResult(run_id="run", session_date=day)
 
@@ -173,7 +175,9 @@ async def test_daily_run_makes_no_catchup_calls(
         calls.append(args)
         return ingest.CatchupResult()
 
-    async def fake_ingest(session: object, settings: object, day: dt.date | None = None) -> object:
+    async def fake_ingest(
+        session: object, settings: object, day: dt.date | None = None, **_: object
+    ) -> object:
         return ingest.IngestResult(run_id="run", session_date=day)
 
     monkeypatch.setattr(ingest, "catch_up", spy_catch_up)
@@ -214,7 +218,9 @@ async def test_tick_synchronises_the_trading_calendar(
         synced.append(args)
         return 0
 
-    async def fake_ingest(session: object, settings: object, day: dt.date | None = None) -> object:
+    async def fake_ingest(
+        session: object, settings: object, day: dt.date | None = None, **_: object
+    ) -> object:
         return ingest.IngestResult(run_id="run", session_date=day)
 
     monkeypatch.setattr(trading_calendar, "sync_trading_calendar", spy_calendar)
@@ -246,7 +252,9 @@ async def test_calendar_is_not_synchronised_on_every_tick(
         synced.append(args)
         return 0
 
-    async def fake_ingest(session: object, settings: object, day: dt.date | None = None) -> object:
+    async def fake_ingest(
+        session: object, settings: object, day: dt.date | None = None, **_: object
+    ) -> object:
         return ingest.IngestResult(run_id="run", session_date=day)
 
     monkeypatch.setattr(trading_calendar, "sync_trading_calendar", spy_calendar)
@@ -366,6 +374,8 @@ async def test_automatic_collection_is_visible_as_a_process(
         on_plan=None,
         on_session_start=None,
         on_session_done=None,
+        on_source=None,
+        on_skip=None,
         should_stop=None,
     ) -> object:
         on_plan(days)
@@ -417,6 +427,8 @@ async def test_automatic_collection_can_be_stopped(monkeypatch: pytest.MonkeyPat
         on_plan=None,
         on_session_start=None,
         on_session_done=None,
+        on_source=None,
+        on_skip=None,
         should_stop=None,
     ) -> object:
         on_plan(days)
