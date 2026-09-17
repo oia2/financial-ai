@@ -102,6 +102,22 @@ class DelayedIss:
     ) -> list[dict[str, object]]:
         return []
 
+    # Связи инструментов приводятся в соответствие перед сбором позиций. Здесь
+    # состав не меняется, и подделка отвечает пустыми ответами: испытание про
+    # задержанное прибытие, а не про состав.
+
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        return {}
+
+    async def fetch_futures_series(self) -> list[dict[str, object]]:
+        return []
+
+    async def fetch_futures_open_interest(self) -> dict[str, int]:
+        return {}
+
+    async def fetch_emitter_id(self, secid: str) -> str | None:
+        return None
+
 
 class FlakyPositions(FakePositionsClient):
     """Источник позиций, отвечающий не с первой попытки."""

@@ -5239,6 +5239,19 @@ details.skip-details > summary::-webkit-details-marker {
   color: var(--negative);
 }
 
+/*
+  Изменения состава инструментов — второй список в том же журнале: событие
+  появления и исчезновения фьючерса объясняет, почему бумаг стало больше или
+  меньше, и путать его с прогонами нельзя.
+*/
+.run-journal .journal-heading {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+
 @media (max-width: 760px) {
   .run-journal li {
     grid-template-columns: 1fr 1fr;

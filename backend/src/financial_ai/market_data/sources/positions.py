@@ -61,9 +61,10 @@ async def sync_positions(
 ) -> int:
     """Собрать позиции за одну торговую сессию.
 
-    ``contracts`` — соответствие «тикер акции → код контракта», построенное из
-    ISS один раз на прогон: строить его на каждую сессию значило бы платить два
-    обращения за то, что не меняется в пределах прогона.
+    Чем спрашивать — решает действующая связь бумаги: она знает, с какой даты
+    контракт у бумаги есть, и не переключается между семействами молча.
+    ``contracts`` остаётся запасным соответствием на первый прогон, когда связей
+    ещё нет вовсе; дальше оно не используется.
 
     Три правила аккуратности выполняются здесь, а не в клиенте, потому что все
     три требуют знания уже собранного:
@@ -72,14 +73,29 @@ async def sync_positions(
     - периоды до первой доступной даты инструмента не запрашиваются (FR-024b);
     - акция без контракта не запрашивается вовсе (FR-022).
     """
-    if not contracts:
-        raise EmptyPositionsError("соответствие акций и контрактов пусто: спрашивать нечего")
+    # Применимость определяется действующей связью, а не построенным на лету
+    # соответствием: связь знает, С КАКОЙ ДАТЫ контракт у бумаги есть, и не
+    # переключается между сериями молча (FR-017, FR-039).
+    links = await repository.active_links_on(session_date)
+    if not links:
+        links = {asset_id_for(ticker): code for ticker, code in contracts.items()}
+    if not links:
+        raise EmptyPositionsError("действующих связей бумаг и контрактов нет: спрашивать нечего")
 
     known_tickers = await repository.tickers_with_history()
     already = await repository.assets_with_positions(session_date)
     first_seen = await repository.first_position_dates()
 
-    wanted = sorted(ticker for ticker in known_tickers if ticker in contracts)
+    # Бумага, по которой позиции собирались, обязана иметь связь. Её пропажа —
+    # неуспех с причиной, а не «фьючерса нет»: второе выглядит нормой (FR-020a).
+    lost = sorted(asset_id for asset_id in first_seen if asset_id not in links)
+    if lost:
+        raise EmptyPositionsError(
+            "бумаги с историей позиций потеряли связь с контрактом: "
+            + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
+        )
+
+    wanted = sorted(ticker for ticker in known_tickers if asset_id_for(ticker) in links)
     if not wanted:
         raise EmptyPositionsError(
             "ни у одной известной бумаги нет фьючерсного контракта: соответствие не построилось"
@@ -99,7 +115,7 @@ async def sync_positions(
             skipped_collected += 1
             continue
 
-        contract = contracts[ticker]
+        contract = links[asset_id]
         existed = await _existed_then(
             client, contract, session_date, first_seen.get(asset_id), sessions
         )
@@ -118,6 +134,9 @@ async def sync_positions(
             PositionRow(
                 asset_id=asset_id,
                 session_date=session_date,
+                # Контракт входит в ключ наблюдения: повторный сбор той же даты
+                # другим семейством не должен затирать прежнее молча (FR-039).
+                contract_code=contract,
                 fiz_long=snapshot.fiz_long,
                 fiz_short=snapshot.fiz_short,
                 jur_long=snapshot.jur_long,

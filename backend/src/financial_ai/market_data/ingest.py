@@ -22,7 +22,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import gaps
+from financial_ai.market_data import gaps, links
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
 from financial_ai.market_data.repository import MarketDataRepository
@@ -762,11 +762,17 @@ async def _sync_positions(
 ) -> int:
     """Позиции по фьючерсам за одну сессию.
 
-    Соответствие акций и контрактов строится из ISS и кэшируется на прогон:
-    оно не меняется в пределах прогона, а стоит двух обращений.
+    Связи приводятся в соответствие с составом инструментов ПЕРЕД сбором:
+    иначе позиции спрашивались бы вчерашним контрактом, а появление нового
+    фьючерса заметили бы только через сутки. Изменения состава возвращаются
+    событиями и попадают в журнал прогона (FR-016, FR-021).
     """
     if client is None:
         raise IssError("клиент источника позиций не настроен")
+
+    events = await links.sync_links(repository, iss, session_date)
+    for event in events:
+        logger.info("состав инструментов: %s", event.describe())
 
     contracts = await client.contracts(iss)
     return await positions.sync_positions(

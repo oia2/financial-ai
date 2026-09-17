@@ -19,15 +19,19 @@ import { describe, expect, it } from 'vitest';
 import { AppShell } from '@/app/App';
 import { AppProviders } from '@/app/providers';
 import { navigate } from '@/app/router';
-import type { CatchupStateDto, RunSummaryDto } from '@/entities/market-data';
+import type { CatchupStateDto, LinkEventDto, RunSummaryDto } from '@/entities/market-data';
 
 import { catchupFixture } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
 
-function renderWith(state: CatchupStateDto, runs: RunSummaryDto[] = []) {
+function renderWith(
+  state: CatchupStateDto,
+  runs: RunSummaryDto[] = [],
+  events: LinkEventDto[] = [],
+) {
   server.use(
     http.get('*/api/market-data/catchup', () => HttpResponse.json(state)),
-    http.get('*/api/market-data/runs', () => HttpResponse.json({ runs })),
+    http.get('*/api/market-data/runs', () => HttpResponse.json({ runs, events })),
   );
 
   const client = new QueryClient({
@@ -150,6 +154,28 @@ describe('прогон закончился', () => {
     renderWith(catchupFixture('idle'), []);
 
     expect(await screen.findByText('Прогонов ещё не было')).toBeInTheDocument();
+  });
+
+  it('изменение состава инструментов названо, а не спрятано в числах', async () => {
+    // Иначе рост или убыль числа собранных бумаг выглядели бы пропуском
+    // сбора, а не появлением и исчезновением инструментов (FR-016).
+    renderWith(
+      catchupFixture('finished'),
+      [FINISHED_RUN],
+      [
+        {
+          at: '2026-09-17T15:02:41Z',
+          ticker: 'SGZH',
+          kind: 'opened',
+          contract_code: 'SGZH_F',
+          detail: 'появился фьючерс SGZH_F',
+        },
+      ],
+    );
+
+    expect(await screen.findByText('Состав инструментов')).toBeInTheDocument();
+    expect(screen.getByText('SGZH')).toBeInTheDocument();
+    expect(screen.getByText('появился фьючерс SGZH_F')).toBeInTheDocument();
   });
 });
 

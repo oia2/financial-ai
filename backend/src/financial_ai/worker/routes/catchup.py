@@ -115,12 +115,16 @@ async def catchup_status(request: Request) -> dict[str, object]:
 
 @router.get("/runs")
 async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
-    """Журнал последних прогонов.
+    """Журнал последних прогонов и изменений состава инструментов.
 
     Читается из таблицы исходов сбора, поэтому переживает перезапуск сборщика —
     в отличие от хода работы, который живёт в памяти процесса намеренно. Именно
     поэтому вопрос «как прошёл сбор» после перезапуска раньше оставался без
     ответа (spec 008, FR-005).
+
+    Рядом идут изменения связей: появление фьючерса, смена семейства контрактов
+    и исчезновение инструмента. Без них рост или убыль числа собранных бумаг
+    выглядели бы пропуском сбора (FR-016).
     """
     from financial_ai.db.engine import get_session_factory
     from financial_ai.market_data import journal
@@ -128,7 +132,11 @@ async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
     factory = get_session_factory()
     async with factory() as session:
         runs = await journal.recent_runs(session, limit=limit)
-    return {"runs": [run.to_dict() for run in runs]}
+        events = await journal.recent_link_events(session)
+    return {
+        "runs": [run.to_dict() for run in runs],
+        "events": [event.to_dict() for event in events],
+    }
 
 
 @router.delete("/catchup")

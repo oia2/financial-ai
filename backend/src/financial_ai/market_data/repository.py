@@ -933,6 +933,36 @@ class MarketDataRepository:
         )
         return active is not None
 
+    async def close_link(self, asset_id: str, valid_till: dt.date) -> bool:
+        """Закрыть действующую связь датой.
+
+        Возвращает ``True``, если было что закрывать. Закрытие — событие: без
+        него исчезновение контракта выглядело бы пропуском сбора.
+        """
+        result = await self._session.execute(
+            update(AssetFuturesLink)
+            .where(
+                AssetFuturesLink.asset_id == asset_id,
+                AssetFuturesLink.valid_till.is_(None),
+            )
+            .values(valid_till=valid_till)
+        )
+        return bool(getattr(result, "rowcount", 0))
+
+    async def aliases_on(self, day: dt.date) -> dict[str, str]:
+        """Имена бумаг, действующие на дату: «тикер → сущность».
+
+        Переименованная бумага остаётся прежней сущностью, и наблюдения под
+        новым именем обязаны лечь в тот же ряд (FR-038).
+        """
+        rows = await self._session.execute(
+            select(AssetAlias.ticker, AssetAlias.asset_id).where(
+                AssetAlias.valid_from <= day,
+                or_(AssetAlias.valid_till.is_(None), AssetAlias.valid_till >= day),
+            )
+        )
+        return {row.ticker: row.asset_id for row in rows.all()}
+
     async def asset_by_isin(self, isin: str) -> str | None:
         """Бумага с таким устойчивым идентификатором, если она уже известна.
 

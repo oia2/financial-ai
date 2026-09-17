@@ -119,22 +119,22 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 3
 
-- [ ] T034 [P] [US3] Испытание: появилась новая бумага — попадает в состав и в знаменатель, в `backend/tests/integration/test_instruments_new_asset.py`
-- [ ] T035 [P] [US3] Испытание: у бумаги впервые появился фьючерс — связь открывается с подтверждённой даты, ранние даты ежедневным сбором не запрашиваются, в `backend/tests/integration/test_instruments_new_future.py`
-- [ ] T036 [P] [US3] Испытание: сменилось семейство контрактов — прежний интервал закрыт, новый открыт, смена видна как событие, в `backend/tests/integration/test_instruments_contract_change.py`
-- [ ] T037 [P] [US3] Испытание: бумага переименована — связь и история не рвутся, наблюдения относятся к прежней сущности, в `backend/tests/integration/test_instruments_rename.py`
-- [ ] T038 [P] [US3] Испытание: бумага перестала торговаться — выпадает из знаменателя тех сессий, где нет котировки, позиции за них не запрашиваются, в `backend/tests/integration/test_instruments_delisted.py`
-- [ ] T039 [P] [US3] Испытание: у бумаги несколько контрактов — выбор однозначен, повторяем и сохранён с основанием, в `backend/tests/integration/test_instruments_multiple_contracts.py`
-- [ ] T040 [P] [US3] Испытание: бумага, по которой позиции собирались, перестала сопоставляться — неуспех источника с причиной, а не «фьючерса нет», в `backend/tests/integration/test_instruments_link_lost.py` (FR-020a)
+- [X] T034 [P] [US3] Испытание: появилась новая бумага — попадает в состав и в знаменатель, в `backend/tests/integration/test_instruments_new_asset.py`
+- [X] T035 [P] [US3] Испытание: у бумаги впервые появился фьючерс — связь открывается с подтверждённой даты, ранние даты ежедневным сбором не запрашиваются, в `backend/tests/integration/test_instruments_new_future.py`
+- [X] T036 [P] [US3] Испытание: сменилось семейство контрактов — прежний интервал закрыт, новый открыт, смена видна как событие, в `backend/tests/integration/test_instruments_contract_change.py`
+- [X] T037 [P] [US3] Испытание: бумага переименована — связь и история не рвутся, наблюдения относятся к прежней сущности, в `backend/tests/integration/test_instruments_rename.py`
+- [X] T038 [P] [US3] Испытание: бумага перестала торговаться — выпадает из знаменателя тех сессий, где нет котировки, позиции за них не запрашиваются, в `backend/tests/integration/test_instruments_delisted.py`
+- [X] T039 [P] [US3] Испытание: у бумаги несколько контрактов — выбор однозначен, повторяем и сохранён с основанием, в `backend/tests/integration/test_instruments_multiple_contracts.py`
+- [X] T040 [P] [US3] Испытание: бумага, по которой позиции собирались, перестала сопоставляться — неуспех источника с причиной, а не «фьючерса нет», в `backend/tests/integration/test_instruments_link_lost.py` (FR-020a)
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Ведение связей во времени в новом `backend/src/financial_ai/market_data/links.py`: открытие, продление, закрытие интервала, основание выбора, событие смены (FR-014, FR-015, FR-016)
-- [ ] T042 [US3] Связь по идентификатору базовой бумаги либо по тикеру с якорем ISIN — по итогу сверки T001 — в `backend/src/financial_ai/market_data/sources/positions_client.py` (FR-020b, FR-020c)
-- [ ] T043 [US3] Применимость позиций по действующей связи и запись контракта в наблюдение в `backend/src/financial_ai/market_data/sources/positions.py` (FR-017, FR-039, FR-020d)
-- [ ] T044 [US3] Переименование бумаги: ведение псевдонимов с датами и отнесение новых наблюдений к прежней сущности в `backend/src/financial_ai/market_data/links.py` и `sources/equity_d1.py` (FR-038)
-- [ ] T045 [US3] Потеря соответствия у бумаги с историей позиций — неуспех источника с причиной в `backend/src/financial_ai/market_data/sources/positions.py` (FR-020a)
-- [ ] T046 [US3] События связей в журнале прогонов и в ответе состояния в `backend/src/financial_ai/market_data/journal.py`
+- [X] T041 [US3] Ведение связей во времени в новом `backend/src/financial_ai/market_data/links.py`: открытие, продление, закрытие интервала, основание выбора, событие смены (FR-014, FR-015, FR-016)
+- [X] T042 [US3] Связь по идентификатору базовой бумаги либо по тикеру с якорем ISIN — по итогу сверки T001 — в `backend/src/financial_ai/market_data/sources/positions_client.py` (FR-020b, FR-020c)
+- [X] T043 [US3] Применимость позиций по действующей связи и запись контракта в наблюдение в `backend/src/financial_ai/market_data/sources/positions.py` (FR-017, FR-039, FR-020d)
+- [X] T044 [US3] Переименование бумаги: ведение псевдонимов с датами и отнесение новых наблюдений к прежней сущности в `backend/src/financial_ai/market_data/links.py` и `sources/equity_d1.py` (FR-038)
+- [X] T045 [US3] Потеря соответствия у бумаги с историей позиций — неуспех источника с причиной в `backend/src/financial_ai/market_data/sources/positions.py` (FR-020a)
+- [X] T046 [US3] События связей в журнале прогонов и в ответе состояния в `backend/src/financial_ai/market_data/journal.py`
 
 **Checkpoint**: изменение состава инструментов перестаёт быть тихим.
 

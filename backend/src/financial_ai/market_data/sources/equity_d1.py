@@ -49,9 +49,14 @@ async def sync_equity_daily(
     """Собрать котировки всех бумаг за одну торговую сессию.
 
     Одно обращение к бирже, а не одно на бумагу.
+
+    Переименованная бумага остаётся прежней сущностью: наблюдение под новым
+    именем ложится в ряд, опознанный псевдонимом, а не заводит второй ряд с
+    оборванной историей (FR-038).
     """
     rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
-    bars = rows_to_bars(rows, session_date)
+    aliases = await repository.aliases_on(session_date)
+    bars = rows_to_bars(rows, session_date, aliases)
 
     for bar in bars:
         ticker = bar.asset_id.removeprefix(ASSET_PREFIX)
@@ -63,12 +68,21 @@ async def sync_equity_daily(
     return written
 
 
-def rows_to_bars(rows: list[dict[str, object]], session_date: dt.date) -> list[DailyBar]:
+def rows_to_bars(
+    rows: list[dict[str, object]],
+    session_date: dt.date,
+    aliases: dict[str, str] | None = None,
+) -> list[DailyBar]:
     """Преобразовать ответ биржи в наблюдения.
 
     Строка без тикера пропускается: она ни к чему не относится. Строка без
     цен сохраняется с ``None`` — отсутствие наблюдения это факт, а не ноль.
+
+    ``aliases`` отображает действующее имя бумаги на её сущность. Без него
+    переименование выглядело бы появлением новой бумаги, а прежний ряд — как
+    ушедшая с торгов.
     """
+    known = aliases or {}
     bars: list[DailyBar] = []
     seen: set[str] = set()
 
@@ -86,10 +100,13 @@ def rows_to_bars(rows: list[dict[str, object]], session_date: dt.date) -> list[D
             continue
         seen.add(ticker)
 
+        asset_id = known.get(ticker, asset_id_for(ticker))
+        series_id = asset_id.replace(ASSET_PREFIX, SERIES_PREFIX, 1)
+
         bars.append(
             DailyBar(
-                asset_id=asset_id_for(ticker),
-                price_series_id=price_series_id_for(ticker),
+                asset_id=asset_id,
+                price_series_id=series_id,
                 session_date=session_date,
                 open=to_decimal(row.get("OPEN")),
                 high=to_decimal(row.get("HIGH")),

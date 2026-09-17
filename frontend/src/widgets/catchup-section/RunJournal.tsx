@@ -8,7 +8,7 @@
  * после перезапуска (FR-005).
  */
 
-import type { RunSummaryDto } from '@/entities/market-data';
+import type { LinkEventDto, RunSummaryDto } from '@/entities/market-data';
 import { formatShortStamp } from '@/shared/lib/market-format';
 
 const MODE: Record<string, string> = { daily: 'авто', manual: 'ручной' };
@@ -26,8 +26,15 @@ function sessionsLine(run: RunSummaryDto): string {
   return parts.join(' · ');
 }
 
-export function RunJournal({ runs }: { runs: RunSummaryDto[] }) {
-  if (runs.length === 0) return null;
+export function RunJournal({
+  runs,
+  events = [],
+}: {
+  runs: RunSummaryDto[];
+  /** Изменения состава инструментов: появление, смена и исчезновение фьючерса. */
+  events?: LinkEventDto[];
+}) {
+  if (runs.length === 0 && events.length === 0) return null;
 
   return (
     <details className="run-journal" data-od-id="run-journal">
@@ -50,6 +57,28 @@ export function RunJournal({ runs }: { runs: RunSummaryDto[] }) {
           </li>
         ))}
       </ol>
+
+      {events.length > 0 && (
+        <>
+          {/*
+            Изменение состава инструментов названо отдельно от прогонов: без
+            этого рост или убыль числа собранных бумаг выглядели бы пропуском
+            сбора, а не появлением и исчезновением инструментов (FR-016).
+          */}
+          <p className="journal-heading">Состав инструментов</p>
+          <ol>
+            {events.map((event) => (
+              <li key={`${event.at}-${event.ticker}`}>
+                <span className="mono">{formatShortStamp(event.at)}</span>
+                <span>{event.ticker}</span>
+                <span className={`journal-outcome${event.kind === 'closed' ? ' error' : ''}`}>
+                  {event.detail}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
     </details>
   );
 }

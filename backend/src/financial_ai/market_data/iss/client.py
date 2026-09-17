@@ -236,6 +236,32 @@ class IssClient:
                 isins[ticker.strip().upper()] = isin.strip().upper()
         return isins
 
+    async def fetch_emitter_id(self, secid: str) -> str | None:
+        """Идентификатор эмитента инструмента.
+
+        Единственное поле, которым связь акции и контракта подтверждается
+        независимо от совпадения названий: идентификатора базовой бумаги в
+        описании фьючерса нет вовсе (сверено 2026-09-17, см. PROVENANCE.md).
+        Эмитента мало, чтобы ВЫБРАТЬ бумагу — `SBER` и `SBERP` неразличимы по
+        нему, — поэтому он служит проверкой, а не основанием выбора.
+
+        ``None`` означает «источник поля не дал», а не «эмитенты разные».
+        """
+        payload = await self._get_json(
+            urls.security_description_url(self._config.base_url, secid),
+            {"iss.meta": "off", "iss.only": "description"},
+        )
+        block = payload.get("description") or {}
+        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+        for row in rows:
+            if row.get("name") == "EMITTER_ID":
+                value = row.get("value")
+                if value is None or not str(value).strip():
+                    return None
+                return str(value).strip()
+        return None
+
     async def fetch_index_analytics(
         self, index_id: str, session_date: str | None = None
     ) -> list[dict[str, Any]]:

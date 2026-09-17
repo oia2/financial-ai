@@ -216,6 +216,7 @@ export function MarketDataPage() {
         <CatchupSection
           state={catchup.data}
           runs={runs.data?.runs ?? []}
+          events={runs.data?.events ?? []}
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
           emptyStorage={emptyStorage}

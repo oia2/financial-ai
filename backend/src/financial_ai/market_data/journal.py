@@ -20,7 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.market_data import plan
-from financial_ai.market_data.models import IngestRun, SessionSkip
+from financial_ai.market_data.models import AssetFuturesLink, IngestRun, SessionSkip
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,80 @@ class RunSummary:
             },
             "failures": [failure.to_dict() for failure in self.failures],
         }
+
+
+@dataclass(slots=True)
+class LinkChange:
+    """Изменение состава инструментов, увиденное сбором."""
+
+    at: dt.datetime
+    ticker: str
+    kind: str
+    contract_code: str
+    detail: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "at": self.at.isoformat(),
+            "ticker": self.ticker,
+            "kind": self.kind,
+            "contract_code": self.contract_code,
+            "detail": self.detail,
+        }
+
+
+async def recent_link_events(session: AsyncSession, limit: int = 10) -> list[LinkChange]:
+    """Последние изменения связей бумаг и контрактов.
+
+    **Отдельной таблицы событий нет намеренно.** События — это и есть интервалы
+    связи: первый интервал бумаги означает появление фьючерса, следующий —
+    смену семейства, закрытый без продолжения — исчезновение инструмента.
+    Вторая запись того же факта однажды разошлась бы с первой (FR-016).
+    """
+    limit = max(1, min(limit, 50))
+
+    rows = (
+        await session.execute(
+            select(AssetFuturesLink).order_by(AssetFuturesLink.recorded_at.desc()).limit(limit)
+        )
+    ).scalars()
+
+    links = list(rows)
+    if not links:
+        return []
+
+    first_rows = (
+        await session.execute(
+            select(
+                AssetFuturesLink.asset_id,
+                func.min(AssetFuturesLink.valid_from).label("valid_from"),
+            )
+            .where(AssetFuturesLink.asset_id.in_({row.asset_id for row in links}))
+            .group_by(AssetFuturesLink.asset_id)
+        )
+    ).all()
+    firsts: dict[str, dt.date] = {row.asset_id: row.valid_from for row in first_rows}
+
+    events: list[LinkChange] = []
+    for row in links:
+        ticker = row.asset_id.removeprefix("EQ_AST_")
+        if row.valid_till is not None and row.valid_till < row.valid_from:
+            # Интервал закрыт тем же днём, каким открыт: контракта не стало.
+            kind, detail = "closed", f"контракта {row.contract_code} больше нет"
+        elif firsts.get(row.asset_id) == row.valid_from:
+            kind, detail = "opened", f"появился фьючерс {row.contract_code}"
+        else:
+            kind, detail = "changed", f"контракт сменился на {row.contract_code}"
+        events.append(
+            LinkChange(
+                at=row.recorded_at,
+                ticker=ticker,
+                kind=kind,
+                contract_code=row.contract_code,
+                detail=detail,
+            )
+        )
+    return events
 
 
 async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]:

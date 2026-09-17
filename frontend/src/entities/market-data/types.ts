@@ -197,8 +197,23 @@ export interface RunSummaryDto {
   }[];
 }
 
+/**
+ * Изменение состава инструментов.
+ *
+ * Без него рост или убыль числа собранных бумаг выглядели бы пропуском сбора
+ * (FR-016).
+ */
+export interface LinkEventDto {
+  at: string;
+  ticker: string;
+  kind: 'opened' | 'changed' | 'closed';
+  contract_code: string;
+  detail: string;
+}
+
 export interface RunsDto {
   runs: RunSummaryDto[];
+  events: LinkEventDto[];
 }
 
 export interface CatchupStartResultDto {

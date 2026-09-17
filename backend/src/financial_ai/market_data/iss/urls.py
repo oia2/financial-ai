@@ -137,3 +137,14 @@ def index_titles_url(base_url: str) -> str:
     Нужен секторам: название сектора — это имя отраслевого индекса.
     """
     return f"{base_url.rstrip('/')}/statistics/engines/stock/markets/index/analytics.json"
+
+
+def security_description_url(base_url: str, secid: str) -> str:
+    """Адрес описания инструмента.
+
+    Общий раздел, не привязанный к рынку: один и тот же адрес отвечает и по
+    акции, и по фьючерсной серии. Отсюда берётся идентификатор эмитента —
+    единственное поле, которым связь акции и контракта подтверждается
+    независимо от совпадения названий (сверено 2026-09-17, см. PROVENANCE.md).
+    """
+    return f"{base_url.rstrip('/')}/securities/{secid.strip().upper()}.json"
