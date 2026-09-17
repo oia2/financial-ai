@@ -76,6 +76,41 @@ def build_request(dataset: Dataset) -> dict[str, object]:
     }
 
 
+async def fetch_model_identity(
+    settings: Settings, client: httpx.AsyncClient | None = None
+) -> tuple[str, str] | None:
+    """Спросить звено, кто оно.
+
+    Версия модели входит в ключ идемпотентности, поэтому нужна ДО запроса
+    ранжирования: без неё нельзя решить, выполнялась ли уже эта работа.
+
+    Спрашивать честнее, чем держать имя модели в конфигурации платформы: два
+    объявления одного факта однажды разойдутся, и расхождение будет молчаливым.
+    `None` означает «звено не ответило» — это не ошибка, а состояние.
+    """
+    url = f"{settings.daily_ml_url.rstrip('/')}/health"
+
+    owns_client = client is None
+    http = client or httpx.AsyncClient(timeout=settings.daily_ml_timeout_seconds)
+    try:
+        response = await http.get(url)
+        if response.status_code != httpx.codes.OK:
+            return None
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    finally:
+        if owns_client:
+            await http.aclose()
+
+    model_id = body.get("model_id")
+    model_version = body.get("model_version")
+    if not isinstance(model_id, str) or not isinstance(model_version, str):
+        return None
+
+    return model_id, model_version
+
+
 async def request_ranking(
     settings: Settings, dataset: Dataset, client: httpx.AsyncClient | None = None
 ) -> Ranking:

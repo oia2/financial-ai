@@ -2,18 +2,20 @@
 
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 
-import { apiDelete, apiGet, apiPost } from '@/shared/api/client';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/shared/api/client';
 
 import {
   isCatchupActive,
   type CatchupStartResultDto,
   type CatchupStateDto,
+  type CollectionSettingsDto,
   type CoverageDto,
   type LaunchRequest,
 } from './types';
 
 export const coverageQueryKey = ['market-data', 'coverage'] as const;
 export const catchupQueryKey = ['market-data', 'catchup'] as const;
+export const collectionQueryKey = ['market-data', 'settings'] as const;
 
 /**
  * Частота чтения состояния прогона.
@@ -44,6 +46,35 @@ export function startCatchup(request: LaunchRequest): Promise<CatchupStartResult
 
 export function stopCatchup(): Promise<{ status: string; current: string | null }> {
   return apiDelete<{ status: string; current: string | null }>('/api/market-data/catchup');
+}
+
+export function fetchCollectionSettings(): Promise<CollectionSettingsDto> {
+  return apiGet<CollectionSettingsDto>('/api/market-data/settings');
+}
+
+export function setCollectionPaused(paused: boolean): Promise<CollectionSettingsDto> {
+  return apiPut<CollectionSettingsDto>('/api/market-data/settings', { paused });
+}
+
+/**
+ * Идёт ли автоматический сбор.
+ *
+ * Состояние живёт в процессе сборщика и перезапуск его снимает, поэтому оно
+ * читается с сервера, а не запоминается экраном: после перезапуска сбор снова
+ * идёт, и показывать «остановлено» по факту прошлого нажатия было бы неправдой
+ * (FR-029f).
+ */
+export function useCollectionSettings(): UseQueryResult<CollectionSettingsDto> {
+  return useQuery({ queryKey: collectionQueryKey, queryFn: fetchCollectionSettings });
+}
+
+export function useSetCollectionPaused() {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationFn: setCollectionPaused,
+    onSuccess: () => client.invalidateQueries({ queryKey: collectionQueryKey }),
+  });
 }
 
 export function useCoverage(): UseQueryResult<CoverageDto> {

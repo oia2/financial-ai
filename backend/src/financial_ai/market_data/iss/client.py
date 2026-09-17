@@ -177,6 +177,39 @@ class IssClient:
             totals[code.strip().upper()] = totals.get(code.strip().upper(), 0) + int(value or 0)
         return totals
 
+    async def fetch_equity_lot_sizes(self) -> dict[str, int]:
+        """Размеры лотов бумаг доски.
+
+        Лот нужен плану портфеля: на бирже торгуют лотами, и план в дробных
+        акциях неисполним. Входом модели он не является, поэтому его отсутствие
+        не делает дату неготовой.
+        """
+        payload = await self._get_json(
+            urls.equity_securities_url(self._config.base_url, self._config.board),
+            {"iss.meta": "off", "iss.only": "securities"},
+        )
+        block = payload.get("securities") or {}
+        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+        lots: dict[str, int] = {}
+        for row in rows:
+            ticker = row.get("SECID")
+            value = row.get("LOTSIZE")
+            if not isinstance(ticker, str) or not ticker.strip():
+                continue
+            if value is None:
+                continue
+            try:
+                lot = int(value)
+            except (TypeError, ValueError):
+                # Отсутствующий лот пропускается, а не подменяется единицей:
+                # выдуманный лот дал бы неисполнимый план, а прочерк честен.
+                continue
+            if lot > 0:
+                lots[ticker.strip().upper()] = lot
+
+        return lots
+
     async def fetch_index_analytics(
         self, index_id: str, session_date: str | None = None
     ) -> list[dict[str, Any]]:

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -47,7 +48,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = load_settings()
     logging.basicConfig(level=settings.log_level.upper())
     app.state.settings = settings
-    logger.info("эмулятор готов, модель %s", settings.daily_ml_emulator_model_id)
+    logger.info(
+        "эмулятор готов, модель %s версии %s, задержка %.1f с",
+        settings.daily_ml_emulator_model_id,
+        settings.daily_ml_emulator_model_version,
+        settings.daily_ml_emulator_latency_seconds,
+    )
     yield
 
 
@@ -137,6 +143,10 @@ class RankingResponse(BaseModel):
 
     asof_date: date = Field(description="Дата решения из запроса")
     model_id: str = Field(description="Идентификатор модели, выдавшей ранжирование")
+    model_version: str = Field(
+        description="Версия модели. Входит в идентичность прогона наравне с датой решения "
+        "и дайджестом набора"
+    )
     input_digest: str = Field(
         description="Дайджест набора из запроса, повторённый в ответе: делает пару "
         "«запрос — ответ» сопоставимой постфактум"
@@ -152,9 +162,17 @@ class RankingResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Готовность принимать запросы."""
+    """Готовность принимать запросы и идентичность модели.
+
+    Идентичность сообщается здесь потому, что платформе она нужна ДО запроса:
+    версия входит в ключ идемпотентности прогона, и без неё нельзя решить,
+    выполнялась ли уже эта работа. Спрашивать звено честнее, чем дублировать
+    его имя в конфигурации платформы и надеяться, что они не разойдутся.
+    """
 
     status: str
+    model_id: str
+    model_version: str
 
 
 def get_settings(request: Request) -> Settings:
@@ -176,9 +194,15 @@ def get_settings(request: Request) -> Settings:
         "модель будет: тогда часть переданных активов может оказаться в `excluded`."
     ),
 )
-def post_rankings(payload: RankingRequest, request: Request) -> RankingResponse:
+async def post_rankings(payload: RankingRequest, request: Request) -> RankingResponse:
     """Собрать ответ по правилу из `ranking.py`."""
     settings = get_settings(request)
+
+    # Имитация длительности инференса. Настоящая модель будет занята здесь
+    # вычислением; эмулятору вычислять нечего, но состояние «выполняется»
+    # должно быть наблюдаемо — иначе оркестрация проходит его незаметно.
+    if settings.daily_ml_emulator_latency_seconds > 0:
+        await asyncio.sleep(settings.daily_ml_emulator_latency_seconds)
 
     entries = entries_from_request(
         [{"asset_id": a.asset_id, "price_series_id": a.price_series_id} for a in payload.assets]
@@ -188,6 +212,7 @@ def post_rankings(payload: RankingRequest, request: Request) -> RankingResponse:
     return RankingResponse(
         asof_date=payload.asof_date,
         model_id=settings.daily_ml_emulator_model_id,
+        model_version=settings.daily_ml_emulator_model_version,
         input_digest=payload.dataset.digest,
         generated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         emulated=True,
@@ -213,9 +238,14 @@ def post_rankings(payload: RankingRequest, request: Request) -> RankingResponse:
     response_model=HealthResponse,
     summary="Готовность принимать запросы",
 )
-def get_health() -> HealthResponse:
+def get_health(request: Request) -> HealthResponse:
     """Проверка живости для healthcheck'а docker compose."""
-    return HealthResponse(status="ok")
+    settings = get_settings(request)
+    return HealthResponse(
+        status="ok",
+        model_id=settings.daily_ml_emulator_model_id,
+        model_version=settings.daily_ml_emulator_model_version,
+    )
 
 
 @app.exception_handler(UniverseError)

@@ -61,6 +61,11 @@ class MarketAsset(Base):
     first_seen_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
     last_seen_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
 
+    # Минимальная партия торгов. NULL — «не получен», а не «единица»: актив без
+    # лота в план портфеля не попадает, и это объясняется, а не подменяется
+    # догадкой. Входом модели лот не является (spec 007).
+    lot_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
 
 class PriceSeries(Base):
     """Сшиваемый ценовой ряд.

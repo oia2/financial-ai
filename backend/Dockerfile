@@ -29,6 +29,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN groupadd --system app && useradd --system --gid app --home /app app
 
+# Каталог наборов создаётся в образе и принадлежит app. Docker берёт владельца
+# именованного тома у каталога образа при первом монтировании: без этой строки
+# том создаётся root'ом, и worker, работающий под app, не может записать набор.
+# Найдено на живом стенде — в тестах и сборке это не проявляется.
+RUN mkdir -p /datasets && chown app:app /datasets
+
 WORKDIR /app
 COPY --from=builder --chown=app:app /app /app
 

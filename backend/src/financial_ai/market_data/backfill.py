@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +96,7 @@ async def backfill_equity(
 
     completed = await repository.tickers_with_history()
     progress = BackfillProgress(completed=completed, total=len(tickers))
+    started = dt.datetime.now(dt.UTC)
 
     for position, ticker in enumerate(tickers, start=1):
         if ticker in completed:
@@ -111,6 +113,11 @@ async def backfill_equity(
             continue
 
         written = await _store_history(repository, ticker, rows)
+        # Первичная загрузка записывает свой исход наравне с остальным сбором.
+        # Не ради отчётности: по этой таблице отвечают на вопрос «собиралось ли
+        # что-нибудь после такого-то момента», и молчаливая запись мимо неё
+        # означала бы «ничего не собирали» при переписанной истории.
+        await _record_backfill(repository, ticker, written, started)
         await session.commit()
 
         completed.add(ticker)
@@ -123,6 +130,22 @@ async def backfill_equity(
         )
 
     return progress
+
+
+async def _record_backfill(
+    repository: MarketDataRepository, ticker: str, written: int, started: dt.datetime
+) -> None:
+    """Записать исход первичной загрузки одной бумаги."""
+    await repository.record_run(
+        run_id=str(uuid.uuid4()),
+        source_id=equity_d1.SOURCE_ID,
+        status="ok",
+        started_at=started,
+        finished_at=dt.datetime.now(dt.UTC),
+        session_date=None,
+        rows_written=written,
+        trigger="backfill",
+    )
 
 
 async def _store_history(

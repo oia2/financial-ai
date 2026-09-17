@@ -10,12 +10,13 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Импорт ради регистрации таблиц в Base.metadata: без него autogenerate их не
+# увидит.
+import financial_ai.market_data.models
 from financial_ai.config import get_settings
 from financial_ai.db.models import Base
 
-# Импорт ради регистрации таблиц рыночных данных в Base.metadata: без него
-# autogenerate их не увидит.
-import financial_ai.market_data.models  # noqa: F401  isort:skip
+import financial_ai.daily_ml.models  # noqa: F401  isort:skip
 
 config = context.config
 

@@ -13,8 +13,26 @@ DIGEST = "sha256:9f2c00000000000000000000000000000000000000000000000000000000abc
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    """Клиент приложения. Вселенная больше не конфигурируется."""
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """Клиент приложения. Вселенная больше не конфигурируется.
+
+    Задержка выключена: она существует, чтобы состояние «выполняется» было
+    наблюдаемо в оркестрации, и проверяется отдельным тестом. Держать её во
+    всех остальных значило бы платить секундами за каждый запрос.
+    """
+    monkeypatch.setenv("DAILY_ML_EMULATOR_LATENCY_SECONDS", "0")
+
+    from daily_ml_emulator.app import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def slow_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """Клиент с заметной задержкой ответа."""
+    monkeypatch.setenv("DAILY_ML_EMULATOR_LATENCY_SECONDS", "0.3")
+
     from daily_ml_emulator.app import app
 
     with TestClient(app) as test_client:

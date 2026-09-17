@@ -184,3 +184,48 @@ describe('сводка полноты', () => {
     expect(within(panel as HTMLElement).getByText(/первичная загрузка/)).toBeInTheDocument();
   });
 });
+
+describe('остановка сбора', () => {
+  it('переключает сбор и говорит, что ранжирования это не касается', async () => {
+    let paused = false;
+    server.use(
+      http.get('*/api/market-data/settings', () => HttpResponse.json({ paused })),
+      http.put('*/api/market-data/settings', async ({ request }) => {
+        const body = (await request.json()) as { paused: boolean };
+        paused = body.paused;
+        return HttpResponse.json({ paused });
+      }),
+    );
+
+    renderMarketData();
+
+    // FR-029e: подпись называет АВТОСБОР, а не «сбор». «Остановить сбор»
+    // читалось как остановка уже идущего прогона, чем кнопка не является: она
+    // выключает автоматический режим, а начатую сессию доводит до конца.
+    const button = await screen.findByRole('button', {
+      name: 'Поставить автоматический сбор данных на паузу',
+    });
+    expect(button).toHaveTextContent('Пауза автосбора');
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+
+    await userEvent.click(button);
+
+    const resumed = await screen.findByRole('button', {
+      name: 'Возобновить автоматический сбор данных',
+    });
+    expect(resumed).toHaveTextContent('Возобновить автосбор');
+    expect(resumed).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('после перезапуска сборщика показывает, что сбор снова идёт', async () => {
+    // Состояние живёт в процессе сборщика: перезапуск возвращает сбор, и экран
+    // обязан читать это с сервера, а не помнить прошлое нажатие (FR-029f).
+    server.use(http.get('*/api/market-data/settings', () => HttpResponse.json({ paused: false })));
+
+    renderMarketData();
+
+    expect(
+      await screen.findByRole('button', { name: 'Поставить автоматический сбор данных на паузу' }),
+    ).toBeInTheDocument();
+  });
+});

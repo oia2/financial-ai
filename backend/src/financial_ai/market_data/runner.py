@@ -252,6 +252,11 @@ class CatchupRunner:
         self._state.failed = list(result.failed)
         self._state.current = None
         self._state.finished_at = dt.datetime.now(dt.UTC)
+
+        # Догон закрыл дыры — у ранжирования могла появиться работа. Ставится
+        # ТОЛЬКО последняя готовая дата: исторические заданиями не становятся,
+        # иначе один клик по догону породил бы сотни обращений к модели.
+        await self._reconcile_daily_ml()
         self._state.status = (
             CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
         )
@@ -262,6 +267,22 @@ class CatchupRunner:
             len(result.closed),
             len(self._state.requested),
         )
+
+    async def _reconcile_daily_ml(self) -> None:
+        """Сообщить ранжированию, что данные могли стать готовы.
+
+        Импорт локальный: сбор не должен зависеть от звена ранжирования — оно
+        может отсутствовать, и это не мешает собирать.
+        """
+        from financial_ai.daily_ml import reconcile as daily_ml_reconcile
+
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                await daily_ml_reconcile.reconcile(session, self._settings)
+        except Exception:
+            # Сбой ранжирования не отменяет собранное: данные уже записаны.
+            logger.exception("реконсиляция ранжирования после догона не выполнена")
 
     def _on_session_start(self, day: dt.date) -> None:
         self._state.current = day

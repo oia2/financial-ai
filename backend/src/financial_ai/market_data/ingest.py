@@ -35,6 +35,7 @@ from financial_ai.market_data.sources import (
     global_series,
     positions,
     reference,
+    securities,
     trading_calendar,
 )
 from financial_ai.market_data.sources.positions_client import PositionsClient
@@ -145,7 +146,7 @@ async def ingest_session(
 
     try:
         # Шаг 1: календарь. До него неизвестно, была ли сессия вообще.
-        calendar_outcome = await _run_source(
+        calendar_outcome = await run_source(
             repository,
             run_id,
             trading_calendar.SOURCE_ID,
@@ -180,7 +181,7 @@ async def ingest_session(
 
         # Шаг 2: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
-        quotes_outcome = await _run_source(
+        quotes_outcome = await run_source(
             repository,
             run_id,
             equity_d1.SOURCE_ID,
@@ -209,6 +210,10 @@ async def ingest_session(
                 reference.CONSTITUENTS_SOURCE_ID,
                 lambda: reference.sync_index_constituents(iss, repository, session_date),
             ),
+            (
+                securities.SOURCE_ID,
+                lambda: securities.sync_lot_sizes(iss, repository),
+            ),
             (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
             (cbr.SOURCE_ID, lambda: _sync_cbr(repository, session_date, cbr_client)),
             (
@@ -216,7 +221,7 @@ async def ingest_session(
                 lambda: _sync_dividends(repository, session_date, broker_client),
             ),
         ):
-            outcome = await _run_source(repository, run_id, source_id, session_date, action)
+            outcome = await run_source(repository, run_id, source_id, session_date, action)
             result.outcomes.append(outcome)
             await session.commit()
 
@@ -297,6 +302,21 @@ async def catch_up(
         result.requested = list(report.missing_sessions)
     else:
         result.requested = list(sessions)
+
+    # Незакрытая сессия не собирается и по команде человека (FR-029b). Правило
+    # жило только в автоматическом пути, и кнопка могла забрать сегодняшний день
+    # посреди торгов: дневные бары внутри сессии ещё меняются, а незавершённая
+    # сессия в признаках модели — утечка будущего. Диапазон при этом не
+    # отвергается целиком: собирается всё закрытое, а сегодняшнее ждёт вечера.
+    from financial_ai.market_data.advance import session_is_closed
+
+    withheld = [day for day in result.requested if not session_is_closed(day, settings)]
+    if withheld:
+        logger.info(
+            "догон: сессий отложено до закрытия — %s",
+            ", ".join(str(day) for day in withheld),
+        )
+        result.requested = [day for day in result.requested if day not in set(withheld)]
 
     if not result.requested:
         return result
@@ -431,7 +451,7 @@ async def _catch_up_session(
         # прогоне не запрашивается: обращения к нему заведомо не приносят данных.
         if not health.is_open(source_id):
             continue
-        outcome = await _run_source(
+        outcome = await run_source(
             repository, run_id, source_id, session_date, action, trigger=TRIGGER_CATCHUP
         )
         health.record(source_id, outcome.status != STATUS_FAILED)
@@ -458,7 +478,7 @@ async def _catch_up_ranges(
     if source_ids is not None and global_series.SOURCE_ID not in source_ids:
         return
 
-    await _run_source(
+    await run_source(
         repository,
         run_id,
         global_series.SOURCE_ID,
@@ -466,7 +486,7 @@ async def _catch_up_ranges(
         lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
         trigger=TRIGGER_CATCHUP,
     )
-    await _run_source(
+    await run_source(
         repository,
         run_id,
         cbr.SOURCE_ID,
@@ -602,7 +622,7 @@ async def _run_delayed_source(
     """
     outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason="не выполнялся")
     for attempt in range(1, DELAYED_SOURCE_ATTEMPTS + 1):
-        outcome = await _run_source(repository, run_id, source_id, session_date, action)
+        outcome = await run_source(repository, run_id, source_id, session_date, action)
         if outcome.status == STATUS_OK:
             return outcome
         logger.info(
@@ -614,7 +634,7 @@ async def _run_delayed_source(
     return outcome
 
 
-async def _run_source(
+async def run_source(
     repository: MarketDataRepository,
     run_id: str,
     source_id: str,

@@ -116,7 +116,7 @@ GROUPS: tuple[SourceGroup, ...] = (
     SourceGroup(
         group_id=GroupId.REFERENCE,
         title="справочники",
-        source_ids=("equity_sectors",),
+        source_ids=("equity_sectors", "equity_lot_sizes"),
         model=AssetSector,
         session_column=None,
         value_columns=("sector",),
@@ -144,6 +144,18 @@ def resolve(raw: list[str] | None) -> tuple[SourceGroup, ...]:
             raise UnknownGroupError(f"неизвестная группа {name!r}; известны: {known}") from error
         resolved.append(BY_ID[group_id])
     return tuple(resolved)
+
+
+def required(settings: Settings) -> tuple[SourceGroup, ...]:
+    """Группы, входящие в обязательный вход модели.
+
+    Перечень — конфигурация, а не константа кода: состав входа определяет
+    модель, и он меняется без нас. Живёт здесь, а не рядом с расчётом
+    готовности, потому что спрашивают его двое — готовность и сбор, — а второе
+    объявление одного факта однажды разойдётся с первым.
+    """
+    wanted = {name.strip() for name in settings.daily_ml_required_data_groups if name.strip()}
+    return tuple(group for group in GROUPS if group.group_id.value in wanted)
 
 
 def source_ids_for(groups: tuple[SourceGroup, ...]) -> frozenset[str]:

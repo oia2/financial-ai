@@ -4,9 +4,18 @@
 дневные бары внутри сессии не меняются, и опрашивать биржу чаще нечего, а
 раньше закрытия — опасно, незавершённая сессия в признаках это утечка будущего.
 
-Планировщик просыпается регулярно и проверяет два условия: наступило ли время
-после закрытия и не собрана ли уже эта сессия. Такой способ переживает
-перезапуск контейнера в любой момент суток — в отличие от «поспать до 19:30».
+Остановка сбора устроена как пауза ранжирования: состояние живёт в процессе,
+по умолчанию сбор включён, перезапуск возвращает его в работу (FR-029f). Это
+РАЗНЫЕ переключатели — пауза ранжирования сбор данных не останавливает и
+никогда не останавливала (FR-029e). Управляемый догон остановке не подчиняется:
+это явная команда человека, и она сильнее общего выключателя (FR-029g).
+
+Планировщик просыпается регулярно и спрашивает у **хранилища**, есть ли
+несобранные закрытые сессии. Раньше он помнил это в памяти процесса, и память
+давала два дефекта сразу: перезапуск после времени сбора приводил к повторному
+сбору той же сессии, а неудачная попытка блокировала повтор до следующего дня.
+Нужное состояние уже хранится — таблица исходов сбора знает и дату, и источник,
+и статус.
 """
 
 from __future__ import annotations
@@ -17,8 +26,9 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import ingest
+from financial_ai.market_data import advance, groups
 from financial_ai.market_data.calendar import moscow_now
+from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +45,48 @@ class MarketDataScheduler:
         self._tick_seconds = tick_seconds
         self._task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
-        self._last_ingested_date: dt.date | None = None
+        self._paused = False
+        # Ход работы в той же форме, что у управляемого догона. Форма общая
+        # намеренно: баннер процессов читает одно поле, и второй способ
+        # рассказать об одном и том же однажды разошёлся бы с первым.
+        self._state = CatchupState()
+        self._stop_requested = False
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def request_stop(self) -> CatchupState:
+        """Остановить идущий автоматический сбор.
+
+        Мягко: текущая сессия доводится до конца, следующая не начинается. Это
+        остановка ОДНОГО прогона, а не выключение автоматического режима — для
+        второго есть пауза, и путать их нельзя: остановленный прогон возобновится
+        на следующем тике, снятая пауза — нет.
+        """
+        if self._state.status is CatchupStatus.RUNNING:
+            self._stop_requested = True
+            self._state.status = CatchupStatus.STOPPING
+            logger.info("автоматический сбор: запрошена остановка")
+        return self._state
+
+    @property
+    def state(self) -> CatchupState:
+        """Ход автоматического сбора: та же форма, что у управляемого догона."""
+        return self._state
+
+    def set_paused(self, paused: bool) -> None:
+        """Остановить или возобновить автоматический сбор.
+
+        Останавливается создание НОВОЙ работы: начатая сессия доводится до конца,
+        обрывать её на середине нельзя — день, собранный наполовину, неотличим от
+        собранного полностью.
+        """
+        self._paused = paused
+        logger.info(
+            "автоматический сбор рыночных данных %s",
+            "остановлен" if paused else "возобновлён",
+        )
 
     async def start(self) -> None:
         if not self._settings.market_data_enabled:
@@ -53,8 +104,7 @@ class MarketDataScheduler:
     async def _loop(self) -> None:
         while not self._stopping.is_set():
             try:
-                if self._is_time_to_ingest(moscow_now()):
-                    await self._ingest_once()
+                await self._ingest_once()
             except Exception:
                 logger.exception("сбор рыночных данных: прогон завершился ошибкой")
 
@@ -63,39 +113,104 @@ class MarketDataScheduler:
             except TimeoutError:
                 continue
 
-    def _is_time_to_ingest(self, now: dt.datetime) -> bool:
-        """Наступило ли время после закрытия сессии."""
-        after = self._parse_time(self._settings.market_data_ingest_after_close)
-        if now.time() < after:
-            return False
-        # Одна сессия — один сбор. Повторный прогон в тот же день не нужен:
-        # дневные бары уже не изменятся.
-        return self._last_ingested_date != now.date()
-
-    @staticmethod
-    def _parse_time(raw: str) -> dt.time:
-        try:
-            hours, minutes = raw.split(":", 1)
-            return dt.time(int(hours), int(minutes))
-        except (ValueError, IndexError):
-            logger.warning("некорректное время запуска %r, используется 19:30", raw)
-            return dt.time(19, 30)
-
     async def _ingest_once(self) -> None:
+        """Довести данные до последней закрытой сессии.
+
+        Работа целиком в `advance`, и это не косвенность, а необходимость. Три
+        вещи там неразделимы:
+
+        - **календарь синхронизируется.** Пропуски считаются по сохранённому
+          календарю, и пока он не обновлён, новых дат в нём нет, работы не
+          видно и календарь не обновится. Прежняя версия звала только
+          `pending_sessions` и на этом круге останавливалась: после простоя
+          граница данных не двигалась вовсе;
+        - **решение принимается по хранилищу**, а не по отметке в памяти:
+          перезапуск не приводит к повторному сбору, а неудачная попытка не
+          блокирует следующую в тот же день;
+        - **разрыв собирается целиком за один проход.** Не «по три сессии за
+          тик»: нарезка — тот же автоматический догон, только растянутый на
+          несколько минут, и человек о нём не просил. Глубина ограничена окном
+          догона — дальше сессия до модели не доходит. Если предел всё же задан
+          числом и разрыв его превысил, не собирается ничего, и дыра уходит
+          человеку.
+        """
+        if self._paused:
+            return
+
+        self._stop_requested = False
+
+        def plan(days: list[dt.date]) -> None:
+            # Состояние заводится, только когда работа действительно есть:
+            # пустой план — обычный тик, и показывать по нему «идёт сбор»
+            # значило бы мигать баннером 1438 раз в сутки.
+            if not days:
+                return
+            self._state = CatchupState(
+                status=CatchupStatus.RUNNING,
+                # Автоматический сбор идёт ПО ВСЕМ группам: `ingest_session`
+                # собирает каждый источник за дату. Пустой список читался экраном
+                # как «позиций тут нет», и он показывал оценку «котировки, 1–2 с
+                # на сессию», пока на деле шли позиции по фьючерсам — около
+                # 2,5 минуты на сессию. Обещание расходилось с работой в сто раз.
+                group_ids=[group.group_id.value for group in groups.GROUPS],
+                requested=list(days),
+                date_from=days[0],
+                date_till=days[-1],
+                started_at=dt.datetime.now(dt.UTC),
+            )
+
+        def session_start(day: dt.date) -> None:
+            self._state.current = day
+
+        def session_done(day: dt.date, succeeded: bool) -> None:
+            (self._state.closed if succeeded else self._state.failed).append(day)
+            self._state.current = None
+
         factory = get_session_factory()
         async with factory() as session:
-            result = await ingest.ingest_session(session, self._settings)
-
-        # Отметка ставится независимо от исхода: повторять неудачный прогон
-        # в тот же день бессмысленно, если биржа лежит. Следующая попытка —
-        # на следующей сессии либо вручную.
-        self._last_ingested_date = moscow_now().date()
-
-        if result.unfinished_sources:
-            logger.warning(
-                "сбор за %s: незакрытые источники %s",
-                result.session_date,
-                ", ".join(result.unfinished_sources),
+            result = await advance.advance(
+                session,
+                self._settings,
+                moscow_now(),
+                on_plan=plan,
+                on_session_start=session_start,
+                on_session_done=session_done,
+                should_stop=lambda: self._stop_requested,
             )
-        else:
-            logger.info("сбор за %s завершён", result.session_date)
+
+        if self._state.status in (CatchupStatus.RUNNING, CatchupStatus.STOPPING):
+            self._state.status = (
+                CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
+            )
+            self._state.finished_at = dt.datetime.now(dt.UTC)
+        self._stop_requested = False
+
+        if result.limit_exceeded:
+            # Разрыв показан человеку — в сводке раздела и в состоянии
+            # ранжирования — и закрывается управляемым догоном.
+            return
+
+        for day in result.pending:
+            logger.warning("сессия %s не собрана полностью", day)
+
+        # Данные за сессию собраны — самое время посмотреть, не появилась ли
+        # работа у ранжирования. Ждать тика незачем.
+        if result.collected:
+            logger.info("сбор завершён за сессии: %s", ", ".join(str(d) for d in result.collected))
+            await self._reconcile_daily_ml()
+
+    async def _reconcile_daily_ml(self) -> None:
+        """Сообщить ранжированию, что данные могли стать готовы.
+
+        Импорт локальный: сбор данных не должен зависеть от звена ранжирования —
+        оно может отсутствовать, и это не мешает собирать.
+        """
+        from financial_ai.daily_ml import reconcile as daily_ml_reconcile
+
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                await daily_ml_reconcile.reconcile(session, self._settings)
+        except Exception:
+            # Сбой ранжирования не отменяет собранные данные: они уже записаны.
+            logger.exception("реконсиляция ранжирования после сбора не выполнена")

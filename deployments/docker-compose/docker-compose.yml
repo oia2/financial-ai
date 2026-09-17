@@ -61,7 +61,28 @@ services:
       MARKET_DATA_POSITIONS_WINDOW_SESSIONS: ${MARKET_DATA_POSITIONS_WINDOW_SESSIONS:-82}
       MARKET_DATA_DATASET_ROOT: /datasets
       MARKET_DATA_DATASET_RETENTION_DAYS: ${MARKET_DATA_DATASET_RETENTION_DAYS:-30}
+      # Предел восстановления при старте: глубокий разрыв данных чинится
+      # управляемым догоном, а не лавиной запросов к бирже при запуске.
+      # 0 — без предела: разрыв догоняется на всю глубину окна догона.
+      # Положительное число возвращает предел, и разрыв сверх него не собирается вовсе.
+      MARKET_DATA_STARTUP_RECOVERY_MAX_SESSIONS: ${MARKET_DATA_STARTUP_RECOVERY_MAX_SESSIONS:-0}
+      # Выдержка перед повтором сессии, сбор которой не удался. Без неё тик раз в
+      # минуту даёт шестьдесят обращений в час по одному неотвечающему адресу.
+      MARKET_DATA_RETRY_AFTER_MINUTES: ${MARKET_DATA_RETRY_AFTER_MINUTES:-15}
+      # Предел попыток по одной сессии: источник, недоступный за конкретную дату
+      # по своей природе, иначе перевыбирался бы вечно.
+      MARKET_DATA_SESSION_MAX_ATTEMPTS: ${MARKET_DATA_SESSION_MAX_ATTEMPTS:-5}
       DAILY_ML_URL: ${DAILY_ML_URL:-http://daily-ml-emulator:8000}
+      # Жизненный цикл Daily ML. Обязательные группы данных — перечень, без
+      # полноты которого ранжирование не запускается ни при каких условиях.
+      DAILY_ML_ENABLED: ${DAILY_ML_ENABLED:-true}
+      # Перечень повторяет умолчание из `backend/src/financial_ai/config.py`
+      # намеренно: оператор стенда смотрит сюда, а не в код. Дивидендов в
+      # нём нет — они не признак модели и запрещены как ex-ante.
+      DAILY_ML_REQUIRED_DATA_GROUPS: >-
+        ${DAILY_ML_REQUIRED_DATA_GROUPS:-["quotes","aggregates","global","positions","reference"]}
+      DAILY_ML_MAX_ATTEMPTS: ${DAILY_ML_MAX_ATTEMPTS:-3}
+      DAILY_ML_TICK_SECONDS: ${DAILY_ML_TICK_SECONDS:-60}
     volumes:
       # Неизменяемые наборы входных данных: worker пишет, звено ранжирования
       # читает. Это не хранилище — набор опознан дайджестом и не меняется.
@@ -88,6 +109,13 @@ services:
       - "${DAILY_ML_EMULATOR_PORT:-8100}:8000"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Версия входит в ключ идемпотентности прогона: её меняют вместе с
+      # моделью, а не «для порядка».
+      DAILY_ML_EMULATOR_MODEL_ID: ${DAILY_ML_EMULATOR_MODEL_ID:-daily-ml-emulator}
+      DAILY_ML_EMULATOR_MODEL_VERSION: ${DAILY_ML_EMULATOR_MODEL_VERSION:-emulator-v1}
+      # Имитация длительности инференса. Без неё состояние «выполняется» не
+      # наблюдаемо: прогон проходит его за миллисекунды.
+      DAILY_ML_EMULATOR_LATENCY_SECONDS: ${DAILY_ML_EMULATOR_LATENCY_SECONDS:-2}
     volumes:
       # Только на чтение: набор материализует worker, звено ранжирования его
       # не меняет. Сам эмулятор набор не читает — том смонтирован под будущую

@@ -1,7 +1,9 @@
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
+import { historyFixture, runDetailFixture, runFixture, statusFixture } from './daily-ml';
 import { portfolioFixture } from './fixtures';
+import { planFixture, policiesFixture } from './portfolio-plan';
 import { catchupFixture, coverageFixture } from './market-data';
 
 export const server = setupServer(
@@ -16,6 +18,19 @@ export const server = setupServer(
   ),
   http.get('*/api/market-data/coverage', () => HttpResponse.json(coverageFixture())),
   http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('idle'))),
+  // Сбор по умолчанию идёт: это умолчание сборщика, и тесты видят то же, что
+  // человек на свежем запуске.
+  http.get('*/api/market-data/settings', () => HttpResponse.json({ paused: false })),
+  http.put('*/api/market-data/settings', async ({ request }) =>
+    HttpResponse.json(await request.json()),
+  ),
+  // Оболочка читает состояние ранжирования в любом разделе: без этих ответов
+  // упали бы все тесты, а не только тесты раздела.
+  http.get('*/api/daily-ml/status', () => HttpResponse.json(statusFixture())),
+  http.get('*/api/daily-ml/runs', () => HttpResponse.json(historyFixture([runFixture()]))),
+  http.get('*/api/daily-ml/runs/:id', () => HttpResponse.json(runDetailFixture())),
+  http.get('*/api/portfolio-plan/policies', () => HttpResponse.json(policiesFixture())),
+  http.post('*/api/portfolio-plan', () => HttpResponse.json(planFixture())),
 );
 
 export { http, HttpResponse };

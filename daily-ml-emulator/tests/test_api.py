@@ -25,6 +25,7 @@ def test_response_has_all_contract_fields(client: TestClient) -> None:
     assert set(body) == {
         "asof_date",
         "model_id",
+        "model_version",
         "input_digest",
         "generated_at",
         "emulated",
@@ -218,10 +219,22 @@ def test_get_rankings_is_gone(client: TestClient) -> None:
 # --- служебное ---------------------------------------------------------------
 
 
-def test_health_returns_ok(client: TestClient) -> None:
+def test_health_reports_identity_of_the_model(client: TestClient) -> None:
+    """Здоровье звена сообщает, кто оно.
+
+    Идентичность нужна платформе ДО запроса ранжирования: версия входит в ключ
+    идемпотентности прогона, и без неё нельзя решить, выполнялась ли уже эта
+    работа. Спрашивать звено честнее, чем дублировать его имя в конфигурации
+    платформы и надеяться, что они не разойдутся (spec 007, FR-044).
+    """
     response = client.get("/health")
+
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "ok",
+        "model_id": "daily-ml-emulator",
+        "model_version": "emulator-v1",
+    }
 
 
 def test_openapi_schema_is_served(client: TestClient) -> None:
@@ -306,3 +319,47 @@ def test_incomplete_window_still_ranks_every_asset(client: TestClient) -> None:
     payload = request_body(incomplete=[{"session_date": "2026-08-14", "sources": ["equity_d1"]}])
     body = client.post("/rankings", json=payload).json()
     assert len(body["items"]) == 3
+
+
+# --- идентичность модели и длительность (фича 007) ----------------------------
+
+
+def test_response_carries_model_version(client: TestClient) -> None:
+    """Версия входит в идентичность прогона, поэтому должна приходить в ответе."""
+    body = client.post("/rankings", json=request_body()).json()
+
+    assert body["model_id"] == "daily-ml-emulator"
+    assert body["model_version"] == "emulator-v1"
+
+
+def test_latency_is_respected(slow_client: TestClient) -> None:
+    """Задержка делает состояние «выполняется» наблюдаемым.
+
+    Без неё прогон проходит это состояние за миллисекунды, и оркестрацию на нём
+    не проверить.
+    """
+    import time
+
+    started = time.monotonic()
+    assert slow_client.post("/rankings", json=request_body()).status_code == 200
+    elapsed = time.monotonic() - started
+
+    # Порог чуть ниже настроенных 0,3 с: разрешение таймера на Windows даёт
+    # расхождение в единицы миллисекунд, и точное сравнение ловило бы его, а не
+    # отсутствие задержки.
+    assert elapsed >= 0.25
+
+
+def test_emulator_still_knows_nothing_but_the_request(client: TestClient) -> None:
+    """Границы эмулятора не расширились.
+
+    Он не определяет текущую дату, не планирует запуски и не ведёт историю:
+    дата решения приходит в запросе и возвращается как есть, а никаких иных
+    маршрутов, кроме ранжирования и здоровья, у него нет.
+    """
+    body = client.post("/rankings", json=request_body(asof="2020-01-09")).json()
+    assert body["asof_date"] == "2020-01-09"
+
+    routes = {getattr(route, "path", "") for route in client.app.routes}
+    assert {"/rankings", "/health"} <= routes
+    assert not {path for path in routes if "catchup" in path or "schedule" in path}

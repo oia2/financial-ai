@@ -21,7 +21,9 @@ import {
   coverageQueryKey,
   isCatchupActive,
   useCatchupState,
+  useCollectionSettings,
   useCoverage,
+  useSetCollectionPaused,
   type GroupCoverageDto,
 } from '@/entities/market-data';
 import { ClampNotice } from '@/features/catchup-launch/ClampNotice';
@@ -38,8 +40,14 @@ export function MarketDataPage() {
   const coverage = useCoverage();
   const catchup = useCatchupState();
   const control = useCatchupControl();
+  const collection = useCollectionSettings();
+  const setCollectionPaused = useSetCollectionPaused();
   const queryClient = useQueryClient();
   const [details, setDetails] = useState<GroupCoverageDto | null>(null);
+
+  // Пока состояние не прочитано, сбор считается идущим: это умолчание сборщика,
+  // и мигать надписью «остановлено» на первом кадре незачем.
+  const collectionPaused = collection.data?.paused ?? false;
 
   // Пустое хранилище — состояние системы, а не авария: сборщик отвечает
   // `calendar_empty`, пока не выполнена первичная загрузка (FR-026).
@@ -118,6 +126,32 @@ export function MarketDataPage() {
               </time>
             </span>
           )}
+
+          {/*
+            Остановка автоматического сбора. Отдельно от паузы ранжирования: это
+            разные механизмы, и слитое прочтение дороже прочих ошибок на этих
+            экранах (FR-029e). Состояние читается с сервера, а не запоминается
+            здесь: оно живёт в процессе сборщика, и перезапуск возвращает сбор.
+
+            Подпись говорит про АВТОСБОР, а не про «сбор»: «Остановить сбор»
+            читалось как остановка уже идущего прогона, чем кнопка не является —
+            она выключает автоматический режим, а начатую сессию доводит до конца.
+          */}
+          <button
+            className="secondary-button"
+            type="button"
+            aria-pressed={collectionPaused}
+            aria-label={
+              collectionPaused
+                ? 'Возобновить автоматический сбор данных'
+                : 'Поставить автоматический сбор данных на паузу'
+            }
+            data-od-id="pause-collection"
+            disabled={collection.isPending || setCollectionPaused.isPending}
+            onClick={() => setCollectionPaused.mutate(!collectionPaused)}
+          >
+            {collectionPaused ? 'Возобновить автосбор' : 'Пауза автосбора'}
+          </button>
 
           {/*
             Кнопка запуска в заголовке — из артефакта. Во время работы она
