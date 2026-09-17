@@ -32,9 +32,9 @@ description: "Task list for feature implementation"
 
 **Purpose**: выяснить то, что нельзя угадывать, и подготовить почву для испытаний.
 
-- [ ] T001 Живая сверка источника: есть ли в описании фьючерсного контракта идентификатор базовой бумаги и совпадает ли он с идентификатором бумаги на доске акций. Команда по образцу существующих `verify-*` в `backend/src/financial_ai/market_data/cli.py`; результат записать в `backend/src/financial_ai/market_data/PROVENANCE.md` рядом со сверкой 2026-09-04
-- [ ] T002 [P] Убрать временное `DAILY_ML_REQUIRED_DATA_GROUPS=["quotes"]` из `deployments/docker-compose/.env` и описать в `deployments/docker-compose/docker-compose.yml`, что настройка влияет только на запуск ранжирования
-- [ ] T003 [P] Завести фикстуры записанных ответов источника для испытаний состава инструментов в `backend/tests/fixtures/instruments/` (серии срочного рынка, открытый интерес, справочник бумаг)
+- [X] T001 Живая сверка источника: есть ли в описании фьючерсного контракта идентификатор базовой бумаги и совпадает ли он с идентификатором бумаги на доске акций. Команда по образцу существующих `verify-*` в `backend/src/financial_ai/market_data/cli.py`; результат записать в `backend/src/financial_ai/market_data/PROVENANCE.md` рядом со сверкой 2026-09-04
+- [X] T002 [P] Убрать временное `DAILY_ML_REQUIRED_DATA_GROUPS=["quotes"]` из `deployments/docker-compose/.env` и описать в `deployments/docker-compose/docker-compose.yml`, что настройка влияет только на запуск ранжирования
+- [X] T003 [P] Завести фикстуры записанных ответов источника для испытаний состава инструментов в `backend/tests/fixtures/instruments/` (серии срочного рынка, открытый интерес, справочник бумаг)
 
 ---
 
