@@ -40,24 +40,35 @@ async def missing_sessions(
     Пустой список означает полноту. Группа без оси сессий полной считается
     всегда: у справочника текущего состояния окна нет, и «недобранным» он не
     бывает.
+
+    Правило одно на троих: сводку раздела, поиск пропусков и готовность
+    ранжирования. Второе объявление того же правила однажды разошлось бы с
+    первым — так уже было, и расхождение вылезло на диапазонных источниках.
     """
     if not window or group.session_column is None:
         return []
 
-    covered = await repository.sessions_with_observations(
+    observed = await repository.sessions_with_observations(
         group.model, group.session_column, group.value_columns, window
     )
 
-    # Пустой ответ биржи — законный исход, и наблюдений после него не будет.
-    # Такие сессии закрывает журнал прогонов, поэтому он не отбрасывается, а
-    # дополняет наблюдения.
-    if len(covered) < len(window):
-        for source_id in group.source_ids:
-            covered |= await repository.sessions_with_successful_run(window, source_id)
-            if len(covered) >= len(window):
-                break
+    # **Полнота считается по КАЖДОМУ источнику группы, а не по любому.**
+    # Прежняя версия объявляла сессию закрытой, если отработал хоть один
+    # источник. Для группы из одного источника это верно; для «глобальных
+    # рядов» их четыре — ряды ЦБ, Brent, индекс и ряды ISS, — и успех одного
+    # ничего не говорит про остальные. Пропуск в Brent закрывался успехом ЦБ и
+    # не становился работой (spec 008, FR-032).
+    closed: set[dt.date] | None = None
+    for source_id in group.source_ids:
+        # Пустой ответ биржи — законный исход, и наблюдений после него не
+        # будет: такие сессии закрывает журнал прогонов. Он не отбрасывается, а
+        # дополняет наблюдения.
+        by_source = observed | await repository.sessions_with_successful_run(window, source_id)
+        closed = by_source if closed is None else (closed & by_source)
+        if not closed:
+            break
 
-    return [day for day in window if day not in covered]
+    return [day for day in window if day not in (closed or set())]
 
 
 async def incomplete_groups(

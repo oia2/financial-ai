@@ -66,6 +66,12 @@ class MarketAsset(Base):
     # догадкой. Входом модели лот не является (spec 007).
     lot_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Устойчивый идентификатор сущности. Тикер именем бумаги быть перестаёт:
+    # при переименовании он меняется, а ISIN — нет, и связь с фьючерсом от
+    # переименования больше не рвётся (spec 008, FR-018). NULL — источник его
+    # не отдал; тогда якорем остаётся тикер, как и раньше.
+    isin: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
+
 
 class PriceSeries(Base):
     """Сшиваемый ценовой ряд.
@@ -167,6 +173,12 @@ class FuturesPosition(Base):
     asset_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
 
+    # Контракт, которым наблюдение собрано, — часть ключа. Без него повторный
+    # сбор той же даты другим семейством контрактов молча затирал бы прежнее
+    # наблюдение, и ряд склеивался бы из двух разных инструментов без следа
+    # (spec 008, FR-030, FR-039).
+    contract_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+
     fiz_long: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     fiz_short: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
     jur_long: Mapped[Decimal | None] = mapped_column(PRICE, nullable=True)
@@ -214,6 +226,84 @@ class DividendEvent(Base):
     )
 
 
+class AssetFuturesLink(Base):
+    """Связь бумаги с семейством фьючерсных контрактов во времени.
+
+    **Интервал, а не снимок.** Соответствие строилось из ISS на каждый прогон и
+    жило в памяти: ответить «с какой даты у бумаги есть фьючерс» было нельзя, а
+    смена семейства (классическое, мини, вечное — выбор идёт по открытому
+    интересу) проходила бесследно и склеивала ряд позиций из двух инструментов.
+
+    **Единица связи — семейство**, а не срочная серия: позиции запрашиваются
+    именно семейством, а серия в запросе не участвует. Смена семейства —
+    событие для человека, смена серии внутри него — нет (spec 008, FR-036).
+    """
+
+    __tablename__ = "market_asset_futures_link"
+    __table_args__ = (Index("ix_asset_futures_link_asset", "asset_id"),)
+
+    asset_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    valid_from: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    contract_code: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # NULL — связь действует. Открытие новой закрывает прежнюю предыдущим днём.
+    valid_till: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+
+    # Чем связь подтверждена: `underlying_and_emitter` — базовый актив серии
+    # совпал с бумагой И идентификатор эмитента у контракта совпал с эмитентом
+    # бумаги; `underlying_only` — эмитент не проверен источником. Сверка
+    # 2026-09-17: идентификатора базовой БУМАГИ биржа не отдаёт, эмитента —
+    # отдаёт, но у обыкновенной и привилегированной он один (PROVENANCE.md).
+    chosen_by: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # Открытый интерес на момент выбора — основание, когда кандидатов несколько.
+    open_interest: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AssetAlias(Base):
+    """Имя бумаги во времени.
+
+    Отвечает на вопрос «этот тикер — новая бумага или прежняя под новым именем».
+    Появление тикера с уже известным ISIN означает переименование: наблюдения
+    относятся к прежней сущности, а прежнее имя закрывается датой.
+    """
+
+    __tablename__ = "market_asset_alias"
+    __table_args__ = (Index("ix_asset_alias_asset", "asset_id"),)
+
+    ticker: Mapped[str] = mapped_column(String(32), primary_key=True)
+    valid_from: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    valid_till: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+
+
+class SessionSkip(Base):
+    """Сессия, не взятая в работу, и причина.
+
+    Причины принимались и раньше — и тут же терялись в логе. Ход прогона живёт
+    в памяти процесса намеренно, а причина пропуска обязана жить дольше: без
+    неё человек видит дыру и не знает, ждать ему или вмешиваться (FR-002).
+    """
+
+    __tablename__ = "market_session_skip"
+    __table_args__ = (Index("ix_session_skip_session", "session_date"),)
+
+    session_date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    decided_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+
+    # withheld_until_close | retry_delay | attempts_exhausted | gap_over_limit.
+    # Перечень закрытый: новая причина заводится вместе с местом, где решение
+    # принимается, иначе на экране появится «пропущено» без объяснения.
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class IngestRun(Base):
     """Исход сбора по одному источнику за одну сессию.
 
@@ -241,6 +331,13 @@ class IngestRun(Base):
 
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     rows_written: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Период, который покрывает исход. У посессионного источника он совпадает с
+    # сессией, у источника с выборкой за диапазон — это весь диапазон. Без
+    # периода такой источник выглядит несобравшим всё, кроме последней сессии:
+    # исход-то записывается на конец периода (spec 008, FR-033).
+    period_from: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    period_till: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
 
     started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

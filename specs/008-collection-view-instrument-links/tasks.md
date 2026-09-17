@@ -44,13 +44,13 @@ description: "Task list for feature implementation"
 
 **⚠️ Ни одна история не начинается, пока эта фаза не закрыта.**
 
-- [ ] T004 Миграция `backend/migrations/versions/0011_instrument_links.py`: таблицы `market_asset_futures_link`, `market_asset_alias`, `market_session_skip`; колонки `market_asset.isin`, `market_futures_position.contract_code` (в первичный ключ), `market_ingest_run.period_from` и `period_till`
-- [ ] T005 [P] Модели `AssetFuturesLink`, `AssetAlias`, `SessionSkip` и новые колонки в `backend/src/financial_ai/market_data/models.py` по [data-model.md](./data-model.md)
-- [ ] T006 [P] Объявление торгового календаря в `backend/src/financial_ai/market_data/calendar_spec.py`: идентификатор, рынок, доска, опорная бумага, пояс и правила даты решения (`t` после закрытия, исполнение на открытии `t+1`, в тот же день нельзя, лаг одна сессия) — перенос из `configs/calendars/moex_daily.yaml` исследовательского репозитория (FR-042)
-- [ ] T007 Чтение и запись связей, псевдонимов, пропусков и периода исхода в `backend/src/financial_ai/market_data/repository.py`
-- [ ] T008 Одно правило полноты в `backend/src/financial_ai/market_data/completeness.py`: сессия группы закрыта, когда по каждому источнику есть непустое наблюдение либо успешный исход, период которого включает сессию (FR-032, FR-033)
-- [ ] T009 Поиск пропусков по всем группам с осью сессий независимо от перечня групп, обязательных для модели, в `backend/src/financial_ai/market_data/advance.py` (FR-031)
-- [ ] T010 [P] Модульные тесты правила полноты и диапазонных исходов в `backend/tests/unit/test_completeness_rule.py`
+- [X] T004 Миграция `backend/migrations/versions/0011_instrument_links.py`: таблицы `market_asset_futures_link`, `market_asset_alias`, `market_session_skip`; колонки `market_asset.isin`, `market_futures_position.contract_code` (в первичный ключ), `market_ingest_run.period_from` и `period_till`
+- [X] T005 [P] Модели `AssetFuturesLink`, `AssetAlias`, `SessionSkip` и новые колонки в `backend/src/financial_ai/market_data/models.py` по [data-model.md](./data-model.md)
+- [X] T006 [P] Объявление торгового календаря в `backend/src/financial_ai/market_data/calendar_spec.py`: идентификатор, рынок, доска, опорная бумага, пояс и правила даты решения (`t` после закрытия, исполнение на открытии `t+1`, в тот же день нельзя, лаг одна сессия) — перенос из `configs/calendars/moex_daily.yaml` исследовательского репозитория (FR-042)
+- [X] T007 Чтение и запись связей, псевдонимов, пропусков и периода исхода в `backend/src/financial_ai/market_data/repository.py`
+- [X] T008 Одно правило полноты в `backend/src/financial_ai/market_data/completeness.py`: сессия группы закрыта, когда по каждому источнику есть непустое наблюдение либо успешный исход, период которого включает сессию (FR-032, FR-033)
+- [X] T009 Поиск пропусков по всем группам с осью сессий независимо от перечня групп, обязательных для модели, в `backend/src/financial_ai/market_data/advance.py` (FR-031)
+- [X] T010 [P] Модульные тесты правила полноты и диапазонных исходов в `backend/tests/unit/test_completeness_rule.py`
 
 **Checkpoint**: правила и хранилище готовы, истории можно вести параллельно.
 

@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from financial_ai.market_data.models import (
+    AssetAlias,
+    AssetFuturesLink,
     AssetSector,
     DividendEvent,
     EquityAggregate,
@@ -30,6 +32,7 @@ from financial_ai.market_data.models import (
     IngestRun,
     MarketAsset,
     PriceSeries,
+    SessionSkip,
     TradingSession,
 )
 
@@ -91,6 +94,9 @@ class PositionRow:
     fiz_short: Decimal | None
     jur_long: Decimal | None
     jur_short: Decimal | None
+    # Каким семейством контрактов наблюдение собрано. Часть ключа: повторный
+    # сбор той же даты другим контрактом не должен затирать прежнее молча.
+    contract_code: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,6 +394,7 @@ class MarketDataRepository:
             {
                 "asset_id": r.asset_id,
                 "session_date": r.session_date,
+                "contract_code": r.contract_code,
                 "fiz_long": r.fiz_long,
                 "fiz_short": r.fiz_short,
                 "jur_long": r.jur_long,
@@ -397,7 +404,7 @@ class MarketDataRepository:
         ]
         statement = insert(FuturesPosition).values(payload)
         statement = statement.on_conflict_do_update(
-            index_elements=["asset_id", "session_date"],
+            index_elements=["asset_id", "session_date", "contract_code"],
             set_={
                 "fiz_long": statement.excluded.fiz_long,
                 "fiz_short": statement.excluded.fiz_short,
@@ -525,7 +532,15 @@ class MarketDataRepository:
         rows_written: int = 0,
         failure_reason: str | None = None,
         trigger: str = "daily",
+        period_from: dt.date | None = None,
+        period_till: dt.date | None = None,
     ) -> None:
+        # Период по умолчанию — одна сессия: так ведёт себя всякий посессионный
+        # источник. Источник с выборкой за диапазон передаёт период явно, иначе
+        # он выглядел бы несобравшим всё, кроме последней сессии.
+        if period_from is None and period_till is None and session_date is not None:
+            period_from = period_till = session_date
+
         statement = (
             insert(IngestRun)
             .values(
@@ -534,6 +549,8 @@ class MarketDataRepository:
                 session_date=session_date,
                 status=status,
                 trigger=trigger,
+                period_from=period_from,
+                period_till=period_till,
                 failure_reason=failure_reason,
                 rows_written=rows_written,
                 started_at=started_at,
@@ -547,6 +564,8 @@ class MarketDataRepository:
                     "failure_reason": failure_reason,
                     "rows_written": rows_written,
                     "finished_at": finished_at,
+                    "period_from": period_from,
+                    "period_till": period_till,
                 },
             )
         )
@@ -675,16 +694,34 @@ class MarketDataRepository:
         """
         if not sessions:
             return set()
-        rows = await self._session.scalars(
-            select(IngestRun.session_date)
-            .where(
-                IngestRun.session_date.in_(sessions),
+
+        # Исход закрывает СВОЙ ПЕРИОД, а не одну дату. Источник с выборкой за
+        # диапазон записывает исход на конец периода: считая по дате, мы
+        # объявляли бы пустыми все сессии диапазона, кроме последней, — данные
+        # за них при этом лежат в таблице рядом (spec 008, FR-033).
+        rows = await self._session.execute(
+            select(IngestRun.session_date, IngestRun.period_from, IngestRun.period_till).where(
                 IngestRun.source_id == source_id,
                 IngestRun.status == "ok",
+                or_(
+                    IngestRun.session_date.in_(sessions),
+                    and_(
+                        IngestRun.period_from.is_not(None),
+                        IngestRun.period_till.is_not(None),
+                        IngestRun.period_from <= max(sessions),
+                        IngestRun.period_till >= min(sessions),
+                    ),
+                ),
             )
-            .distinct()
         )
-        return {day for day in rows.all() if day is not None}
+
+        covered: set[dt.date] = set()
+        for session_date, period_from, period_till in rows.all():
+            if period_from is not None and period_till is not None:
+                covered |= {day for day in sessions if period_from <= day <= period_till}
+            elif session_date is not None:
+                covered.add(session_date)
+        return covered
 
     async def attempts_by_session(self, sessions: list[dt.date]) -> dict[dt.date, int]:
         """Сколько раз сессию пытались собрать. Прогон, а не источник.
@@ -791,6 +828,151 @@ class MarketDataRepository:
 
         found = await self._session.scalar(select(IngestRun.id).where(*conditions).limit(1))
         return found is not None
+
+    # --- связи инструментов во времени (spec 008) --------------------------
+
+    async def active_links_on(self, day: dt.date) -> dict[str, str]:
+        """Действующие связи «бумага → семейство контрактов» на дату.
+
+        Действующей считается связь, чей интервал накрывает дату. Интервалы
+        одной бумаги не пересекаются, поэтому ответ однозначен.
+        """
+        rows = await self._session.execute(
+            select(AssetFuturesLink.asset_id, AssetFuturesLink.contract_code).where(
+                AssetFuturesLink.valid_from <= day,
+                or_(AssetFuturesLink.valid_till.is_(None), AssetFuturesLink.valid_till >= day),
+            )
+        )
+        return dict(rows.all())
+
+    async def link_history(self, asset_id: str) -> list[AssetFuturesLink]:
+        """Все интервалы связи бумаги, от старых к новым."""
+        rows = await self._session.scalars(
+            select(AssetFuturesLink)
+            .where(AssetFuturesLink.asset_id == asset_id)
+            .order_by(AssetFuturesLink.valid_from)
+        )
+        return list(rows.all())
+
+    async def open_link(
+        self,
+        asset_id: str,
+        contract_code: str,
+        valid_from: dt.date,
+        chosen_by: str,
+        open_interest: int | None = None,
+    ) -> bool:
+        """Открыть связь, закрыв прежнюю, если контракт сменился.
+
+        Возвращает ``True``, если это СМЕНА контракта: такое изменение —
+        событие для человека, а не тихая подмена. Продление действующей связи
+        событием не является и возвращает ``False``.
+        """
+        current = await self._session.scalars(
+            select(AssetFuturesLink)
+            .where(AssetFuturesLink.asset_id == asset_id, AssetFuturesLink.valid_till.is_(None))
+            .order_by(AssetFuturesLink.valid_from.desc())
+            .limit(1)
+        )
+        active = current.first()
+
+        if active is not None and active.contract_code == contract_code:
+            return False
+
+        if active is not None:
+            # Прежний интервал закрывается предыдущим днём: два действующих
+            # интервала у одной бумаги означали бы, что мы не знаем, чем
+            # спрашивать позиции.
+            active.valid_till = valid_from - dt.timedelta(days=1)
+
+        self._session.add(
+            AssetFuturesLink(
+                asset_id=asset_id,
+                valid_from=valid_from,
+                contract_code=contract_code,
+                chosen_by=chosen_by,
+                open_interest=open_interest,
+            )
+        )
+        return active is not None
+
+    async def asset_by_isin(self, isin: str) -> str | None:
+        """Бумага с таким устойчивым идентификатором, если она уже известна.
+
+        Так распознаётся переименование: тикер новый, сущность прежняя.
+        """
+        rows = await self._session.scalars(
+            select(MarketAsset.asset_id).where(MarketAsset.isin == isin).limit(1)
+        )
+        return rows.first()
+
+    async def upsert_alias(self, ticker: str, asset_id: str, valid_from: dt.date) -> None:
+        """Записать имя бумаги на период."""
+        statement = (
+            insert(AssetAlias)
+            .values(ticker=ticker, asset_id=asset_id, valid_from=valid_from)
+            .on_conflict_do_nothing(index_elements=["ticker", "valid_from"])
+        )
+        await self._session.execute(statement)
+
+    async def close_alias(self, ticker: str, valid_till: dt.date) -> None:
+        """Закрыть прежнее имя датой: дальше оно не действует."""
+        await self._session.execute(
+            update(AssetAlias)
+            .where(AssetAlias.ticker == ticker, AssetAlias.valid_till.is_(None))
+            .values(valid_till=valid_till)
+        )
+
+    # --- пропуски сессий с причинами (spec 008) ----------------------------
+
+    async def record_skip(
+        self,
+        session_date: dt.date,
+        reason: str,
+        decided_at: dt.datetime,
+        run_id: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Сохранить причину, по которой сессия не взята в работу."""
+        statement = (
+            insert(SessionSkip)
+            .values(
+                session_date=session_date,
+                decided_at=decided_at,
+                reason=reason,
+                run_id=run_id,
+                detail=detail,
+            )
+            .on_conflict_do_nothing(index_elements=["session_date", "decided_at"])
+        )
+        await self._session.execute(statement)
+
+    async def recent_skips(self, sessions: list[dt.date]) -> dict[dt.date, SessionSkip]:
+        """Последняя причина пропуска по каждой из сессий."""
+        if not sessions:
+            return {}
+        rows = await self._session.scalars(
+            select(SessionSkip)
+            .where(SessionSkip.session_date.in_(sessions))
+            .order_by(SessionSkip.session_date, SessionSkip.decided_at)
+        )
+        return {skip.session_date: skip for skip in rows.all()}
+
+    # --- состав бумаг на дату (spec 008) -----------------------------------
+
+    async def assets_traded_on(self, day: dt.date) -> set[str]:
+        """Бумаги, у которых есть котировка за эту сессию.
+
+        Знаменатель полноты. Не «все бумаги, когда-либо встречавшиеся в
+        данных»: тот счёт только растёт и медленно врёт, потому что ушедшая с
+        торгов бумага остаётся в нём навсегда.
+        """
+        rows = await self._session.scalars(
+            select(EquityDailyBar.asset_id)
+            .where(EquityDailyBar.session_date == day, EquityDailyBar.close.is_not(None))
+            .distinct()
+        )
+        return set(rows.all())
 
     async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
         """Когда источник в последний раз отработал успешно — по любой дате.
