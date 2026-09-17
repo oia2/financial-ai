@@ -10,10 +10,12 @@ import {
   type CatchupStateDto,
   type CollectionSettingsDto,
   type CoverageDto,
+  type RunsDto,
   type LaunchRequest,
 } from './types';
 
 export const coverageQueryKey = ['market-data', 'coverage'] as const;
+export const runsQueryKey = ['market-data', 'runs'] as const;
 export const catchupQueryKey = ['market-data', 'catchup'] as const;
 export const collectionQueryKey = ['market-data', 'settings'] as const;
 
@@ -33,6 +35,10 @@ export function fetchCoverage(): Promise<CoverageDto> {
 
 export function fetchCatchupState(): Promise<CatchupStateDto> {
   return apiGet<CatchupStateDto>('/api/market-data/catchup');
+}
+
+export function fetchRuns(): Promise<RunsDto> {
+  return apiGet<RunsDto>('/api/market-data/runs');
 }
 
 export function startCatchup(request: LaunchRequest): Promise<CatchupStartResultDto> {
@@ -79,6 +85,17 @@ export function useSetCollectionPaused() {
 
 export function useCoverage(): UseQueryResult<CoverageDto> {
   return useQuery({ queryKey: coverageQueryKey, queryFn: fetchCoverage });
+}
+
+/**
+ * Журнал последних прогонов.
+ *
+ * Отвечает на вопрос «как прошёл сбор» тогда, когда ход работы уже не показать:
+ * состояние прогона живёт в памяти сборщика и исчезает с перезапуском, а журнал
+ * лежит в хранилище (FR-005).
+ */
+export function useRuns(): UseQueryResult<RunsDto> {
+  return useQuery({ queryKey: runsQueryKey, queryFn: fetchRuns });
 }
 
 /**

@@ -40,31 +40,30 @@ function renderMarketData() {
 }
 
 describe('доступность раздела', () => {
-  it('индикатор хода озвучивает все четыре числа', async () => {
+  it('шкала сессий озвучивает все четыре числа', async () => {
     server.use(
       http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('running'))),
     );
 
     renderMarketData();
 
-    const progress = await screen.findByRole('progressbar', { name: 'Закрытые сессии' });
-    expect(progress).toHaveAttribute(
-      'aria-valuetext',
-      'Закрыто 18 из 90; не закрыто 1; осталось обработать 71',
+    const track = await screen.findByRole('img', { name: /Собрано 18 из 90/ });
+    expect(track).toHaveAccessibleName(
+      'Собрано 18 из 90; с ошибкой 1; пропущено 0; осталось 71',
     );
   });
 
-  it('малый индикатор активности не читается с экрана', async () => {
+  it('значки состояния источников не читаются с экрана', async () => {
     server.use(
       http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('running'))),
     );
 
     const { container } = renderMarketData();
-    await screen.findByText('Идёт сбор');
+    await screen.findByText('Агрегаты торгов');
 
-    // Он показывает активность процесса, а не процент готовности сессии
-    // (FR-057), поэтому от чтения с экрана скрыт.
-    for (const glyph of container.querySelectorAll('.process-glyph')) {
+    // Значки состояния источников показывают ход, а не смысл: состояние
+    // названо словом рядом, поэтому от чтения с экрана значки скрыты.
+    for (const glyph of container.querySelectorAll('.rail-item i')) {
       expect(glyph).toHaveAttribute('aria-hidden', 'true');
     }
   });
@@ -86,7 +85,7 @@ describe('доступность раздела', () => {
   it('форма запуска закрывается по Escape и возвращает фокус', async () => {
     renderMarketData();
 
-    const trigger = await screen.findByRole('button', { name: 'Настроить запуск' });
+    const trigger = await screen.findByRole('button', { name: 'Ручной сбор' });
     await userEvent.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Запустить догон' })).toBeInTheDocument();
 
@@ -99,7 +98,7 @@ describe('доступность раздела', () => {
   it('ошибка ввода объявляется и связана с полем', async () => {
     renderMarketData();
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Настроить запуск' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Ручной сбор' }));
     const form = await screen.findByRole('dialog', { name: 'Запустить догон' });
     await userEvent.click(within(form).getByLabelText('Всё доступное окно'));
 

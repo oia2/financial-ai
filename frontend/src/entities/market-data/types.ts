@@ -53,6 +53,8 @@ export interface CatchupWindowDto {
 
 export interface CoverageDto {
   asof_date: string;
+  /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
+  next_session: string | null;
   /** Окно догона — не окно группы: у групп они разные. */
   catchup_window: CatchupWindowDto;
   groups: GroupCoverageDto[];
@@ -68,26 +70,110 @@ export interface CollectionSettingsDto {
   paused: boolean;
 }
 
-export type CatchupStatus = 'idle' | 'running' | 'stopping' | 'stopped' | 'finished' | 'failed';
+export type CatchupStatus =
+  | 'idle'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'finished'
+  | 'failed'
+  | 'interrupted';
+
+/** Ежедневный сбор или ручной. У режимов РАЗНЫЕ планы источников (FR-004). */
+export type RunMode = 'daily' | 'manual';
+
+/** Исход сессии плана. */
+export type SessionOutcome = 'collected' | 'partial' | 'failed' | 'skipped';
+
+/**
+ * Когда источник выполняется.
+ *
+ * `session` — на каждую сессию, `period` — один раз на весь период догона,
+ * `daily` — раз в сутки. В счётчик источников сессии входят только первые:
+ * иначе счётчик обещал бы, что остальные повторятся на следующий день (FR-007).
+ */
+export type SourceScope = 'session' | 'period' | 'daily';
+
+export type SourceState = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+export interface RunSourceDto {
+  source_id: string;
+  /** Имя для человека. Своей таблицы имён у интерфейса нет. */
+  title: string;
+  scope: SourceScope;
+  state: SourceState;
+  /** Подробность: сколько бумаг, какой инструмент, причина неудачи. */
+  detail?: string;
+}
+
+/** Причина, по которой сессия не взята в работу. Перечень закрытый (FR-002). */
+export type SkipReason =
+  | 'withheld_until_close'
+  | 'retry_delay'
+  | 'attempts_exhausted'
+  | 'gap_over_limit';
+
+export interface SessionSkipDto {
+  session_date: string;
+  reason: SkipReason;
+  detail: string | null;
+}
+
+export interface SessionProgressDto {
+  requested: number;
+  collected: number;
+  partial: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+  outcomes: { session_date: string; outcome: SessionOutcome }[];
+}
 
 export interface CatchupStateDto {
   status: CatchupStatus;
+  /** Режим прогона. Состав плана интерфейс не задаёт (FR-004). */
+  mode: RunMode;
   groups: GroupId[];
   /** Принятый диапазон: первая и последняя сессия плана. */
   date_from: string | null;
   date_till: string | null;
   clamped: boolean;
-  /** Число сессий плана. С сервера — суммой пропусков не вычисляется (FR-029). */
-  requested: number;
-  closed: number;
-  /** Незакрывшиеся. В `closed` не входят и в индикатор хода — отдельным сегментом. */
-  failed: number;
-  remaining: number;
-  current: string | null;
+  sessions: SessionProgressDto;
+  skips: SessionSkipDto[];
+  /** Текущая сессия и план её источников в порядке выполнения (FR-003). */
+  current: { session_date: string; sources: RunSourceDto[] } | null;
   started_at: string | null;
   finished_at: string | null;
+  last_response_at: string | null;
+  stop_requested: boolean;
   /** Причина прерывания. Формулирует сервер, не интерфейс (FR-034). */
   reason: string | null;
+
+  /** Поля контракта фичи 005. Остаются, пока раздел не переехал целиком. */
+  requested: number;
+  closed: number;
+  failed: number;
+  remaining: number;
+}
+
+/** Итог прогона из журнала. Переживает перезапуск сборщика (FR-005). */
+export interface RunSummaryDto {
+  run_id: string;
+  mode: RunMode;
+  started_at: string;
+  finished_at: string | null;
+  status: 'finished' | 'failed' | 'interrupted';
+  sessions: { requested: number; collected: number; failed: number; skipped: number };
+  failures: {
+    source_id: string;
+    title: string;
+    session_date: string | null;
+    reason: string | null;
+  }[];
+}
+
+export interface RunsDto {
+  runs: RunSummaryDto[];
 }
 
 export interface CatchupStartResultDto {

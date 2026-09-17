@@ -79,11 +79,11 @@ description: "Task list for feature implementation"
 - [X] T020 [US1] Опрос календаря после порога и равнение сбора на последнюю дату календаря в `backend/src/financial_ai/market_data/advance.py`; убрать безусловный опрос календаря внутри `ingest.ingest_session` (FR-040, FR-043)
 - [X] T021 [US1] Убрать дивиденды из ежедневного плана в `backend/src/financial_ai/market_data/ingest.py`, сохранив собранные события (FR-008)
 - [X] T022 [US1] Внутренний маршрут журнала прогонов в `backend/src/financial_ai/worker/routes/` и публичный `GET /api/market-data/runs` в `backend/src/financial_ai/api/routes/market_data.py`
-- [ ] T023 [P] [US1] Типы состояния прогона и журнала в `frontend/src/entities/market-data/types.ts` и запросы в `api.ts`
-- [ ] T024 [US1] Панель прогона по макету в `frontend/src/widgets/catchup-section/`: план источников с идущим и следующим, причины пропусков, итог и журнал, состояния остановки и недоступности сборщика
+- [X] T023 [P] [US1] Типы состояния прогона и журнала в `frontend/src/entities/market-data/types.ts` и запросы в `api.ts`
+- [X] T024 [US1] Панель прогона по макету в `frontend/src/widgets/catchup-section/`: план источников с идущим и следующим, причины пропусков, итог и журнал, состояния остановки и недоступности сборщика
 - [ ] T025 [P] [US1] Виджет календаря сессий в `frontend/src/widgets/collection-calendar/`: факт слева от сегодня, ожидание пунктиром, листание по месяцам (FR-023, FR-024)
-- [ ] T026 [US1] Строка расписания в `frontend/src/pages/market-data/MarketDataPage.tsx`: следующий сбор датой сессии из календаря, пауза автосбора влияет на расписание (FR-024a, FR-025)
-- [ ] T027 [P] [US1] Тесты интерфейса состояний прогона в `frontend/src/widgets/catchup-section/__tests__/` по [contracts/ui-states.md](./contracts/ui-states.md)
+- [X] T026 [US1] Строка расписания в `frontend/src/pages/market-data/MarketDataPage.tsx`: следующий сбор датой сессии из календаря, пауза автосбора влияет на расписание (FR-024a, FR-025)
+- [X] T027 [P] [US1] Тесты интерфейса состояний прогона в `frontend/src/widgets/catchup-section/__tests__/` по [contracts/ui-states.md](./contracts/ui-states.md)
 
 **Checkpoint**: раздел рассказывает правду о сборе; истории US2 и US3 можно вести дальше.
 

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import groups
-from financial_ai.market_data.calendar import TradingCalendar
+from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.repository import MarketDataRepository
 
 
@@ -138,8 +138,15 @@ async def build_report(
     # пользуется планирование, а не выводить из строк сводки (FR-013b).
     catchup_window = await calendar.window(asof_date, settings.catchup_window_sessions)
 
+    # Сессия, которую возьмёт следующий сбор. Берётся из календаря, поэтому
+    # строка на экране не меняет формы, если сегодня торгов не было: там просто
+    # стоит ближайший известный торговый день (spec 008, FR-024a). Будущих дат
+    # календарь не знает: он строится по СОСТОЯВШИМСЯ торгам.
+    next_session = await calendar.latest_session(moscow_today())
+
     return {
         "asof_date": asof_date.isoformat(),
+        "next_session": next_session.isoformat() if next_session else None,
         "catchup_window": {
             "date_from": catchup_window[0].isoformat() if catchup_window else None,
             "date_till": catchup_window[-1].isoformat() if catchup_window else None,

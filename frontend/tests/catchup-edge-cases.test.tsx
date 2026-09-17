@@ -43,7 +43,7 @@ function refuseStart(status: number, code: string) {
 }
 
 async function submitLaunch() {
-  await userEvent.click(await screen.findByRole('button', { name: 'Настроить запуск' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Ручной сбор' }));
   const form = await screen.findByRole('dialog', { name: 'Запустить догон' });
   await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
   return form;
@@ -66,13 +66,10 @@ describe('пустое хранилище и полнота', () => {
 
     // Первичная загрузка остаётся вне интерфейса: запускать нечего и нечем
     // (FR-026). Кнопка в заголовке недоступна и говорит, чего не хватает.
-    expect(screen.queryByRole('button', { name: 'Настроить запуск' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ручной сбор' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Нужна первичная загрузка' })).toBeDisabled();
-    expect(
-      within(
-        screen.getByRole('heading', { name: 'Догон истории' }).closest('div') as HTMLElement,
-      ).getByText('Нужна первичная загрузка'),
-    ).toBeInTheDocument();
+    // Панель объясняет, чего не хватает, вместо предложения запустить сбор.
+    expect(screen.getByText(/Сначала нужна первичная загрузка/)).toBeInTheDocument();
   });
 
   it('догонять нечего: спокойное подтверждение, новый прогон не запущен', async () => {
@@ -96,7 +93,7 @@ describe('пустое хранилище и полнота', () => {
 
     // Новый прогон не предлагается, пока сервер говорит «нечего» (FR-038).
     expect(screen.getByText('Догонять нечего')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Настроить запуск' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ручной сбор' })).not.toBeInTheDocument();
   });
 
   it('полное покрытие не выдаётся за полноту значений', async () => {
@@ -137,7 +134,7 @@ describe('отказы запуска', () => {
     expect(await screen.findByText(/Догон уже выполняется/)).toBeInTheDocument();
     // Счётчики и состояние существующего прогона на экране, а не затёрты
     // отказом (FR-039).
-    expect(await screen.findByText('Идёт сбор')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Собираем сессию/ })).toBeInTheDocument();
     expect(screen.getByText('из 90')).toBeInTheDocument();
   });
 
@@ -224,7 +221,7 @@ describe('сужение диапазона', () => {
 
     renderMarketData();
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Настроить запуск' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Ручной сбор' }));
     const form = await screen.findByRole('dialog', { name: 'Запустить догон' });
     await userEvent.click(within(form).getByLabelText('Всё доступное окно'));
 
@@ -256,7 +253,7 @@ describe('состояние после перезапуска сборщика'
 
     renderMarketData();
 
-    expect(await screen.findByText('Не запущен')).toBeInTheDocument();
+    expect(await screen.findByText('Прогонов ещё не было')).toBeInTheDocument();
     // Интерфейс не сообщает «сервер перезапущен»: текущие поля этого не
     // доказывают (FR-035).
     expect(screen.queryByText(/перезапущен/i)).not.toBeInTheDocument();

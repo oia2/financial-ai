@@ -23,6 +23,7 @@ import {
   useCatchupState,
   useCollectionSettings,
   useCoverage,
+  useRuns,
   useSetCollectionPaused,
   type GroupCoverageDto,
 } from '@/entities/market-data';
@@ -41,6 +42,7 @@ export function MarketDataPage() {
   const catchup = useCatchupState();
   const control = useCatchupControl();
   const collection = useCollectionSettings();
+  const runs = useRuns();
   const setCollectionPaused = useSetCollectionPaused();
   const queryClient = useQueryClient();
   const [details, setDetails] = useState<GroupCoverageDto | null>(null);
@@ -207,7 +209,9 @@ export function MarketDataPage() {
       {catchup.data !== undefined && (
         <CatchupSection
           state={catchup.data}
-          coverage={coverage.data}
+          runs={runs.data?.runs ?? []}
+          paused={collectionPaused}
+          nextSession={coverage.data?.next_session ?? null}
           emptyStorage={emptyStorage}
           nothingToCatchUp={control.nothingToCatchUp}
           notice={
@@ -219,7 +223,7 @@ export function MarketDataPage() {
           }
           onStart={control.openDrawer}
           onStop={control.requestStop}
-          onResume={() => control.resume(catchup.data.groups)}
+          onRepeat={() => control.resume(catchup.data.groups)}
         />
       )}
 

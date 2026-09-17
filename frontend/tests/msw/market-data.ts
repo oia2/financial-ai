@@ -17,6 +17,7 @@ import type {
 export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageDto {
   return {
     asof_date: '2026-09-03',
+    next_session: '2026-09-03',
     catchup_window: {
       date_from: '2026-04-20',
       date_till: '2026-09-03',
@@ -94,34 +95,86 @@ export function catchupFixture(
 ): CatchupStateDto {
   const base: CatchupStateDto = {
     status,
+    mode: 'daily',
     groups: [],
     date_from: null,
     date_till: null,
     clamped: false,
+    sessions: {
+      requested: 0,
+      collected: 0,
+      partial: 0,
+      failed: 0,
+      skipped: 0,
+      pending: 0,
+      outcomes: [],
+    },
+    skips: [],
+    current: null,
+    started_at: null,
+    finished_at: null,
+    last_response_at: null,
+    stop_requested: false,
+    reason: null,
     requested: 0,
     closed: 0,
     failed: 0,
     remaining: 0,
-    current: null,
-    started_at: null,
-    finished_at: null,
-    reason: null,
   };
 
   if (status === 'idle') return { ...base, ...overrides };
+
+  const active = status === 'running' || status === 'stopping';
 
   return {
     ...base,
     groups: ['quotes', 'aggregates', 'global', 'positions', 'reference'],
     date_from: '2026-04-20',
     date_till: '2026-09-03',
+    sessions: {
+      requested: 90,
+      collected: 18,
+      partial: 0,
+      failed: 1,
+      skipped: 0,
+      pending: 71,
+      outcomes: [
+        { session_date: '2026-04-20', outcome: 'collected' },
+        { session_date: '2026-04-21', outcome: 'failed' },
+      ],
+    },
+    current: active
+      ? {
+          session_date: '2026-05-14',
+          sources: [
+            {
+              source_id: 'trading_calendar',
+              title: 'Торговый календарь',
+              scope: 'daily',
+              state: 'done',
+            },
+            { source_id: 'equity_d1', title: 'Котировки акций', scope: 'session', state: 'done' },
+            {
+              source_id: 'equity_agg',
+              title: 'Агрегаты торгов',
+              scope: 'session',
+              state: 'running',
+            },
+            {
+              source_id: 'futures_positions',
+              title: 'Позиции по фьючерсам',
+              scope: 'session',
+              state: 'pending',
+            },
+          ],
+        }
+      : null,
+    started_at: '2026-09-10T09:12:04Z',
+    finished_at: active ? null : '2026-09-10T09:40:00Z',
     requested: 90,
     closed: 18,
     failed: 1,
     remaining: 71,
-    current: status === 'running' || status === 'stopping' ? '2026-05-14' : null,
-    started_at: '2026-09-10T09:12:04Z',
-    finished_at: status === 'running' || status === 'stopping' ? null : '2026-09-10T09:40:00Z',
     ...overrides,
   };
 }

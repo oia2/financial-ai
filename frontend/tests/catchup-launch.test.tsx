@@ -33,7 +33,7 @@ function renderMarketData() {
 
 async function openForm() {
   renderMarketData();
-  await userEvent.click(await screen.findByRole('button', { name: 'Настроить запуск' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Ручной сбор' }));
   return screen.findByRole('dialog', { name: 'Запустить догон' });
 }
 
