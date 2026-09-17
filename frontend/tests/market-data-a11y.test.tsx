@@ -57,7 +57,7 @@ describe('доступность раздела', () => {
     );
 
     const { container } = renderMarketData();
-    await screen.findByText('Агрегаты торгов');
+    await screen.findByRole('heading', { name: /Собираем сессию/ });
 
     // Значки состояния источников показывают ход, а не смысл: состояние
     // названо словом рядом, поэтому от чтения с экрана значки скрыты.
@@ -73,10 +73,10 @@ describe('доступность раздела', () => {
 
     renderMarketData();
 
-    const table = await screen.findByRole('table');
-    const row = table.querySelector('.anomaly-row');
+    await screen.findByRole('heading', { name: 'Группы данных' });
+    const row = document.querySelector('[data-od-id="group-positions"]');
     expect(row).not.toBeNull();
-    // Выделение строки цветом — не единственный носитель смысла (FR-052).
+    // Цвет значка — не единственный носитель смысла (FR-052).
     expect(within(row as HTMLElement).getByText('Значения отсутствуют')).toBeInTheDocument();
   });
 
@@ -111,11 +111,20 @@ describe('доступность раздела', () => {
     expect(from).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('колонки сводки подписаны так, что покрытие не выдаётся за качество', async () => {
+  it('покрытие не выдаётся за качество: это две разные проверки', async () => {
     renderMarketData();
 
-    const table = await screen.findByRole('table');
-    expect(within(table).getByText('Доля сессий окна')).toBeInTheDocument();
-    expect(within(table).getByText('Доля записанных строк')).toBeInTheDocument();
+    // В строке группы — сколько собрано из возможного. Доля строк со
+    // значениями к покрытию не сводится и живёт в сведениях (FR-009, FR-012).
+    const section = (await screen.findByRole('heading', { name: 'Группы данных' })).closest(
+      'section',
+    ) as HTMLElement;
+    expect(within(section).getByText('Собрано из возможного')).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Сведения: Котировки' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Покрытие')).toBeInTheDocument();
+    expect(within(dialog).getByText('Строк со значениями')).toBeInTheDocument();
   });
 });

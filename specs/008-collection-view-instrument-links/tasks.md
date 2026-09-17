@@ -81,7 +81,7 @@ description: "Task list for feature implementation"
 - [X] T022 [US1] Внутренний маршрут журнала прогонов в `backend/src/financial_ai/worker/routes/` и публичный `GET /api/market-data/runs` в `backend/src/financial_ai/api/routes/market_data.py`
 - [X] T023 [P] [US1] Типы состояния прогона и журнала в `frontend/src/entities/market-data/types.ts` и запросы в `api.ts`
 - [X] T024 [US1] Панель прогона по макету в `frontend/src/widgets/catchup-section/`: план источников с идущим и следующим, причины пропусков, итог и журнал, состояния остановки и недоступности сборщика
-- [ ] T025 [P] [US1] Виджет календаря сессий в `frontend/src/widgets/collection-calendar/`: факт слева от сегодня, ожидание пунктиром, листание по месяцам (FR-023, FR-024)
+- [X] T025 [P] [US1] Виджет календаря сессий в `frontend/src/widgets/collection-calendar/`: факт слева от сегодня, ожидание пунктиром, листание по месяцам (FR-023, FR-024)
 - [X] T026 [US1] Строка расписания в `frontend/src/pages/market-data/MarketDataPage.tsx`: следующий сбор датой сессии из календаря, пауза автосбора влияет на расписание (FR-024a, FR-025)
 - [X] T027 [P] [US1] Тесты интерфейса состояний прогона в `frontend/src/widgets/catchup-section/__tests__/` по [contracts/ui-states.md](./contracts/ui-states.md)
 
@@ -97,15 +97,15 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 2
 
-- [ ] T028 [P] [US2] Контрактный тест сводки с составом бумаг в `backend/tests/contract/test_coverage_api.py` по [contracts/coverage-api.md](./contracts/coverage-api.md)
-- [ ] T029 [P] [US2] Интеграционный тест: открытие сводки не обращается к внешним источникам в `backend/tests/integration/test_coverage_offline.py` (SC-006)
+- [X] T028 [P] [US2] Контрактный тест сводки с составом бумаг в `backend/tests/contract/test_coverage_api.py` по [contracts/coverage-api.md](./contracts/coverage-api.md)
+- [X] T029 [P] [US2] Интеграционный тест: открытие сводки не обращается к внешним источникам в `backend/tests/integration/test_coverage_offline.py` (SC-006)
 
 ### Implementation for User Story 2
 
-- [ ] T030 [P] [US2] Сбор ISIN в справочник бумаг в `backend/src/financial_ai/market_data/sources/equity_d1.py` и `securities.py` (FR-018)
-- [ ] T031 [US2] Число бумаг и число бумаг с фьючерсом на дату сводки в `backend/src/financial_ai/market_data/coverage.py`; знаменатель — бумаги с котировкой в успешно собранной сессии (FR-010, FR-013, FR-037)
-- [ ] T032 [US2] Исход каждого источника группы в сводке в `backend/src/financial_ai/market_data/coverage.py` (FR-032)
-- [ ] T033 [US2] Строка группы и раскрытие с исходами источников в `frontend/src/widgets/completeness-table/`
+- [X] T030 [P] [US2] Сбор ISIN в справочник бумаг в `backend/src/financial_ai/market_data/sources/equity_d1.py` и `securities.py` (FR-018)
+- [X] T031 [US2] Число бумаг и число бумаг с фьючерсом на дату сводки в `backend/src/financial_ai/market_data/coverage.py`; знаменатель — бумаги с котировкой в успешно собранной сессии (FR-010, FR-013, FR-037)
+- [X] T032 [US2] Исход каждого источника группы в сводке в `backend/src/financial_ai/market_data/coverage.py` (FR-032)
+- [X] T033 [US2] Строка группы и раскрытие с исходами источников в `frontend/src/widgets/completeness-table/`
 
 **Checkpoint**: сводка объясняет свои числа.
 

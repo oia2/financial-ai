@@ -154,6 +154,22 @@ class MarketDataRepository:
             .limit(1)
         )
 
+    async def sessions_between(self, date_from: dt.date, date_till: dt.date) -> list[dt.date]:
+        """Торговые сессии в отрезке, по возрастанию.
+
+        Нужно календарю раздела: он показывает факт, а факт — это состоявшиеся
+        торги. Дни, которых здесь нет, торговыми не были.
+        """
+        rows = await self._session.scalars(
+            select(TradingSession.session_date)
+            .where(
+                TradingSession.session_date >= date_from,
+                TradingSession.session_date <= date_till,
+            )
+            .order_by(TradingSession.session_date)
+        )
+        return list(rows.all())
+
     async def previous_sessions(self, asof: dt.date, count: int) -> list[dt.date]:
         """Последние ``count`` торговых сессий, включая ``asof``.
 
@@ -188,6 +204,27 @@ class MarketDataRepository:
             )
         )
         await self._session.execute(statement)
+
+    async def update_isins(self, isins: dict[str, str]) -> int:
+        """Проставить устойчивые идентификаторы известным бумагам.
+
+        Тикер — имя на период, ISIN — сама бумага. Без якоря переименование
+        выглядит появлением новой бумаги и молча рвёт связь с фьючерсом
+        (spec 008, FR-018).
+        """
+        if not isins:
+            return 0
+
+        updated = 0
+        for asset_id, isin in isins.items():
+            touched = await self._session.scalars(
+                update(MarketAsset)
+                .where(MarketAsset.asset_id == asset_id, MarketAsset.isin.is_distinct_from(isin))
+                .values(isin=isin)
+                .returning(MarketAsset.asset_id)
+            )
+            updated += len(touched.all())
+        return updated
 
     async def update_lot_sizes(self, lots: dict[str, int]) -> int:
         """Проставить размеры лотов известным активам.

@@ -34,53 +34,76 @@ function renderMarketData() {
 }
 
 /**
- * Строка группы в сводке.
+ * Блок группы в сводке.
  *
- * Поиск ограничен таблицей: те же названия групп есть в форме запуска, и она
- * присутствует в разметке всегда — как закрытый `dialog`.
+ * Поиск идёт по признаку макета, а не по названию: те же названия групп есть
+ * и в форме запуска (она в разметке всегда, как закрытый `dialog`), и в
+ * таблице источников внутри раскрытия.
  */
-async function rowOf(title: string) {
-  const table = await screen.findByRole('table');
-  const cell = within(table).getByText(title);
-  const row = cell.closest('tr');
-  if (row === null) throw new Error(`Строка группы «${title}» не найдена`);
-  return row;
+async function groupBlock(group: string): Promise<HTMLElement> {
+  await screen.findByRole('heading', { name: 'Группы данных' });
+  const block = document.querySelector(`[data-od-id="group-${group}"]`);
+  if (block === null) throw new Error(`Группа «${group}» не найдена`);
+  return block as HTMLElement;
 }
 
-async function summaryTable() {
-  return screen.findByRole('table');
+async function groupsSection(): Promise<HTMLElement> {
+  return (await screen.findByRole('heading', { name: 'Группы данных' })).closest(
+    'section',
+  ) as HTMLElement;
 }
 
 describe('сводка полноты', () => {
-  it('показывает все пять групп с покрытием и долей значений', async () => {
+  it('показывает все пять групп с итогом и объёмом собранного', async () => {
     renderMarketData();
 
     expect(await screen.findByRole('heading', { name: 'Рыночные данные' })).toBeInTheDocument();
 
-    const table = await summaryTable();
-    for (const title of [
+    const section = await groupsSection();
+    // Названия групп берутся из заголовков строк: те же слова встречаются и в
+    // таблице источников внутри раскрытия.
+    const titles = [...section.querySelectorAll('.group-title')].map((node) => node.textContent);
+    expect(titles).toEqual([
       'Котировки',
       'Агрегаты',
       'Глобальные ряды',
       'Позиции по фьючерсам',
       'Справочники',
-    ]) {
-      expect(within(table).getByText(title)).toBeInTheDocument();
-    }
+    ]);
 
-    // 255 из 314 — 81,2% покрытия при 96,1% строк со значениями: два числа,
-    // а не одно (FR-009).
-    const quotes = await rowOf('Котировки');
-    expect(within(quotes).getByText('81,2%')).toBeInTheDocument();
-    expect(within(quotes).getByText('96,1%')).toBeInTheDocument();
+    // 255 из 314 — итог «частично», а не доля, выданная за качество (FR-010).
+    const quotes = await groupBlock('quotes');
     expect(within(quotes).getByText('255 / 314')).toBeInTheDocument();
-    // Не покрыто — разность окна и покрытых сессий.
-    expect(within(quotes).getByText('59')).toBeInTheDocument();
+    expect(within(quotes).getByText('Частично')).toBeInTheDocument();
+  });
+
+  it('раскрытие группы называет источник поимённо', async () => {
+    renderMarketData();
+
+    // У глобальных рядов четыре источника: «глобальные ряды не собраны» без
+    // имени ряда — не диагноз (FR-032).
+    const global = await groupBlock('global');
+    const sources = within(global).getByRole('table');
+    for (const title of ['Глобальные ряды', 'Курсы и ставка ЦБ', 'Brent', 'Состав индекса']) {
+      expect(within(sources).getByText(title)).toBeInTheDocument();
+    }
+    expect(
+      within(global).getByText(/успех одного не закрывает пропуск другого/),
+    ).toBeInTheDocument();
+  });
+
+  it('неполнота позиций объяснена числами, а не догадкой', async () => {
+    renderMarketData();
+
+    // Фьючерс есть не у каждой бумаги, и его отсутствие — не пропуск
+    // (FR-010, FR-013).
+    const positions = await groupBlock('positions');
+    expect(within(positions).getByText(/фьючерс есть у 63 из 243 бумаг/)).toBeInTheDocument();
   });
 
   it('не выводит конкретных значений наблюдений', async () => {
     const { container } = renderMarketData();
-    await summaryTable();
+    await groupsSection();
 
     // Отчёт о полноте, а не просмотр данных (FR-008).
     expect(container.textContent).not.toMatch(/314[,.]22|125484/);
@@ -89,9 +112,9 @@ describe('сводка полноты', () => {
   it('группа без истории не выглядит недобранной', async () => {
     renderMarketData();
 
-    const reference = await rowOf('Справочники');
-    expect(within(reference).getByText('История не ведётся')).toBeInTheDocument();
-    expect(within(reference).getByText('Текущее состояние')).toBeInTheDocument();
+    const reference = await groupBlock('reference');
+    expect(within(reference).getAllByText('текущее состояние').length).toBeGreaterThan(0);
+    expect(within(reference).getByText(/истории у него нет/)).toBeInTheDocument();
     // Ноль вместо отсутствующего покрытия читался бы как «ничего не собрано».
     expect(within(reference).queryByText('0,0%')).not.toBeInTheDocument();
   });
@@ -121,7 +144,7 @@ describe('сводка полноты', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('расхождение «покрыто, но пусто» видно и в уведомлении, и в строке', async () => {
+  it('расхождение «покрыто, но пусто» видно и в уведомлении, и в строке группы', async () => {
     server.use(
       http.get('*/api/market-data/coverage', () => HttpResponse.json(anomalyCoverageFixture())),
     );
@@ -134,9 +157,8 @@ describe('сводка полноты', () => {
       /Догон пропущенных сессий сам по себе это расхождение не исправит/,
     );
 
-    const positions = await rowOf('Позиции по фьючерсам');
-    expect(positions).toHaveClass('anomaly-row');
     // Состояние передано текстом, а не только цветом (FR-052).
+    const positions = await groupBlock('positions');
     expect(within(positions).getByText('Значения отсутствуют')).toBeInTheDocument();
   });
 
@@ -144,7 +166,7 @@ describe('сводка полноты', () => {
     server.use(http.get('*/api/market-data/coverage', () => HttpResponse.json(coverageFixture())));
 
     renderMarketData();
-    await summaryTable();
+    await groupsSection();
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -159,7 +181,7 @@ describe('сводка полноты', () => {
     );
 
     renderMarketData();
-    await summaryTable();
+    await groupsSection();
     expect(calls).toBe(1);
 
     await userEvent.click(screen.getByRole('button', { name: 'Обновить сводку рыночных данных' }));

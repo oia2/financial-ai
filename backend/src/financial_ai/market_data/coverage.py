@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import groups
+from financial_ai.market_data import groups, plan
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.repository import MarketDataRepository
 
@@ -42,6 +42,10 @@ class GroupCoverage:
 
     rows_total: int
     rows_with_values: int
+
+    # Исход каждого источника группы. Полнота считается по каждому, а не по
+    # любому: успех одного не закрывает пропуск другого (FR-032).
+    sources: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def coverage_ratio(self) -> float | None:
@@ -83,6 +87,7 @@ class GroupCoverage:
             # пришлось бы повторить в команде и ещё раз в интерфейсе, и при
             # первом же уточнении они разошлись бы (FR-013a).
             "looks_collected_but_empty": self.looks_collected_but_empty,
+            "sources": self.sources,
         }
         if self.has_history:
             # У справочника этих полей НЕТ вовсе, а не нули: ноль читался бы
@@ -98,12 +103,53 @@ class GroupCoverage:
         return payload
 
 
+async def _source_outcomes(
+    repository: MarketDataRepository,
+    group: groups.SourceGroup,
+    window: list[dt.date],
+) -> list[dict[str, object]]:
+    """Исход каждого источника группы за окно.
+
+    Нужен, чтобы неполнота группы объяснялась именем источника, а не оставалась
+    числом. У «глобальных рядов» четыре источника, и ошибка одного из них — это
+    ошибка конкретного ряда, а не группы вообще.
+    """
+    if not window:
+        return []
+
+    outcomes: list[dict[str, object]] = []
+    for source_id in group.source_ids:
+        covered = await repository.sessions_with_successful_run(window, source_id)
+        title = plan.title_of(source_id)
+        scope = next(
+            (spec.scope for spec in plan.CATCHUP_PLAN if spec.source_id == source_id),
+            plan.SESSION,
+        )
+        outcomes.append(
+            {
+                "source_id": source_id,
+                "title": title,
+                "scope": scope,
+                "status": "ok" if len(covered) >= len(window) else "failed",
+                "sessions_covered": len(covered),
+            }
+        )
+    return outcomes
+
+
 async def build_report(
     session: AsyncSession, settings: Settings, asof_date: dt.date
 ) -> dict[str, object]:
     """Собрать сводку по всем группам на дату решения."""
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
+
+    # Состав бумаг на дату сводки. Знаменатель — бумаги с котировкой за эту
+    # сессию, а не все, когда-либо встречавшиеся в данных: тот счёт только
+    # растёт и медленно врёт, потому что ушедшая с торгов бумага остаётся в нём
+    # навсегда (spec 008, FR-013, FR-037).
+    traded = await repository.assets_traded_on(asof_date)
+    links = await repository.active_links_on(asof_date)
 
     rows: list[GroupCoverage] = []
     for group in groups.GROUPS:
@@ -117,6 +163,8 @@ async def build_report(
             window or None,
         )
 
+        sources = await _source_outcomes(repository, group, window)
+
         rows.append(
             GroupCoverage(
                 group_id=group.group_id.value,
@@ -129,6 +177,7 @@ async def build_report(
                 gaps=(len(window) - (raw.sessions_covered or 0)) if group.has_history else None,
                 rows_total=raw.rows_total,
                 rows_with_values=raw.rows_with_values,
+                sources=sources,
             )
         )
 
@@ -146,7 +195,15 @@ async def build_report(
 
     return {
         "asof_date": asof_date.isoformat(),
+        "universe": {
+            "assets": len(traded),
+            "assets_with_futures": len(traded & set(links)),
+        },
         "next_session": next_session.isoformat() if next_session else None,
+        # Порог сбора текущей сессии. Биржевое время отдаёт сервер: оно живёт в
+        # настройке сборщика, и второе объявление того же факта в интерфейсе
+        # однажды разошлось бы с первым.
+        "ingest_after_close": settings.market_data_ingest_after_close,
         "catchup_window": {
             "date_from": catchup_window[0].isoformat() if catchup_window else None,
             "date_till": catchup_window[-1].isoformat() if catchup_window else None,

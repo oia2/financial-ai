@@ -45,5 +45,18 @@ async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) ->
     by_asset = {asset_id_for(ticker): lot for ticker, lot in lots.items()}
     updated = await repository.update_lot_sizes(by_asset)
 
-    logger.info("размеры лотов: обновлено %d активов из %d полученных", updated, len(lots))
+    # Тем же ответом приходит ISIN: якорь сущности, по которому переименование
+    # опознаётся как переименование. Отдельного обращения ради него не делается.
+    isins = await client.fetch_equity_isins()
+    known = await repository.tickers_with_history()
+    linked = await repository.update_isins(
+        {asset_id_for(ticker): isin for ticker, isin in isins.items() if ticker in known}
+    )
+
+    logger.info(
+        "справочник бумаг: лотов обновлено %d из %d, ISIN записано %d",
+        updated,
+        len(lots),
+        linked,
+    )
     return updated

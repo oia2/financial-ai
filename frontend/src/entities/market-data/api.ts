@@ -8,6 +8,7 @@ import {
   isCatchupActive,
   type CatchupStartResultDto,
   type CatchupStateDto,
+  type CalendarMonthDto,
   type CollectionSettingsDto,
   type CoverageDto,
   type RunsDto,
@@ -16,6 +17,7 @@ import {
 
 export const coverageQueryKey = ['market-data', 'coverage'] as const;
 export const runsQueryKey = ['market-data', 'runs'] as const;
+export const calendarQueryKey = (month: string) => ['market-data', 'calendar', month] as const;
 export const catchupQueryKey = ['market-data', 'catchup'] as const;
 export const collectionQueryKey = ['market-data', 'settings'] as const;
 
@@ -39,6 +41,10 @@ export function fetchCatchupState(): Promise<CatchupStateDto> {
 
 export function fetchRuns(): Promise<RunsDto> {
   return apiGet<RunsDto>('/api/market-data/runs');
+}
+
+export function fetchCalendar(month: string): Promise<CalendarMonthDto> {
+  return apiGet<CalendarMonthDto>(`/api/market-data/calendar?month=${month}`);
 }
 
 export function startCatchup(request: LaunchRequest): Promise<CatchupStartResultDto> {
@@ -96,6 +102,11 @@ export function useCoverage(): UseQueryResult<CoverageDto> {
  */
 export function useRuns(): UseQueryResult<RunsDto> {
   return useQuery({ queryKey: runsQueryKey, queryFn: fetchRuns });
+}
+
+/** Календарь сессий на месяц. Факт — слева от сегодня, справа ничего. */
+export function useCalendar(month: string): UseQueryResult<CalendarMonthDto> {
+  return useQuery({ queryKey: calendarQueryKey(month), queryFn: () => fetchCalendar(month) });
 }
 
 /**

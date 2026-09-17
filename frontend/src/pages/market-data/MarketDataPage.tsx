@@ -33,9 +33,22 @@ import { useCatchupControl } from '@/features/catchup-launch/useCatchupControl';
 import { ApiError, ServerUnreachableError } from '@/shared/api/client';
 import { formatIsoDate } from '@/shared/lib/market-format';
 import { CatchupSection, RunNotice } from '@/widgets/catchup-section/CatchupSection';
-import { CompletenessTable } from '@/widgets/completeness-table/CompletenessTable';
+import { CollectionCalendar } from '@/widgets/collection-calendar/CollectionCalendar';
 import { EmptyValuesAlert } from '@/widgets/completeness-table/EmptyValuesAlert';
+import { GroupsSection } from '@/widgets/completeness-table/GroupsSection';
 import { GroupDetailsDrawer } from '@/widgets/completeness-table/GroupDetailsDrawer';
+
+/**
+ * Биржевой порог в поясе зрителя.
+ *
+ * Время показывается местное, московское — только у порога и только как
+ * дополнение: это биржевое правило, а не наше (FR-022).
+ */
+function localThreshold(exchangeTime: string): string {
+  const [hours = 19, minutes = 30] = exchangeTime.split(':').map(Number);
+  const moscow = new Date(Date.UTC(2026, 0, 1, hours - 3, minutes));
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(moscow);
+}
 
 export function MarketDataPage() {
   const coverage = useCoverage();
@@ -180,31 +193,24 @@ export function MarketDataPage() {
 
       {control.clamp !== null && <ClampNotice {...control.clamp} />}
 
-      <section className="summary-section">
-        <div className="summary-heading">
-          <h2>Состояние данных</h2>
-          <p>Покрытие сессий и наличие значений — две отдельные проверки.</p>
+      {emptyStorage ? (
+        <EmptyStorage />
+      ) : disconnected ? (
+        <Disconnected />
+      ) : workerDown ? (
+        <WorkerUnavailable />
+      ) : coverage.data === undefined ? (
+        <div className="empty-summary" aria-live="polite">
+          <p>Читаем состояние данных…</p>
         </div>
-
-        {emptyStorage ? (
-          <EmptyStorage />
-        ) : disconnected ? (
-          <Disconnected />
-        ) : workerDown ? (
-          <WorkerUnavailable />
-        ) : coverage.data === undefined ? (
-          <div className="empty-summary" aria-live="polite">
-            <p>Читаем состояние данных…</p>
-          </div>
-        ) : (
-          <CompletenessTable groups={coverage.data.groups} onOpenDetails={setDetails} />
-        )}
-
-        <p className="summary-footnote">
-          Окно считается в торговых сессиях. Доля значений — среди записанных строк, а не среди
-          сессий.
-        </p>
-      </section>
+      ) : (
+        <GroupsSection
+          asofDate={coverage.data.asof_date}
+          groups={coverage.data.groups}
+          universe={coverage.data.universe}
+          onOpenDetails={setDetails}
+        />
+      )}
 
       {catchup.data !== undefined && (
         <CatchupSection
@@ -224,6 +230,18 @@ export function MarketDataPage() {
           onStart={control.openDrawer}
           onStop={control.requestStop}
           onRepeat={() => control.resume(catchup.data.groups)}
+        />
+      )}
+
+      {coverage.data !== undefined && (
+        <CollectionCalendar
+          nextSession={coverage.data.next_session}
+          threshold={{
+            local: localThreshold(coverage.data.ingest_after_close),
+            exchange: `${coverage.data.ingest_after_close} МСК`,
+          }}
+          lastClosed={coverage.data.asof_date}
+          paused={collectionPaused}
         />
       )}
 

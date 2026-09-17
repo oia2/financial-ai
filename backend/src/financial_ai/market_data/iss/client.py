@@ -210,6 +210,32 @@ class IssClient:
 
         return lots
 
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        """Устойчивые идентификаторы бумаг доски.
+
+        Тикер — имя бумаги на период, а не сама бумага: при переименовании он
+        меняется, и связь с фьючерсом рвётся молча. ISIN не меняется, поэтому
+        переименование по нему опознаётся как переименование, а не как новая
+        бумага (spec 008, FR-018). Сверено на живом источнике 2026-09-17:
+        доска отдаёт ISIN, у фьючерсов его нет.
+        """
+        payload = await self._get_json(
+            urls.equity_securities_url(self._config.base_url, self._config.board),
+            {"iss.meta": "off", "iss.only": "securities"},
+        )
+        block = payload.get("securities") or {}
+        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+
+        isins: dict[str, str] = {}
+        for row in rows:
+            ticker = row.get("SECID")
+            isin = row.get("ISIN")
+            if not isinstance(ticker, str) or not isinstance(isin, str):
+                continue
+            if ticker.strip() and isin.strip():
+                isins[ticker.strip().upper()] = isin.strip().upper()
+        return isins
+
     async def fetch_index_analytics(
         self, index_id: str, session_date: str | None = None
     ) -> list[dict[str, Any]]:

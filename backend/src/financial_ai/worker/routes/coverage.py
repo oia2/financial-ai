@@ -82,3 +82,25 @@ async def get_coverage(
             )
 
         return await coverage_module.build_report(session, settings, resolved)
+
+
+@router.get("/calendar")
+async def calendar_month(month: str | None = None) -> dict[str, object]:
+    """Состояние дней месяца: факт слева от сегодня, ничего справа.
+
+    Календарь строится по состоявшимся торгам, поэтому будущих дней сервер не
+    утверждает вовсе — их помечает ожиданием интерфейс (spec 008, FR-023).
+    """
+    from financial_ai.market_data import calendar_view
+
+    today = moscow_today()
+    year, month_number = today.year, today.month
+    if month:
+        try:
+            year, month_number = (int(part) for part in month.split("-", 1))
+        except ValueError:
+            year, month_number = today.year, today.month
+
+    factory = get_session_factory()
+    async with factory() as session:
+        return await calendar_view.build_month(session, get_settings(), year, month_number)

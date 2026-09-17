@@ -13,7 +13,7 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { AppShell } from '@/app/App';
@@ -67,9 +67,11 @@ describe('ход прогона', () => {
 
     // Идущий источник — тот, ради которого лента и заведена: без него долгий
     // шаг неотличим от зависания.
-    expect(await screen.findByText('Агрегаты торгов')).toBeInTheDocument();
-    expect(screen.getByText('идёт')).toBeInTheDocument();
-    expect(screen.getByText('следующий')).toBeInTheDocument();
+    // Поиск ограничен лентой: те же названия источников есть в раскрытии
+    // групп сводки.
+    const rail = (await screen.findByText('идёт')).closest('.source-rail') as HTMLElement;
+    expect(within(rail).getByText('Агрегаты торгов')).toBeInTheDocument();
+    expect(within(rail).getByText('следующий')).toBeInTheDocument();
   });
 
   it('идёт: календарь помечен суточным и в счёт сессии не входит', async () => {

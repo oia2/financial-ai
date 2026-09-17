@@ -13,7 +13,7 @@
 import type { GroupCoverageDto } from '@/entities/market-data';
 import { formatRatio } from '@/shared/lib/market-format';
 
-import { capitalize } from './CompletenessTable';
+import { capitalize } from './GroupsSection';
 
 export function EmptyValuesAlert({ groups }: { groups: GroupCoverageDto[] }) {
   const affected = groups.filter((row) => row.looks_collected_but_empty);

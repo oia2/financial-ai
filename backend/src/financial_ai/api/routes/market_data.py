@@ -121,6 +121,19 @@ async def read_catchup() -> Response:
     return await _worker("GET", "/internal/catchup")
 
 
+@router.get("/market-data/calendar")
+async def read_calendar(
+    month: Annotated[str | None, Query(description="Месяц в виде YYYY-MM")] = None,
+) -> Response:
+    """Календарь сессий на месяц.
+
+    Слева от сегодняшнего дня — состоявшиеся сессии, и это факт. Справа сервер
+    не утверждает ничего: будущих торгов календарь не знает.
+    """
+    params = {"month": month} if month else None
+    return await _worker("GET", "/internal/calendar", params=params)
+
+
 @router.get("/market-data/runs")
 async def read_runs(
     limit: Annotated[int, Query(ge=1, le=20, description="Сколько прогонов вернуть")] = 5,

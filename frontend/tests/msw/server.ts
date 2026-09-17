@@ -21,6 +21,9 @@ export const server = setupServer(
   // Сбор по умолчанию идёт: это умолчание сборщика, и тесты видят то же, что
   // человек на свежем запуске.
   http.get('*/api/market-data/runs', () => HttpResponse.json({ runs: [] })),
+  http.get('*/api/market-data/calendar', () =>
+    HttpResponse.json({ month: '2026-09', today: '2026-09-03', days: [] }),
+  ),
   http.get('*/api/market-data/settings', () => HttpResponse.json({ paused: false })),
   http.put('*/api/market-data/settings', async ({ request }) =>
     HttpResponse.json(await request.json()),

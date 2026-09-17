@@ -12,17 +12,52 @@ import type {
   CatchupStatus,
   CoverageDto,
   GroupCoverageDto,
+  SourceCoverageDto,
 } from '@/entities/market-data';
+
+/**
+ * Источники группы — те же, что у сборщика.
+ *
+ * Держать их здесь списком приходится: сводка приходит с сервера целиком, и
+ * подделать её частично значило бы проверять форму, которой не существует.
+ */
+const SOURCES: Record<GroupCoverageDto['group'], [string, string, string][]> = {
+  quotes: [['equity_d1', 'Котировки акций', 'session']],
+  aggregates: [['equity_agg', 'Агрегаты торгов', 'session']],
+  global: [
+    ['global_series', 'Глобальные ряды', 'session'],
+    ['cbr', 'Курсы и ставка ЦБ', 'session'],
+    ['brent', 'Brent', 'session'],
+    ['index_constituents', 'Состав индекса', 'session'],
+  ],
+  positions: [['futures_positions', 'Позиции по фьючерсам', 'session']],
+  reference: [
+    ['equity_sectors', 'Секторы бумаг', 'session'],
+    ['equity_lot_sizes', 'Лоты бумаг', 'session'],
+  ],
+};
+
+function sourcesOf(group: GroupCoverageDto['group'], covered: number): SourceCoverageDto[] {
+  return SOURCES[group].map(([source_id, title, scope]) => ({
+    source_id,
+    title,
+    scope,
+    status: 'ok',
+    sessions_covered: covered,
+  }));
+}
 
 export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageDto {
   return {
     asof_date: '2026-09-03',
     next_session: '2026-09-03',
+    ingest_after_close: '19:30',
     catchup_window: {
       date_from: '2026-04-20',
       date_till: '2026-09-03',
       sessions: 314,
     },
+    universe: { assets: 243, assets_with_futures: 63 },
     groups: [
       historyGroup('quotes', 'котировки', 255, 314, 0.961),
       historyGroup('aggregates', 'агрегаты', 224, 314, 1.0),
@@ -36,6 +71,7 @@ export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageD
         rows_with_values: 506,
         value_ratio: 1.0,
         looks_collected_but_empty: false,
+        sources: sourcesOf('reference', 0),
       },
     ],
     ...overrides,
@@ -65,6 +101,7 @@ function historyGroup(
     rows_with_values: null,
     value_ratio: valueRatio,
     looks_collected_but_empty: false,
+    sources: sourcesOf(group, covered),
   };
 }
 

@@ -104,10 +104,21 @@ describe('пустое хранилище и полнота', () => {
     renderMarketData();
 
     // Доля значений остаётся отдельным показателем даже при покрытии 100%.
-    const positions = (await screen.findByRole('table')).querySelector('.anomaly-row');
+    // В строке группы итог назван словом, а оба числа — в сведениях.
+    await screen.findByRole('heading', { name: 'Группы данных' });
+    const positions = document.querySelector('[data-od-id="group-positions"]');
     expect(positions).not.toBeNull();
-    expect(within(positions as HTMLElement).getByText('100,0%')).toBeInTheDocument();
-    expect(within(positions as HTMLElement).getByText('0,0%')).toBeInTheDocument();
+    expect(within(positions as HTMLElement).getByText('Значения отсутствуют')).toBeInTheDocument();
+
+    await userEvent.click(
+      within(positions as HTMLElement).getByRole('button', {
+        name: 'Сведения: Позиции по фьючерсам',
+      }),
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('100,0%')).toBeInTheDocument();
+    expect(within(dialog).getByText('0,0%')).toBeInTheDocument();
   });
 });
 

@@ -14,7 +14,7 @@ import { useEffect, useRef } from 'react';
 import type { GroupCoverageDto } from '@/entities/market-data';
 import { DASH, formatCount, formatIsoDate, formatRatio } from '@/shared/lib/market-format';
 
-import { capitalize } from './CompletenessTable';
+import { capitalize } from './GroupsSection';
 
 export function GroupDetailsDrawer({
   group,

@@ -16,6 +16,33 @@
 
 export type GroupId = 'quotes' | 'aggregates' | 'global' | 'positions' | 'reference';
 
+/**
+ * Исход одного источника группы за окно.
+ *
+ * Полнота группы считается по каждому источнику, поэтому неполнота обязана
+ * называть источник: у «глобальных рядов» их четыре, и ошибка одного — это
+ * ошибка конкретного ряда, а не группы вообще (FR-032).
+ */
+export interface SourceCoverageDto {
+  source_id: string;
+  title: string;
+  /** `session`, `period` или `daily` — как часто источник ходит за данными. */
+  scope: string;
+  status: 'ok' | 'failed';
+  sessions_covered: number;
+}
+
+/**
+ * Состав бумаг на дату сводки.
+ *
+ * Знаменатель неполноты позиций: фьючерс есть не у каждой бумаги, и его
+ * отсутствие — не пропуск (FR-010, FR-013).
+ */
+export interface UniverseDto {
+  assets: number;
+  assets_with_futures: number;
+}
+
 export interface GroupCoverageDto {
   group: GroupId;
   /** Название группы. Показывается с заглавной буквы, своей таблицы меток нет. */
@@ -43,6 +70,9 @@ export interface GroupCoverageDto {
    * (FR-016, research.md R2.1).
    */
   looks_collected_but_empty: boolean;
+
+  /** Исход каждого источника группы. Пуст, когда окно пусто. */
+  sources: SourceCoverageDto[];
 }
 
 export interface CatchupWindowDto {
@@ -55,8 +85,12 @@ export interface CoverageDto {
   asof_date: string;
   /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
   next_session: string | null;
+  /** Порог сбора текущей сессии по биржевому времени, «19:30». */
+  ingest_after_close: string;
   /** Окно догона — не окно группы: у групп они разные. */
   catchup_window: CatchupWindowDto;
+  /** Сколько бумаг и у скольких из них есть фьючерс. */
+  universe: UniverseDto;
   groups: GroupCoverageDto[];
 }
 
@@ -186,4 +220,20 @@ export interface LaunchRequest {
 
 export function isCatchupActive(status: CatchupStatus): boolean {
   return status === 'running' || status === 'stopping';
+}
+
+/** День календаря сессий. Будущее сервер не утверждает: `kind` там `future`. */
+export type CalendarDayKind = 'session' | 'nontrade' | 'open' | 'future';
+
+export interface CalendarDayDto {
+  date: string;
+  kind: CalendarDayKind;
+  /** Состояние по каждой группе: `collected` или `missing`. */
+  groups: Record<string, 'collected' | 'missing'>;
+}
+
+export interface CalendarMonthDto {
+  month: string;
+  today: string;
+  days: CalendarDayDto[];
 }
