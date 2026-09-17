@@ -69,14 +69,7 @@ def session_is_closed(
     if session_date > current.date():
         return False
 
-    raw = settings.market_data_ingest_after_close
-    try:
-        hours, minutes = raw.split(":", 1)
-        after = dt.time(int(hours), int(minutes))
-    except (ValueError, IndexError):
-        after = dt.time(19, 30)
-
-    return current.time() >= after
+    return current.time() >= _threshold_time(settings)
 
 
 async def pending_sessions(
@@ -230,16 +223,49 @@ def _after_retry_delay(
     return ready
 
 
-async def _calendar_is_due(repository: MarketDataRepository, now: dt.datetime | None) -> bool:
+async def calendar_is_due(
+    repository: MarketDataRepository,
+    now: dt.datetime | None,
+    settings: Settings | None = None,
+) -> bool:
     """Пора ли спрашивать календарь.
 
-    Раз в сутки достаточно: новые торговые дни появляются не чаще. Отметка —
-    момент последнего успешного прогона источника календаря.
+    Раз в сутки — мало. Первый тик суток приходится на 00:0x, когда сегодняшних
+    торгов ещё не было, а повтор в тот же день запрещался: сегодняшняя дата
+    попадала в календарь только следующей ночью, и сессия собиралась на сутки
+    позже. Порог 19:30 при этом не работал вовсе.
+
+    Поэтому правил два: спрашивать, если сегодня ещё не спрашивали, И спрашивать
+    ещё раз, если с прошлого запроса наступил порог — прежде чем решать, что
+    сегодняшней сессии не было (spec 008, FR-040).
     """
     last = await repository.last_successful_run_at(trading_calendar.SOURCE_ID)
     if last is None:
         return True
-    return last.astimezone(MOSCOW).date() < (now or moscow_now()).date()
+
+    moment = now or moscow_now()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=MOSCOW)
+    asked = last.astimezone(MOSCOW)
+
+    if asked.date() < moment.date():
+        return True
+
+    if settings is None:
+        return False
+
+    threshold = dt.datetime.combine(moment.date(), _threshold_time(settings), tzinfo=MOSCOW)
+    return asked < threshold <= moment
+
+
+def _threshold_time(settings: Settings) -> dt.time:
+    """Время, с которого сегодняшняя сессия считается закрытой."""
+    raw = settings.market_data_ingest_after_close
+    try:
+        hours, minutes = raw.split(":", 1)
+        return dt.time(int(hours), int(minutes))
+    except (ValueError, IndexError):
+        return dt.time(19, 30)
 
 
 async def advance(
@@ -270,7 +296,7 @@ async def advance(
     # планировщика — раз в минуту, и обращение на каждый тик было бы тысячей
     # запросов к бирже заведомо ни за чем. Признак берётся из хранилища исходов,
     # а не из памяти процесса: перезапуск не должен его терять.
-    if await _calendar_is_due(repository, now):
+    if await calendar_is_due(repository, now, settings):
         config = ingest.build_iss_config(settings)
         async with IssClient(config) as iss:
             # Исход записывается тем же способом, что у остальных источников:

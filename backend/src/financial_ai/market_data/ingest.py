@@ -29,7 +29,6 @@ from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import (
     brent,
     cbr,
-    dividends,
     equity_agg,
     equity_d1,
     global_series,
@@ -117,8 +116,8 @@ async def ingest_session(
     session_date: dt.date | None = None,
     client: IssClient | None = None,
     cbr_client: httpx.AsyncClient | None = None,
-    broker_client: object | None = None,
     positions_client: PositionsClient | None = None,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> IngestResult:
     """Собрать данные одной торговой сессии.
 
@@ -146,17 +145,25 @@ async def ingest_session(
 
     try:
         # Шаг 1: календарь. До него неизвестно, была ли сессия вообще.
-        calendar_outcome = await run_source(
-            repository,
-            run_id,
-            trading_calendar.SOURCE_ID,
-            session_date,
-            lambda: trading_calendar.sync_trading_calendar(
-                iss, repository, settings.market_data_calendar_proxy_security
-            ),
-        )
-        result.outcomes.append(calendar_outcome)
-        await session.commit()
+        #
+        # Спрашивается по суточному гейту, а не на каждую сессию. Прежде запрос
+        # шёл безусловно, и догон десяти дней тянул историю торгов с 1990 года
+        # десять раз подряд — это и была заметная часть «подвисаний».
+        from financial_ai.market_data.advance import calendar_is_due
+
+        if await calendar_is_due(repository, None):
+            calendar_outcome = await run_source(
+                repository,
+                run_id,
+                trading_calendar.SOURCE_ID,
+                session_date,
+                lambda: trading_calendar.sync_trading_calendar(
+                    iss, repository, settings.market_data_calendar_proxy_security
+                ),
+                on_source=on_source,
+            )
+            result.outcomes.append(calendar_outcome)
+            await session.commit()
 
         if session_date is None:
             session_date = await calendar.latest_session(moscow_today())
@@ -187,6 +194,7 @@ async def ingest_session(
             equity_d1.SOURCE_ID,
             session_date,
             lambda: equity_d1.sync_equity_daily(iss, repository, session_date),
+            on_source=on_source,
         )
         result.outcomes.append(quotes_outcome)
         await session.commit()
@@ -216,12 +224,10 @@ async def ingest_session(
             ),
             (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
             (cbr.SOURCE_ID, lambda: _sync_cbr(repository, session_date, cbr_client)),
-            (
-                dividends.SOURCE_ID,
-                lambda: _sync_dividends(repository, session_date, broker_client),
-            ),
         ):
-            outcome = await run_source(repository, run_id, source_id, session_date, action)
+            outcome = await run_source(
+                repository, run_id, source_id, session_date, action, on_source=on_source
+            )
             result.outcomes.append(outcome)
             await session.commit()
 
@@ -235,6 +241,7 @@ async def ingest_session(
             positions.SOURCE_ID,
             session_date,
             lambda: _sync_positions(settings, iss, repository, day, pos_client, sessions=None),
+            on_source=on_source,
         )
         result.outcomes.append(delayed)
         await session.commit()
@@ -502,7 +509,6 @@ async def ingest_and_rank(
     session_date: dt.date | None = None,
     client: IssClient | None = None,
     cbr_client: httpx.AsyncClient | None = None,
-    broker_client: object | None = None,
 ) -> tuple[IngestResult, object | None]:
     """Собрать данные сессии, материализовать набор и запросить ранжирование.
 
@@ -515,9 +521,7 @@ async def ingest_and_rank(
     from financial_ai.ranking import client as ranking_client
     from financial_ai.ranking import dataset as dataset_module
 
-    result = await ingest_session(
-        session, settings, session_date, client, cbr_client, broker_client
-    )
+    result = await ingest_session(session, settings, session_date, client, cbr_client)
     if result.session_date is None or not result.succeeded:
         logger.info("ранжирование пропущено: сбор не завершён успешно")
         return result, None
@@ -565,24 +569,6 @@ async def _sync_cbr(
     return written
 
 
-async def _sync_dividends(
-    repository: MarketDataRepository,
-    session_date: dt.date,
-    broker_client: object | None,
-) -> int:
-    """Дивиденды от брокера.
-
-    Единственный источник, которому нужен токен. Если брокер не настроен —
-    источник пропускается: дивиденды дополняют картину, но не являются
-    основанием для отказа всего сбора.
-    """
-    if broker_client is None:
-        raise IssError("клиент брокера не настроен: дивиденды пропущены")
-
-    known = await repository.tickers_with_history()
-    return await dividends.sync_dividends(broker_client, repository, session_date, known)
-
-
 async def _sync_cbr_range(
     repository: MarketDataRepository,
     date_from: dt.date,
@@ -613,6 +599,7 @@ async def _run_delayed_source(
     source_id: str,
     session_date: dt.date,
     action: object,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> SourceOutcome:
     """Выполнить сбор задержанного источника с повторами.
 
@@ -622,7 +609,9 @@ async def _run_delayed_source(
     """
     outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason="не выполнялся")
     for attempt in range(1, DELAYED_SOURCE_ATTEMPTS + 1):
-        outcome = await run_source(repository, run_id, source_id, session_date, action)
+        outcome = await run_source(
+            repository, run_id, source_id, session_date, action, on_source=on_source
+        )
         if outcome.status == STATUS_OK:
             return outcome
         logger.info(
@@ -641,12 +630,25 @@ async def run_source(
     session_date: dt.date | None,
     action: object,
     trigger: str = TRIGGER_DAILY,
+    period: tuple[dt.date, dt.date] | None = None,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> SourceOutcome:
     """Выполнить сбор одного источника, зафиксировав исход.
 
     Неуспех одного источника не отменяет успех остальных и не затрагивает
     ранее собранные данные: исключение ловится здесь и записывается.
+
+    ``period`` — отрезок, который исход покрывает. У посессионного источника он
+    равен сессии и подставляется сам; источник с выборкой за диапазон передаёт
+    его явно, иначе выглядел бы несобравшим всё, кроме последней сессии.
+
+    ``on_source`` зовётся дважды: перед обращением и после него. Без этого
+    человек видит «идёт сбор» и не видит, чем система занята прямо сейчас, —
+    долгий источник неотличим от зависания.
     """
+    if on_source is not None:
+        on_source(source_id, "running", None)
+
     started = dt.datetime.now(dt.UTC)
     try:
         written = await action()  # type: ignore[operator]
@@ -669,7 +671,12 @@ async def run_source(
         rows_written=outcome.rows_written,
         failure_reason=outcome.failure_reason,
         trigger=trigger,
+        period_from=period[0] if period else None,
+        period_till=period[1] if period else None,
     )
+
+    if on_source is not None:
+        on_source(source_id, outcome.status, outcome)
     return outcome
 
 
