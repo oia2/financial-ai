@@ -67,7 +67,7 @@ description: "Task list for feature implementation"
 - [X] T011 [P] [US1] Контрактный тест состояния прогона (режим, план источников, исходы сессий, причины пропусков) в `backend/tests/contract/test_collection_state_api.py` по [contracts/collection-state-api.md](./contracts/collection-state-api.md)
 - [X] T012 [P] [US1] Контрактный тест журнала прогонов в `backend/tests/contract/test_runs_api.py`
 - [X] T013 [P] [US1] Интеграционный тест: причины пропусков и итог прогона доступны после перезапуска сборщика в `backend/tests/integration/test_run_journal.py`
-- [ ] T014 [P] [US1] Интеграционный тест: сессия, закрывшаяся сегодня, берётся в сбор в тот же вечер в `backend/tests/integration/test_calendar_timing.py` (SC-010)
+- [X] T014 [P] [US1] Интеграционный тест: сессия, закрывшаяся сегодня, берётся в сбор в тот же вечер в `backend/tests/integration/test_calendar_timing.py` (SC-010)
 
 ### Implementation for User Story 1
 
