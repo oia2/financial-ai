@@ -48,9 +48,7 @@ describe('доступность раздела', () => {
     renderMarketData();
 
     const track = await screen.findByRole('img', { name: /Собрано 18 из 90/ });
-    expect(track).toHaveAccessibleName(
-      'Собрано 18 из 90; с ошибкой 1; пропущено 0; осталось 71',
-    );
+    expect(track).toHaveAccessibleName('Собрано 18 из 90; с ошибкой 1; пропущено 0; осталось 71');
   });
 
   it('значки состояния источников не читаются с экрана', async () => {

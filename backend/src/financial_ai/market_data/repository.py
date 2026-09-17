@@ -445,7 +445,7 @@ class MarketDataRepository:
             .where(_positions_filled())
             .group_by(FuturesPosition.asset_id)
         )
-        return dict(rows.all())  # type: ignore[arg-type]
+        return {asset_id: contract for asset_id, contract in rows.all()}  # noqa: C416  # type: ignore[arg-type]
 
     async def positions_for_window(self, sessions: list[dt.date]) -> list[FuturesPosition]:
         if not sessions:
@@ -843,7 +843,7 @@ class MarketDataRepository:
                 or_(AssetFuturesLink.valid_till.is_(None), AssetFuturesLink.valid_till >= day),
             )
         )
-        return dict(rows.all())
+        return {row.asset_id: row.contract_code for row in rows.all()}
 
     async def link_history(self, asset_id: str) -> list[AssetFuturesLink]:
         """Все интервалы связи бумаги, от старых к новым."""

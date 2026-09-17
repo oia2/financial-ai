@@ -100,11 +100,17 @@ export function CatchupSection({
       }`;
 
   return (
-    <section className="collection-panel" aria-labelledby="runTitle" data-od-id="current-collection">
+    <section
+      className="collection-panel"
+      aria-labelledby="runTitle"
+      data-od-id="current-collection"
+    >
       <div className="panel-top">
         <div>
           <div className="section-kicker">
-            <span className={`status-dot${state.status === 'failed' ? ' error' : past ? ' neutral' : ''}`} />
+            <span
+              className={`status-dot${state.status === 'failed' ? ' error' : past ? ' neutral' : ''}`}
+            />
             <span>
               {mode}
               {past && ` · ${PAST_WORD[state.status] ?? 'закончен'}`}
@@ -151,7 +157,13 @@ export function CatchupSection({
       {past && (
         <p className="run-next">
           Следующий сбор —{' '}
-          <b>{paused ? 'не будет' : nextSession === null ? 'по расписанию' : formatIsoDate(nextSession)}</b>
+          <b>
+            {paused
+              ? 'не будет'
+              : nextSession === null
+                ? 'по расписанию'
+                : formatIsoDate(nextSession)}
+          </b>
           {paused ? ', пока автосбор на паузе' : ', после закрытия сессии'}
         </p>
       )}

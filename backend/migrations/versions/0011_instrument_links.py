@@ -78,7 +78,9 @@ def upgrade() -> None:
         sa.Column("detail", sa.Text(), nullable=True),
         sa.PrimaryKeyConstraint("session_date", "decided_at"),
     )
-    op.create_index("ix_session_skip_session", "market_session_skip", ["session_date"], unique=False)
+    op.create_index(
+        "ix_session_skip_session", "market_session_skip", ["session_date"], unique=False
+    )
 
     op.add_column("market_asset", sa.Column("isin", sa.String(length=12), nullable=True))
     op.create_index("ix_market_asset_isin", "market_asset", ["isin"], unique=False)

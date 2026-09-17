@@ -75,11 +75,7 @@ export function SourceRail({
           return (
             <li
               key={source.source_id}
-              className={[
-                'rail-item',
-                source.state,
-                index === nextIndex ? 'next' : '',
-              ]
+              className={['rail-item', source.state, index === nextIndex ? 'next' : '']
                 .filter(Boolean)
                 .join(' ')}
             >

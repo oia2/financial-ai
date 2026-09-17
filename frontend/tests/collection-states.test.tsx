@@ -136,15 +136,12 @@ describe('прогон закончился', () => {
   });
 
   it('прерван ошибкой: причина берётся из ответа сервера', async () => {
-    renderWith(
-      catchupFixture('failed', { reason: 'не удалось записать собранное в хранилище' }),
-      [FINISHED_RUN],
-    );
+    renderWith(catchupFixture('failed', { reason: 'не удалось записать собранное в хранилище' }), [
+      FINISHED_RUN,
+    ]);
 
     expect(await screen.findByText('Причина остановки')).toBeInTheDocument();
-    expect(
-      screen.getByText(/не удалось записать собранное в хранилище/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/не удалось записать собранное в хранилище/)).toBeInTheDocument();
   });
 
   it('прогонов ещё не было: единственный пустой экран', async () => {

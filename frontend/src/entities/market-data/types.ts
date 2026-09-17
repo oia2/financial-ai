@@ -71,13 +71,7 @@ export interface CollectionSettingsDto {
 }
 
 export type CatchupStatus =
-  | 'idle'
-  | 'running'
-  | 'stopping'
-  | 'stopped'
-  | 'finished'
-  | 'failed'
-  | 'interrupted';
+  'idle' | 'running' | 'stopping' | 'stopped' | 'finished' | 'failed' | 'interrupted';
 
 /** Ежедневный сбор или ручной. У режимов РАЗНЫЕ планы источников (FR-004). */
 export type RunMode = 'daily' | 'manual';
@@ -108,10 +102,7 @@ export interface RunSourceDto {
 
 /** Причина, по которой сессия не взята в работу. Перечень закрытый (FR-002). */
 export type SkipReason =
-  | 'withheld_until_close'
-  | 'retry_delay'
-  | 'attempts_exhausted'
-  | 'gap_over_limit';
+  'withheld_until_close' | 'retry_delay' | 'attempts_exhausted' | 'gap_over_limit';
 
 export interface SessionSkipDto {
   session_date: string;
