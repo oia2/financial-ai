@@ -1048,17 +1048,6 @@ class MarketDataRepository:
         )
         await self._session.execute(statement)
 
-    async def recent_skips(self, sessions: list[dt.date]) -> dict[dt.date, SessionSkip]:
-        """Последняя причина пропуска по каждой из сессий."""
-        if not sessions:
-            return {}
-        rows = await self._session.scalars(
-            select(SessionSkip)
-            .where(SessionSkip.session_date.in_(sessions))
-            .order_by(SessionSkip.session_date, SessionSkip.decided_at)
-        )
-        return {skip.session_date: skip for skip in rows.all()}
-
     # --- состав бумаг на дату (spec 008) -----------------------------------
 
     async def assets_traded_on(self, day: dt.date) -> set[str]:

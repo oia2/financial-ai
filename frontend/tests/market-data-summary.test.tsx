@@ -101,6 +101,42 @@ describe('сводка полноты', () => {
     expect(within(positions).getByText(/фьючерс есть у 63 из 243 бумаг/)).toBeInTheDocument();
   });
 
+  it('состав, которого нет, назван неизвестным, а не нулём', async () => {
+    // «0 из 0» читалось бы как «фьючерса нет ни у одной бумаги», хотя состав
+    // просто не посчитан: без собранной сессии его взять неоткуда (FR-019a).
+    server.use(
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(
+          coverageFixture({ universe: { assets: 0, assets_with_futures: 0, asof_date: null } }),
+        ),
+      ),
+    );
+
+    renderMarketData();
+
+    const positions = await groupBlock('positions');
+    expect(within(positions).getByText(/состав бумаг не посчитан/)).toBeInTheDocument();
+    expect(within(positions).queryByText(/0 из 0/)).not.toBeInTheDocument();
+  });
+
+  it('состав старше даты сводки — и это сказано', async () => {
+    server.use(
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(
+          coverageFixture({
+            universe: { assets: 243, assets_with_futures: 63, asof_date: '2026-09-01' },
+          }),
+        ),
+      ),
+    );
+
+    renderMarketData();
+
+    const section = await groupsSection();
+    expect(within(section).getByText(/состав бумаг — на/)).toBeInTheDocument();
+    expect(within(section).getByText('01.09.2026')).toBeInTheDocument();
+  });
+
   it('не выводит конкретных значений наблюдений', async () => {
     const { container } = renderMarketData();
     await groupsSection();

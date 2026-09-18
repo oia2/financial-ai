@@ -40,6 +40,17 @@ export function GroupsSection({
           <h2 id="groupsTitle">Группы данных</h2>
           <p>
             Полнота на <span className="mono">{formatIsoDate(asofDate)}</span>
+            {/*
+              Состав бумаг считается по последней СОБРАННОЙ сессии, и она может
+              быть старше даты сводки. Молчать об этом нельзя: числа группы
+              позиций относились бы к другому дню, чем всё остальное на экране.
+            */}
+            {universe.asof_date !== null && universe.asof_date !== asofDate && (
+              <>
+                , состав бумаг — на{' '}
+                <span className="mono">{formatIsoDate(universe.asof_date)}</span>
+              </>
+            )}
           </p>
         </div>
         <span className="auto-label">
@@ -205,6 +216,10 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
   const count = `${group.sources.length} ${plural(group.sources.length, 'источник', 'источника', 'источников')}`;
 
   if (group.group === 'positions') {
+    // «0 из 0» читалось бы как «фьючерса нет ни у одной бумаги», хотя состав
+    // просто не посчитан: признак торгуемости выводится из наблюдений, и без
+    // собранной сессии его взять неоткуда (FR-019a).
+    if (!isKnown(universe)) return `${count} · состав бумаг не посчитан`;
     return `${count} · фьючерс есть у ${universe.assets_with_futures} из ${universe.assets} бумаг`;
   }
   if (!group.has_history) return `${count} · текущее состояние`;
@@ -217,6 +232,17 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
 }
 
 /**
+ * Посчитан ли состав бумаг.
+ *
+ * Сервер отвечает датой сессии, по которой он посчитан, и `null` означает, что
+ * собранных сессий в окне нет вовсе. Ноль бумаг и неизвестный состав — разные
+ * утверждения, и путать их нельзя: на этом различии держится FR-019a.
+ */
+function isKnown(universe: UniverseDto): boolean {
+  return universe.asof_date !== null;
+}
+
+/**
  * Правило, по которому группа считается полной.
  *
  * Пишется там, где человек задаёт вопрос, а не в документации: «почему у
@@ -224,6 +250,13 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
  */
 function ruleOf(group: GroupCoverageDto, universe: UniverseDto): string | null {
   if (group.group === 'positions') {
+    if (!isKnown(universe)) {
+      return (
+        'Состав бумаг считается по последней собранной сессии, а собранных пока нет: ' +
+        'сколько бумаг с фьючерсом — неизвестно. Окно у группы своё — ' +
+        `${group.window_sessions} сессий: глубже позиции модели не нужны.`
+      );
+    }
     return (
       `Позиции бывают не по всем бумагам: фьючерс есть у ${universe.assets_with_futures} ` +
       `из ${universe.assets}. Окно у группы своё — ${group.window_sessions} сессий: ` +

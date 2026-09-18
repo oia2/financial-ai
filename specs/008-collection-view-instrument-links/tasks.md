@@ -234,3 +234,14 @@ Task: "Испытание: соответствие потеряно"
 - [X] T054 Считать состав бумаг по последней УСПЕШНО собранной сессии в `backend/src/financial_ai/market_data/coverage.py` либо называть несобранность состоянием: сейчас несобранная сессия даёт «0 бумаг» и выглядит отсутствием торгов, per FR-019a, FR-013 (partial)
 - [X] T055 Возвращать в `next_session` дату ближайшей НЕСОБРАННОЙ сессии, а не последнюю сессию календаря, в `backend/src/financial_ai/market_data/coverage.py`: при отставании раздел обещает сегодняшнюю дату, тогда как сбор возьмёт старую, per FR-024a (partial)
 - [X] T056 Свести выбор семейства контрактов к одной реализации: `positions_client.build_contract_map` и `links.build_candidates` считают одно и то же правило по открытому интересу, per Constitution II (unrequested)
+
+---
+
+## Phase 8: Convergence
+
+Вторая сверка. Пять находок первой закрыты; эти две — её собственный след:
+разрыв закрыт на сервере и не доведён до интерфейса, прежний читатель таблицы
+оставлен на месте.
+
+- [X] T057 Показывать «состав не посчитан» вместо «0 из 0 бумаг» и называть дату состава, когда она старше даты сводки, в `frontend/src/widgets/completeness-table/GroupsSection.tsx`: сервер различает неизвестный состав (`universe.asof_date: null`) и настоящий ноль, интерфейс это различие теряет, per FR-019a, FR-010, contracts/coverage-api.md (partial)
+- [X] T058 Оставить одно чтение таблицы пропусков: `MarketDataRepository.recent_skips` не вызывается ниоткуда с тех пор, как появился `journal.recent_skips`, per Constitution II (unrequested)
