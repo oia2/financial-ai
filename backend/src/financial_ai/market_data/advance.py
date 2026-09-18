@@ -274,6 +274,24 @@ async def advance(
     # планировщика — раз в минуту, и обращение на каждый тик было бы тысячей
     # запросов к бирже заведомо ни за чем. Признак берётся из хранилища исходов,
     # а не из памяти процесса: перезапуск не должен его терять.
+    # Идентификатор прогона заводится ЗДЕСЬ и служит всем сессиям этого
+    # прохода: журнал группирует исходы по прогону и считает в нём сессии, а
+    # при идентификаторе на сессию отставание в восемьдесят дней показывалось
+    # восемьюдесятью прогонами по одному дню (FR-052).
+    run_id = str(uuid.uuid4())
+
+    # Исход календаря — не для журнала одного, а и для плана на экране. План
+    # заводится ниже, когда работа найдена, поэтому исход запоминается и
+    # объявляется после него (FR-056).
+    calendar_state: tuple[str, object | None] = (
+        ingest.STATUS_SKIPPED,
+        ingest.SourceOutcome(
+            trading_calendar.SOURCE_ID,
+            ingest.STATUS_SKIPPED,
+            failure_reason="уже спрошен сегодня",
+        ),
+    )
+
     if await calendar_is_due(repository, now, settings):
         config = ingest.build_iss_config(settings)
         async with IssClient(config) as iss:
@@ -281,15 +299,16 @@ async def advance(
             # по этой записи и решается, пора ли спрашивать снова. Без неё
             # отметка «сегодня уже спрашивали» не существовала бы в тихом
             # состоянии, когда собирать нечего и `ingest_session` не вызывается.
-            await ingest.run_source(
+            outcome = await ingest.run_source(
                 repository,
-                str(uuid.uuid4()),
+                run_id,
                 trading_calendar.SOURCE_ID,
                 None,
                 lambda: trading_calendar.sync_trading_calendar(
                     iss, repository, settings.market_data_calendar_proxy_security
                 ),
             )
+        calendar_state = (outcome.status, outcome)
         await session.commit()
 
     pending, last_closed = await pending_sessions(session, settings, now)
@@ -347,6 +366,12 @@ async def advance(
     if on_plan is not None:
         on_plan(list(pending))
 
+    # Календарь синхронизирован ДО цикла сессий, и без этого объявления он
+    # оставался в плане вечно ожидающим — то есть вечно «следующим», сколько бы
+    # сессий прогон ни шёл (FR-056).
+    if on_source is not None:
+        on_source(trading_calendar.SOURCE_ID, calendar_state[0], calendar_state[1])
+
     collected: list[dt.date] = []
     for day in pending:
         # Проверка между сессиями — грубая: внутри сессии признак смотрится
@@ -361,7 +386,7 @@ async def advance(
             on_session_start(day)
 
         result = await ingest.ingest_session(
-            session, settings, day, on_source=on_source, should_stop=should_stop
+            session, settings, day, on_source=on_source, should_stop=should_stop, run_id=run_id
         )
         if result.succeeded:
             collected.append(day)

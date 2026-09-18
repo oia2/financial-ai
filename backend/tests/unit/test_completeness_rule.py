@@ -29,9 +29,13 @@ class FakeRepository:
         self,
         observed: set[dt.date] | None = None,
         runs: dict[str, set[dt.date]] | None = None,
+        by_source: dict[str, set[dt.date]] | None = None,
     ) -> None:
         self._observed = observed or set()
         self._runs = runs or {}
+        # Наблюдения, разложенные по источнику, — так их и спрашивает правило.
+        # Ключ здесь — набор начал имён рядов, которым источник владеет.
+        self._by_source = by_source or {}
 
     async def sessions_with_observations(
         self,
@@ -39,7 +43,14 @@ class FakeRepository:
         session_column: str,
         value_columns: tuple[str, ...],
         window: list[dt.date],
+        key_column: str | None = None,
+        keys: tuple[str, ...] | None = None,
     ) -> set[dt.date]:
+        if key_column is not None and keys is not None:
+            observed: set[dt.date] = set()
+            for key in keys:
+                observed |= self._by_source.get(key, set())
+            return {day for day in window if day in observed}
         return {day for day in window if day in self._observed}
 
     async def sessions_with_successful_run(
@@ -72,11 +83,50 @@ async def test_группа_закрыта_когда_отработал_каж�
 
 async def test_непустое_наблюдение_закрывает_сессию_без_журнала() -> None:
     """Наблюдение — тоже доказательство: диапазонный источник пишет исход на конец периода."""
-    repository = FakeRepository(observed=set(WINDOW))
+    everywhere = {
+        key: set(WINDOW)
+        for source_id in group(groups.GroupId.GLOBAL).source_ids
+        for key in (group(groups.GroupId.GLOBAL).keys_of(source_id) or ())
+    }
+    repository = FakeRepository(by_source=everywhere)
 
     missing = await completeness.missing_sessions(repository, group(groups.GroupId.GLOBAL), WINDOW)
 
     assert missing == []
+
+
+async def test_наблюдение_одного_источника_не_закрывает_сессию_остальным() -> None:
+    """Обратная форма того же правила, и ровно ею дефект и жил.
+
+    Четыре источника «глобальных рядов» пишут в ОДНУ таблицу, а наблюдения
+    брались по всей таблице: строка ЦБ за сессию закрывала её сразу и Brent, и
+    индексу, и рядам ISS. Правило «по каждому источнику» при этом формально
+    выполнялось — оно просто ничего не проверяло (FR-047).
+    """
+    repository = FakeRepository(by_source={"CBR_": set(WINDOW)})
+
+    missing = await completeness.missing_sessions(repository, group(groups.GroupId.GLOBAL), WINDOW)
+
+    assert missing == WINDOW
+
+
+async def test_наблюдения_считаются_только_своими_рядами() -> None:
+    """Собрано всё, кроме Brent за средний день, — и именно он остаётся работой."""
+    by_source = {
+        "IMOEX": set(WINDOW),
+        "RTSI": set(WINDOW),
+        "RGBI": set(WINDOW),
+        "RVI": set(WINDOW),
+        "USD_ISS": set(WINDOW),
+        "CBR_": set(WINDOW),
+        "IDX_WEIGHT_": set(WINDOW),
+        "BRENT_": {WINDOW[0], WINDOW[2]},
+    }
+    repository = FakeRepository(by_source=by_source)
+
+    missing = await completeness.missing_sessions(repository, group(groups.GroupId.GLOBAL), WINDOW)
+
+    assert missing == [WINDOW[1]]
 
 
 async def test_дыра_у_одного_источника_остаётся_работой() -> None:

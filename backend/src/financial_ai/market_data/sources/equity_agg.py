@@ -14,7 +14,12 @@ import logging
 
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import AggregateRow, MarketDataRepository
-from financial_ai.market_data.sources.equity_d1 import asset_id_for, price_series_id_for, to_decimal
+from financial_ai.market_data.sources.equity_d1 import (
+    ASSET_PREFIX,
+    asset_id_for,
+    price_series_id_for,
+    to_decimal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +32,29 @@ async def sync_equity_aggregates(
 ) -> int:
     """Собрать агрегаты всех бумаг за одну торговую сессию."""
     rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
-    aggregates = rows_to_aggregates(rows, session_date)
+    aliases = await repository.aliases_on(session_date)
+    aggregates = rows_to_aggregates(rows, session_date, aliases)
     written = await repository.upsert_aggregates(aggregates)
     logger.info("агрегаты за %s: получено %d, записано %d", session_date, len(rows), written)
     return written
 
 
-def rows_to_aggregates(rows: list[dict[str, object]], session_date: dt.date) -> list[AggregateRow]:
+def rows_to_aggregates(
+    rows: list[dict[str, object]],
+    session_date: dt.date,
+    aliases: dict[str, str] | None = None,
+) -> list[AggregateRow]:
     """Преобразовать ответ биржи в агрегаты.
 
     Пропуск остаётся пропуском: бумага могла не торговаться, и ноль оборота —
     это другое утверждение.
+
+    ``aliases`` отображает действующее имя бумаги на её сущность — тот же
+    словарь, которым ключуются котировки. Без него переименование заводило
+    вторую бумагу, и ряд оборотов рвался навсегда: котировки после
+    переименования продолжались, агрегаты начинались заново (FR-048).
     """
+    known = aliases or {}
     out: list[AggregateRow] = []
     seen: set[str] = set()
 
@@ -51,10 +67,11 @@ def rows_to_aggregates(rows: list[dict[str, object]], session_date: dt.date) -> 
             continue
         seen.add(ticker)
 
+        asset_id = known.get(ticker, asset_id_for(ticker))
         out.append(
             AggregateRow(
-                asset_id=asset_id_for(ticker),
-                price_series_id=price_series_id_for(ticker),
+                asset_id=asset_id,
+                price_series_id=price_series_id_for(asset_id.removeprefix(ASSET_PREFIX)),
                 session_date=session_date,
                 value=to_decimal(row.get("VALUE")),
                 num_trades=to_decimal(row.get("NUMTRADES")),

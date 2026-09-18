@@ -164,11 +164,11 @@ async def test_состав_считается_по_последней_собр�
     assert report["universe"]["asof_date"] == ASOF.isoformat()
 
 
-async def test_следующий_сбор_это_самая_ранняя_несобранная_сессия(db_session: object) -> None:
+async def test_следующий_сбор_это_несобранная_сессия_а_не_сегодня(db_session: object) -> None:
     """При отставании раздел не обещает сегодняшнюю дату (T055, FR-024a).
 
-    Сбор берёт самую раннюю несобранную сессию; строка «следующий сбор» обязана
-    называть её, иначе она говорит неправду ровно тогда, когда человек на неё и
+    Строка «следующий сбор» обязана называть сессию, которую сбор действительно
+    возьмёт, иначе она говорит неправду ровно тогда, когда человек на неё и
     смотрит.
     """
     repository = await seed(db_session, ["SBER"])
@@ -180,6 +180,25 @@ async def test_следующий_сбор_это_самая_ранняя_нес
     # Котировки за ASOF есть, прочие источники не собраны — сессия недобрана,
     # и следующей будет именно она.
     assert report["next_session"] == ASOF.isoformat()
+
+
+async def test_следующим_называется_самый_свежий_из_несобранных(db_session: object) -> None:
+    """Порядок сбора и порядок обещания — один и тот же (FR-054).
+
+    Ежедневный цикл идёт от свежих сессий к старым (FR-045), а строка
+    продолжала называть самую раннюю — ту, до которой сбор дойдёт ПОСЛЕДНЕЙ.
+    При отставании в восемьдесят дней она обещала прошлогоднюю дату там, где
+    система собиралась взять вчерашнюю.
+    """
+    repository = await seed(db_session, ["SBER"])
+    later = ASOF + dt.timedelta(days=1)
+    await repository.add_trading_sessions([later])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
+
+    # Несобраны обе сессии; первой сбор возьмёт позднюю.
+    assert report["next_session"] == later.isoformat()
 
 
 async def test_ошибка_источника_названа_днём_и_причиной(db_session: object) -> None:

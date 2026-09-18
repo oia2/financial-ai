@@ -88,6 +88,29 @@ describe('ход прогона', () => {
     expect(within(rail).getByText('следующий')).toBeInTheDocument();
   });
 
+  it('идёт: суточный источник не бывает «следующим»', async () => {
+    // Торговый календарь синхронизируется ОДИН раз перед циклом сессий. Пока
+    // «следующим» считался первый ожидающий любого вида, он оставался им до
+    // конца прогона, сколько бы сессий тот ни шёл (FR-056).
+    const state = catchupFixture('running');
+    const current = state.current as NonNullable<CatchupStateDto['current']>;
+    renderWith({
+      ...state,
+      current: {
+        ...current,
+        sources: current.sources.map((source) =>
+          source.source_id === 'trading_calendar' ? { ...source, state: 'pending' } : source,
+        ),
+      },
+    });
+
+    const rail = (await screen.findByText('идёт')).closest('.source-rail') as HTMLElement;
+    const next = within(rail).getByText('следующий').closest('.rail-item') as HTMLElement;
+
+    expect(next.textContent).toContain('Позиции по фьючерсам');
+    expect(next.textContent).not.toContain('Торговый календарь');
+  });
+
   it('идёт: календарь помечен суточным и в счёт сессии не входит', async () => {
     renderWith(catchupFixture('running'));
 

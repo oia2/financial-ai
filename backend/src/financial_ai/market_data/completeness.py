@@ -50,18 +50,28 @@ async def missing_sessions(
     if not window or group.session_column is None:
         return []
 
-    observed = await repository.sessions_with_observations(
-        group.model, group.session_column, group.value_columns, window
-    )
-
     # **Полнота считается по КАЖДОМУ источнику группы, а не по любому.**
     # Прежняя версия объявляла сессию закрытой, если отработал хоть один
     # источник. Для группы из одного источника это верно; для «глобальных
     # рядов» их четыре — ряды ЦБ, Brent, индекс и ряды ISS, — и успех одного
     # ничего не говорит про остальные. Пропуск в Brent закрывался успехом ЦБ и
     # не становился работой (spec 008, FR-032).
+    #
+    # **И наблюдения берутся ТОЖЕ по источнику.** Пока они брались по всей
+    # таблице, правило выше не работало вовсе: у «глобальных рядов» одна
+    # таблица на четыре источника, и строка ЦБ за сессию закрывала её сразу
+    # всем — достаточно было одного ряда, чтобы день считался собранным
+    # (FR-047).
     closed: set[dt.date] | None = None
     for source_id in group.source_ids:
+        observed = await repository.sessions_with_observations(
+            group.model,
+            group.session_column,
+            group.value_columns,
+            window,
+            key_column=group.key_column,
+            keys=group.keys_of(source_id),
+        )
         # Пустой ответ биржи — законный исход, и наблюдений после него не
         # будет: такие сессии закрывает журнал прогонов. Он не отбрасывается, а
         # дополняет наблюдения.

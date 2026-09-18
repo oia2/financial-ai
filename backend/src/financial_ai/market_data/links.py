@@ -197,6 +197,7 @@ async def sync_links(
     session_date: dt.date,
     *,
     verify_emitter: bool = True,
+    alias_events: list[LinkEvent] | None = None,
 ) -> list[LinkEvent]:
     """Привести связи в соответствие с составом инструментов на эту сессию.
 
@@ -204,8 +205,18 @@ async def sync_links(
     действующей ничего не меняет, а описание стоит обращения на инструмент.
     Цена сверки таким образом пропорциональна изменению состава, а не размеру
     доски.
+
+    ``alias_events`` передаётся, когда псевдонимы уже сверены раньше в этом же
+    прогоне. Сверять их здесь поздно: наблюдения сессии к этому моменту уже
+    записаны, и в сессию переименования они легли бы под новым именем, то есть
+    завели бы вторую бумагу (FR-048). Второй раз спрашивать тот же список — ещё
+    одно обращение к бирже за неизменившимся ответом.
     """
-    events = list(await sync_aliases(repository, iss, session_date))
+    events = (
+        list(alias_events)
+        if alias_events is not None
+        else list(await sync_aliases(repository, iss, session_date))
+    )
     candidates = await build_candidates(iss)
 
     if not candidates:

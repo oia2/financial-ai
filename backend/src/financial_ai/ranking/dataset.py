@@ -249,21 +249,27 @@ def _serialize_globals(
     return out
 
 
-def _serialize_positions(
-    rows: list[FuturesPosition], sessions: list[dt.date]
-) -> dict[str, list[list[str | None]]]:
+def _serialize_positions(rows: list[FuturesPosition], sessions: list[dt.date]) -> SeriesRows:
     """Позиции в той же компактной раскладке, что и цены.
 
     Пропуск остаётся пропуском: отсутствие позиций и нулевые позиции — разные
     факты, и ветка позиций не должна кодировать артефакт покрытия как сигнал.
+
+    **Ключ — бумага И контракт**, как у цен ключом служат бумага и ряд.
+    Наблюдение хранит контракт, которым собрано (FR-039), а раскладка по одной
+    бумаге сводила два семейства в одну ячейку: какое из значений выживет,
+    решал порядок строк, и след контракта в наборе не оставался вовсе
+    (FR-051, FR-030).
     """
     index = {day: position for position, day in enumerate(sessions)}
-    out: dict[str, list[list[str | None]]] = {}
+    out: SeriesRows = {}
     for row in rows:
         position = index.get(row.session_date)
         if position is None:
             continue
-        series = out.setdefault(row.asset_id, [[None] * len(POSITION_FIELDS) for _ in sessions])
+        series = out.setdefault(
+            (row.asset_id, row.contract_code), [[None] * len(POSITION_FIELDS) for _ in sessions]
+        )
         series[position] = [
             _as_text(row.fiz_long),
             _as_text(row.fiz_short),
@@ -314,7 +320,7 @@ def _digest(
     sessions: list[dt.date],
     prices: SeriesRows,
     globals_payload: dict[str, list[str | None]],
-    positions_payload: dict[str, list[list[str | None]]],
+    positions_payload: SeriesRows,
     aggregates: SeriesRows,
     sector_map: dict[str, str | None],
     incomplete: list[IncompleteRow],
@@ -329,7 +335,7 @@ def _digest(
         "sessions": [d.isoformat() for d in sessions],
         "series": {f"{a}|{s}": rows for (a, s), rows in sorted(prices.items())},
         "global": {k: globals_payload[k] for k in sorted(globals_payload)},
-        "positions": {k: positions_payload[k] for k in sorted(positions_payload)},
+        "positions": {f"{a}|{c}": rows for (a, c), rows in sorted(positions_payload.items())},
         "aggregates": {f"{a}|{s}": rows for (a, s), rows in sorted(aggregates.items())},
         "sectors": {k: sector_map[k] for k in sorted(sector_map)},
         # Полнота входит в содержимое намеренно: два набора с одинаковыми
@@ -348,7 +354,7 @@ def _write(
     position_sessions: list[dt.date],
     prices: SeriesRows,
     globals_payload: dict[str, list[str | None]],
-    positions_payload: dict[str, list[list[str | None]]],
+    positions_payload: SeriesRows,
     aggregates: SeriesRows,
     sector_map: dict[str, str | None],
     incomplete: list[IncompleteRow],
@@ -389,7 +395,8 @@ def _write(
                 "sessions": [d.isoformat() for d in position_sessions],
                 "fields": POSITION_FIELDS,
                 "series": [
-                    {"asset_id": a, "rows": rows} for a, rows in sorted(positions_payload.items())
+                    {"asset_id": a, "contract_code": c, "rows": rows}
+                    for (a, c), rows in sorted(positions_payload.items())
                 ],
             },
             ensure_ascii=False,

@@ -56,6 +56,19 @@ class SourceGroup:
     # считалась непустой.
     value_columns: tuple[str, ...]
 
+    # Столбец, по которому наблюдение относится к источнику, и начала имён,
+    # принадлежащие каждому источнику. Заполняется только там, где в одну
+    # таблицу пишут НЕСКОЛЬКО источников: иначе наблюдения группы общие, и
+    # значение одного источника закрывало бы сессию для остальных (FR-047).
+    key_column: str | None = None
+    source_keys: dict[str, tuple[str, ...]] | None = None
+
+    def keys_of(self, source_id: str) -> tuple[str, ...] | None:
+        """Начала имён рядов, принадлежащих источнику. ``None`` — вся таблица."""
+        if self.source_keys is None:
+            return None
+        return self.source_keys.get(source_id, ())
+
     @property
     def has_history(self) -> bool:
         """Есть ли у группы ось сессий.
@@ -102,6 +115,17 @@ GROUPS: tuple[SourceGroup, ...] = (
         model=GlobalDailySeries,
         session_column="session_date",
         value_columns=("value",),
+        # Четыре источника в одной таблице. Принадлежность ряда источнику
+        # видна по имени, и другого признака у наблюдения нет: собственного
+        # столбца источника таблица не держит, а заводить его значило бы
+        # переписывать историю (FR-047).
+        key_column="series_id",
+        source_keys={
+            "global_series": ("IMOEX", "RTSI", "RGBI", "RVI", "USD_ISS"),
+            "cbr": ("CBR_",),
+            "brent": ("BRENT_",),
+            "index_constituents": ("IDX_WEIGHT_",),
+        },
     ),
     SourceGroup(
         group_id=GroupId.POSITIONS,

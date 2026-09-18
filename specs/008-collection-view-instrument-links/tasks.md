@@ -391,3 +391,17 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 `reconcile` и план портфеля берут максимум, а не последний элемент.
 
 - [X] T107 Удалить `frontend/src/widgets/catchup-section/ProgressTrack.tsx`: индикатор хода из фичи 005, чьё место в макете v4 заняла шкала сессий с сегментами и легендой; потребителей нет ни в коде, ни в тестах, per Constitution II (unrequested)
+
+## Phase 26: Внешнее ревью и план прогона
+
+- [X] T108 Считать полноту группы по наблюдениям каждого источника отдельно: разделить ряды `market_global_daily_series` между `global_series`, `cbr`, `brent`, `index_constituents` в backend/src/financial_ai/market_data/{groups.py,completeness.py,repository.py} per FR-047 (contradicts)
+- [X] T109 Сверять псевдонимы до записи наблюдений сессии и ключевать агрегаты торгов сущностью в backend/src/financial_ai/market_data/{ingest.py,sources/equity_agg.py} per FR-048 (contradicts)
+- [X] T110 Датировать связи прогона догона последней сессией окна в backend/src/financial_ai/market_data/ingest.py per FR-049 (contradicts)
+- [X] T111 Записывать прерванный источник исходом «прервано» и не закрывать по нему сессию в backend/src/financial_ai/market_data/{ingest.py,sources/positions.py,completeness.py} per FR-050 (contradicts)
+- [X] T112 Различать контракты одной бумаги в слепке позиций в backend/src/financial_ai/ranking/dataset.py per FR-051 (contradicts)
+- [X] T113 Держать один идентификатор прогона на весь прогон, включая догон и автосбор, в backend/src/financial_ai/market_data/{models.py,ingest.py,advance.py} и миграции backend/migrations/versions/ per FR-052 (contradicts)
+- [X] T114 Спрашивать позиции только у бумаг, торговавшихся в эту сессию, в backend/src/financial_ai/market_data/sources/positions.py per FR-053 (contradicts)
+- [X] T115 Называть датой следующего сбора ту сессию, которую сбор возьмёт первой, в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
+- [X] T116 Спрашивать секторы и лоты раз в сутки и пометить их в плане суточными в backend/src/financial_ai/market_data/{plan.py,ingest.py,advance.py} per FR-055 (contradicts)
+- [X] T117 Показывать торговый календарь в плане его исходом и помечать «следующим» только посессионный источник в backend/src/financial_ai/market_data/advance.py и frontend/src/widgets/catchup-section/SourceRail.tsx per FR-056 (contradicts)
+- [X] T118 Покрыть испытаниями каждое из правил FR-047…FR-056 в backend/tests/market_data/ и frontend/src/widgets/catchup-section/__tests__/

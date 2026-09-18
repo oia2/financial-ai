@@ -47,7 +47,13 @@ export function SourceRail({
   ).length;
   const failed = perSession.filter((source) => source.state === 'failed').length;
 
-  const nextIndex = running ? sources.findIndex((source) => source.state === 'pending') : -1;
+  // «Следующим» бывает только ПОСЕССИОННЫЙ источник: диапазонный и суточный в
+  // очередь сессии не входят и ждущими остаются всё время, пока прогон идёт.
+  // Торговый календарь синхронизируется один раз перед циклом сессий и стоял
+  // первым ожидающим до самого конца прогона (FR-056).
+  const nextIndex = running
+    ? sources.findIndex((source) => source.scope === 'session' && source.state === 'pending')
+    : -1;
 
   return (
     <div className="source-rail" data-od-id="source-rail">

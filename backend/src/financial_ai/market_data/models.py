@@ -318,7 +318,18 @@ class IngestRun(Base):
 
     __tablename__ = "market_ingest_run"
     __table_args__ = (
-        UniqueConstraint("run_id", "source_id", name="uq_ingest_run_source"),
+        # Сессия входит в ключ: прогон охватывает НЕСКОЛЬКО сессий, и без неё
+        # догон был вынужден заводить идентификатор на каждый день — а журнал
+        # группирует исходы по прогону и считает в нём сессии (FR-052).
+        # ``postgresql_nulls_not_distinct`` обязателен: у календаря сессии нет,
+        # и без него два его исхода в одном прогоне ключом не ограничивались бы.
+        UniqueConstraint(
+            "run_id",
+            "source_id",
+            "session_date",
+            name="uq_ingest_run_source",
+            postgresql_nulls_not_distinct=True,
+        ),
         Index("ix_ingest_run_session", "session_date"),
     )
 

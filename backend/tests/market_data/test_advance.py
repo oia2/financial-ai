@@ -446,3 +446,70 @@ async def test_разрыв_сверх_предела_не_отменяет_се
     assert visited == [SESSIONS[-1]]
     assert SESSIONS[-1] not in skipped
     assert skipped, "история должна быть пропущена с причиной"
+
+
+async def test_календарь_объявляет_свой_исход_в_плане(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Иначе он вечно «следующий» (FR-056).
+
+    Календарь синхронизируется ОДИН раз перед циклом сессий, состояния в плане
+    не получал и оставался ожидающим; первым ожидающим — то есть «следующим» —
+    он оставался до конца прогона, сколько бы сессий тот ни шёл.
+    """
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    async def collect(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        return advance.ingest.IngestResult(run_id="r", session_date=day)
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    seen: list[tuple[str, str]] = []
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(
+        db_session,
+        unlimited,
+        FRIDAY_EVENING,
+        on_source=lambda source_id, status, outcome: seen.append((source_id, status)),
+    )
+
+    assert ("trading_calendar", advance.ingest.STATUS_OK) in seen
+
+
+async def test_календарь_объявляется_и_когда_его_не_спрашивали(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Обратная форма: суточный гейт — тоже исход, и молчать о нём нельзя.
+
+    Спрошенный сегодня календарь второй раз не спрашивается, и без объявления
+    он снова оставался бы в плане вечно ожидающим.
+    """
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    async def collect(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        return advance.ingest.IngestResult(run_id="r", session_date=day)
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    async def not_due(*args: object, **kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(advance, "calendar_is_due", not_due)
+
+    seen: list[tuple[str, str]] = []
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(
+        db_session,
+        unlimited,
+        FRIDAY_EVENING,
+        on_source=lambda source_id, status, outcome: seen.append((source_id, status)),
+    )
+
+    assert ("trading_calendar", advance.ingest.STATUS_SKIPPED) in seen

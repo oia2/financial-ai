@@ -510,7 +510,8 @@ async def test_marker_from_data_saves_the_search_for_later_sessions(
 
     Для сессий не старше её поиск не нужен: ответ уже известен из данных.
     """
-    await _seed_assets(db_session, ["SBER"])
+    later = SESSION + dt.timedelta(days=1)
+    await _seed_assets(db_session, ["SBER"], sessions=[SESSION, later])
     repository = MarketDataRepository(db_session)
     await positions.sync_positions(
         FakePositionsClient(),  # type: ignore[arg-type]
@@ -519,7 +520,6 @@ async def test_marker_from_data_saves_the_search_for_later_sessions(
     )
     await db_session.commit()
 
-    later = SESSION + dt.timedelta(days=1)
     client = FakePositionsClient()
     await positions.sync_positions(
         client,  # type: ignore[arg-type]
@@ -542,7 +542,8 @@ async def test_sessions_older_than_collected_are_still_requested(
     дату пропускал 69 активов из 69 как «до появления инструмента», хотя
     позиции по ним собраны позже. История не добралась бы никогда.
     """
-    await _seed_assets(db_session, ["SBER"])
+    earlier = SESSION - dt.timedelta(days=7)
+    await _seed_assets(db_session, ["SBER"], sessions=[earlier, SESSION])
     repository = MarketDataRepository(db_session)
     await positions.sync_positions(
         FakePositionsClient(),  # type: ignore[arg-type]
@@ -551,7 +552,6 @@ async def test_sessions_older_than_collected_are_still_requested(
     )
     await db_session.commit()
 
-    earlier = SESSION - dt.timedelta(days=7)
     client = FakePositionsClient(available={("SBRF_F", earlier): FakeSnapshot()})
     written = await positions.sync_positions(
         client,  # type: ignore[arg-type]
@@ -607,6 +607,7 @@ async def _seed_assets(
     session: AsyncSession,
     tickers: list[str],
     contracts: dict[str, str] | None = None,
+    sessions: list[dt.date] | None = None,
 ) -> None:
     """Бумаги с историей и их связи с контрактами.
 
@@ -622,7 +623,8 @@ async def _seed_assets(
     """
     repository = MarketDataRepository(session)
     known = {"SBER": "SBRF_F"} if contracts is None else contracts
-    await repository.add_trading_sessions([SESSION])
+    days = sessions or [SESSION]
+    await repository.add_trading_sessions(days)
     for ticker in tickers:
         # Связь заводится только тем бумагам, у которых контракт есть: её
         # отсутствие и означает «фьючерса нет».
@@ -635,18 +637,22 @@ async def _seed_assets(
             )
         await repository.upsert_asset(f"EQ_AST_{ticker}", ticker, SESSION)
         await repository.upsert_price_series(f"EQ_PRS_{ticker}", f"EQ_AST_{ticker}", SESSION)
+        # Наблюдение за КАЖДУЮ засеваемую сессию: позиции спрашиваются только у
+        # бумаг, торговавшихся в этот день (FR-053), и сессия без котировок
+        # означает «кто торговал — неизвестно», а не «торговали все».
         await repository.upsert_daily_bars(
             [
                 DailyBar(
                     asset_id=f"EQ_AST_{ticker}",
                     price_series_id=f"EQ_PRS_{ticker}",
-                    session_date=SESSION,
+                    session_date=day,
                     open=Decimal("1"),
                     high=Decimal("1"),
                     low=Decimal("1"),
                     close=Decimal("1"),
                     volume=Decimal("1"),
                 )
+                for day in days
             ]
         )
     await session.commit()

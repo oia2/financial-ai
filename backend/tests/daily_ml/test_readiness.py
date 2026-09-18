@@ -200,12 +200,15 @@ async def test_range_source_is_complete_by_observations(
     repository = await seed(db_session)
     global_group = next(g for g in groups.GROUPS if g.group_id.value == "global")
 
-    # Наблюдения есть за каждую сессию окна, а прогон записан только за
-    # последнюю — ровно так выглядит диапазонная выборка.
+    # Наблюдения есть за каждую сессию окна у КАЖДОГО источника группы, а
+    # прогон записан только за последнюю — ровно так выглядит диапазонная
+    # выборка. Ряд каждого источника свой: у группы одна таблица на четверых,
+    # и чужие наблюдения источник за себя не засчитывает (FR-047).
     for day in SESSIONS:
-        db_session.add(
-            GlobalDailySeries(series_id="CBR_KEY_RATE", session_date=day, value=Decimal("16.5"))
-        )
+        for series_id in ("CBR_KEY_RATE", "BRENT_FRONT", "IMOEX", "IDX_WEIGHT_IMOEX_SBER"):
+            db_session.add(
+                GlobalDailySeries(series_id=series_id, session_date=day, value=Decimal("16.5"))
+            )
     await repository.record_run(
         run_id="range-run",
         source_id="cbr",
@@ -220,6 +223,36 @@ async def test_range_source_is_complete_by_observations(
     )
 
     assert missing == [], "наблюдения есть, а группа числится неполной"
+
+
+async def test_range_source_does_not_close_the_window_for_its_neighbours(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Обратная форма предыдущего правила, и ровно ею дефект и жил.
+
+    Четыре источника «глобальных рядов» пишут в одну таблицу, а наблюдения
+    считались по всей таблице: ставка ЦБ за сессию закрывала её сразу и Brent,
+    и индексу, и рядам ISS. Правило «по каждому источнику» при этом формально
+    выполнялось — проверять ему было нечего (FR-047).
+    """
+    from financial_ai.market_data import completeness, groups
+    from financial_ai.market_data.models import GlobalDailySeries
+    from financial_ai.market_data.repository import MarketDataRepository
+
+    await seed(db_session)
+    global_group = next(g for g in groups.GROUPS if g.group_id.value == "global")
+
+    for day in SESSIONS:
+        db_session.add(
+            GlobalDailySeries(series_id="CBR_KEY_RATE", session_date=day, value=Decimal("16.5"))
+        )
+    await db_session.commit()
+
+    missing = await completeness.missing_sessions(
+        MarketDataRepository(db_session), global_group, list(SESSIONS)
+    )
+
+    assert missing == list(SESSIONS), "ряд одного источника закрыл сессию всем остальным"
 
 
 async def test_empty_exchange_answer_still_closes_the_session(

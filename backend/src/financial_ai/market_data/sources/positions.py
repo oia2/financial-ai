@@ -33,6 +33,7 @@ import datetime as dt
 import logging
 from collections.abc import Callable
 
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.positions_client import (
@@ -114,10 +115,24 @@ async def sync_positions(
             continue
         lost.append(asset_id)
 
-    wanted = sorted(ticker for ticker in known_tickers if asset_id_for(ticker) in links)
+    # Спрашиваются только бумаги, ТОРГОВАВШИЕСЯ в эту сессию. Правило уже
+    # применено выше — к проверке потери связи, — но сам список обращений
+    # строился по всем бумагам с историей: ушедшая с торгов бумага получала
+    # обращение на каждую сессию догона, заведомо ни за чем (FR-053, FR-022).
+    wanted = sorted(
+        ticker
+        for ticker in known_tickers
+        if asset_id_for(ticker) in links and asset_id_for(ticker) in traded
+    )
     if not wanted:
+        if not traded:
+            # Бумаг на доске в этот день нет вовсе: спрашивать некого, и это
+            # не дефект соответствия.
+            raise EmptyPositionsError(
+                f"за {session_date} нет ни одной торговавшейся бумаги: спрашивать нечего"
+            )
         raise EmptyPositionsError(
-            "ни у одной известной бумаги нет фьючерсного контракта: соответствие не построилось"
+            "ни у одной торговавшейся бумаги нет фьючерсного контракта: соответствие не построилось"
         )
 
     rows: list[PositionRow] = []
@@ -185,8 +200,14 @@ async def sync_positions(
 
     if stopped:
         # Прерванный сбор не судится правилом «спросили и не получили ничего»:
-        # мы просто не успели спросить остальных.
-        return await repository.upsert_positions(filled)
+        # мы просто не успели спросить остальных. Но и успехом он не является:
+        # исход «ок» закрывал бы сессию по этому источнику навсегда, хотя
+        # спрошены были три контракта из ста двадцати (FR-050).
+        written = await repository.upsert_positions(filled)
+        raise SourceStoppedError(
+            written,
+            f"спрошено {requested} бумаг из {len(wanted)}",
+        )
 
     if requested and not filled:
         # Ровно то различие, ради которого FR-018 существует: настоящая

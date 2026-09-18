@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import gaps, links
-from financial_ai.market_data.calendar import TradingCalendar, moscow_today
+from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_today
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import (
@@ -48,6 +49,12 @@ STATUS_OK = "ok"
 DELAYED_SOURCE_ATTEMPTS = 3
 STATUS_FAILED = "failed"
 STATUS_SKIPPED = "skipped"
+# Источник прерван командой остановки. Отдельный исход, а не «ок»: успешный
+# прогон закрывает сессию по источнику, и прерванный сбор закрывал бы её,
+# спросив три инструмента из ста двадцати (FR-050).
+STATUS_STOPPED = "stopped"
+# Исходы, при которых источник закрытым не считается.
+_UNFINISHED = frozenset({STATUS_FAILED, STATUS_STOPPED})
 
 
 @dataclass(slots=True)
@@ -70,12 +77,15 @@ class IngestResult:
 
     @property
     def succeeded(self) -> bool:
-        return all(o.status != STATUS_FAILED for o in self.outcomes)
+        # Прерванный источник считается незакрытым наравне с упавшим: сессия,
+        # в которой спросили три бумаги из ста двадцати, собранной не является
+        # (FR-050).
+        return all(o.status not in _UNFINISHED for o in self.outcomes)
 
     @property
     def unfinished_sources(self) -> list[str]:
         """Источники, оставшиеся незакрытыми: видны без чтения логов."""
-        return [o.source_id for o in self.outcomes if o.status == STATUS_FAILED]
+        return [o.source_id for o in self.outcomes if o.status in _UNFINISHED]
 
 
 TRIGGER_DAILY = "daily"
@@ -119,14 +129,21 @@ async def ingest_session(
     positions_client: PositionsClient | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    run_id: str | None = None,
 ) -> IngestResult:
     """Собрать данные одной торговой сессии.
 
     Если дата не задана, берётся последняя завершённая сессия календаря.
+
+    ``run_id`` передаётся, когда сессия — часть прогона из нескольких сессий.
+    Идентификатор один на весь прогон: журнал группирует исходы по нему и
+    считает в прогоне сессии, а при идентификаторе на сессию отставание в
+    восемьдесят дней показывалось восемьюдесятью прогонами по одному дню
+    (FR-052).
     """
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     result = IngestResult(run_id=run_id, session_date=session_date)
 
     config = build_iss_config(settings)
@@ -187,7 +204,14 @@ async def ingest_session(
             await session.commit()
             return result
 
-        # Шаг 2: котировки. Они задают пространство строк, поэтому идут
+        # Шаг 2: опознание бумаг. ДО котировок, а не после: ключом наблюдения
+        # служит сущность, а не имя, и в сессию переименования наблюдение,
+        # записанное раньше сверки, заводило вторую бумагу с оборванной
+        # историей (FR-048).
+        alias_events = await _sync_aliases(repository, iss, session_date)
+        await session.commit()
+
+        # Шаг 3: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
         quotes_outcome = await run_source(
             repository,
@@ -200,7 +224,7 @@ async def ingest_session(
         result.outcomes.append(quotes_outcome)
         await session.commit()
 
-        # Шаги 3+: остальные источники. Порядок из оркестратора
+        # Шаги 4+: остальные источники. Порядок из оркестратора
         # исследовательского репозитория; неудача одного не отменяет прочие.
         for source_id, action in (
             (
@@ -212,16 +236,8 @@ async def ingest_session(
                 lambda: global_series.sync_iss_series(iss, repository, session_date),
             ),
             (
-                reference.SECTORS_SOURCE_ID,
-                lambda: reference.sync_sectors(iss, repository, session_date),
-            ),
-            (
                 reference.CONSTITUENTS_SOURCE_ID,
                 lambda: reference.sync_index_constituents(iss, repository, session_date),
-            ),
-            (
-                securities.SOURCE_ID,
-                lambda: securities.sync_lot_sizes(iss, repository),
             ),
             (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
             (cbr.SOURCE_ID, lambda: _sync_cbr(repository, session_date, cbr_client)),
@@ -243,10 +259,37 @@ async def ingest_session(
             logger.info("сбор сессии %s прерван по команде", session_date)
             return result
 
+        # Справочники текущего состояния — по суточному гейту, а не на каждую
+        # сессию. Оси сессий у них нет: ответ один и тот же, каким бы днём его
+        # ни спросили, и ручной догон их поэтому не запрашивает вовсе. При
+        # отставании в восемьдесят сессий прежний порядок платил за них сто
+        # шестьдесят обращений, переписывая одни и те же строки (FR-055).
+        for source_id, action in (
+            (
+                reference.SECTORS_SOURCE_ID,
+                lambda: reference.sync_sectors(iss, repository, session_date),
+            ),
+            (
+                securities.SOURCE_ID,
+                lambda: securities.sync_lot_sizes(iss, repository),
+            ),
+        ):
+            if not await reference_is_due(repository, source_id, session_date):
+                continue
+            outcome = await run_source(
+                repository, run_id, source_id, session_date, action, on_source=on_source
+            )
+            result.outcomes.append(outcome)
+            await session.commit()
+
+        if should_stop is not None and should_stop():
+            logger.info("сбор сессии %s прерван по команде", session_date)
+            return result
+
         # Связи инструментов — перед позициями: иначе появление нового фьючерса
         # заметили бы только через сутки, а позиции спрашивались бы вчерашним
         # контрактом.
-        await sync_instrument_links(repository, iss, session_date)
+        await sync_instrument_links(repository, iss, session_date, alias_events=alias_events)
         await session.commit()
 
         # Задержанный источник — отдельно и с повторами. Он единственный ходит
@@ -363,6 +406,13 @@ async def catch_up(
 
     logger.info("догон: к сбору сессий %d", len(result.requested))
 
+    # ОДИН идентификатор на весь прогон, сколько бы сессий тот ни охватил.
+    # Журнал группирует исходы по нему и считает в прогоне сессии; при
+    # идентификаторе на сессию догон из восьмидесяти двух сессий показывался
+    # восемьюдесятью двумя прогонами по одному дню, а список последних прогонов
+    # вмещал пять последних дней вместо пяти последних прогонов (FR-052).
+    run_id = str(uuid.uuid4())
+
     repository = MarketDataRepository(session)
     owns_client = client is None
     iss = client or IssClient(build_iss_config(settings))
@@ -386,6 +436,7 @@ async def catch_up(
         # длины дыры. После них прерывание уже ничего не теряет.
         await _catch_up_ranges(
             repository,
+            run_id,
             iss,
             result.requested[0],
             result.requested[-1],
@@ -395,10 +446,16 @@ async def catch_up(
         )
 
         # Связи — тоже раз на прогон, и по той же причине, что диапазонные
-        # источники: ответ один на всё окно. Датируются началом окна, потому
-        # что именно им и датировал их прежний посессионный вызов.
+        # источники: ответ один на всё окно. Датируются КОНЦОМ окна: список
+        # серий отвечает про сегодня, и началом окна датировать его нельзя —
+        # это утверждало бы связь за дни, о которых источник не говорил, а при
+        # смене семейства закрывало бы прежний интервал раньше его собственного
+        # начала (FR-049).
         if source_ids is None or positions.SOURCE_ID in source_ids:
-            await sync_instrument_links(repository, iss, result.requested[0])
+            alias_events = await _sync_aliases(repository, iss, result.requested[-1])
+            await sync_instrument_links(
+                repository, iss, result.requested[-1], alias_events=alias_events
+            )
 
         await session.commit()
 
@@ -411,7 +468,6 @@ async def catch_up(
             if on_session_start is not None:
                 on_session_start(day)
 
-            run_id = str(uuid.uuid4())
             outcomes = await _catch_up_session(
                 repository,
                 run_id,
@@ -434,7 +490,7 @@ async def catch_up(
                 (o for o in outcomes if o.source_id == equity_d1.SOURCE_ID),
                 None,
             )
-            closed = quotes is None or quotes.status != STATUS_FAILED
+            closed = quotes is None or quotes.status not in _UNFINISHED
             if closed:
                 result.closed.append(day)
             else:
@@ -534,6 +590,7 @@ async def _catch_up_session(
 
 async def _catch_up_ranges(
     repository: MarketDataRepository,
+    run_id: str,
     iss: IssClient,
     date_from: dt.date,
     date_till: dt.date,
@@ -545,9 +602,10 @@ async def _catch_up_ranges(
 
     Число обращений здесь не зависит от длины дыры. Прогон записывается на
     дату конца периода: он относится ко всему промежутку, а не к одной сессии.
-    """
-    run_id = str(uuid.uuid4())
 
+    Идентификатор прогона — общий с посессионной частью: это один прогон, а не
+    два соседних (FR-052).
+    """
     if source_ids is not None and global_series.SOURCE_ID not in source_ids:
         return
 
@@ -737,6 +795,16 @@ async def run_source(
     started = dt.datetime.now(dt.UTC)
     try:
         written = await action()  # type: ignore[operator]
+    except SourceStoppedError as stop:
+        # Собранное уже записано источником: остановка не отменяет запись, она
+        # отменяет утверждение «этот день по источнику собран» (FR-050).
+        outcome = SourceOutcome(
+            source_id,
+            STATUS_STOPPED,
+            rows_written=stop.rows_written,
+            failure_reason=stop.detail,
+        )
+        logger.info("сбор: источник %s прерван: %s", source_id, stop.detail)
     except IssError as error:
         outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=str(error))
         logger.warning("сбор: источник %s не удался: %s", source_id, error)
@@ -816,20 +884,66 @@ class _SourceHealth:
             )
 
 
-async def sync_instrument_links(
+async def _sync_aliases(
     repository: MarketDataRepository,
     iss: IssClient,
     session_date: dt.date,
 ) -> list[links.LinkEvent]:
+    """Опознать бумаги по ISIN до записи наблюдений сессии.
+
+    Неудача здесь прогон не отменяет. Список ISIN и котировки берутся у одного
+    и того же интерфейса с разницей в секунду: если не отвечает один, не
+    ответит и другой, и остановка сбора ничего не спасла бы. А риск от
+    продолжения ограничен одной сессией одной бумаги, переименованной ровно в
+    этот день, — ровно тем, что до FR-048 случалось при КАЖДОМ переименовании.
+    """
+    try:
+        events = await links.sync_aliases(repository, iss, session_date)
+    except IssError as error:
+        logger.warning("опознание бумаг за %s не удалось: %s", session_date, error)
+        return []
+
+    for event in events:
+        logger.info("состав инструментов: %s", event.describe())
+    return events
+
+
+async def reference_is_due(
+    repository: MarketDataRepository,
+    source_id: str,
+    session_date: dt.date,
+) -> bool:
+    """Пора ли спрашивать справочник текущего состояния.
+
+    Раз в сутки. У отраслевой принадлежности и размеров лотов оси сессий нет:
+    ответ описывает СЕГОДНЯШНЕЕ состояние, каким бы днём его ни спросили.
+    Спрашивать их на каждую догоняемую сессию значило бы переписывать одни и те
+    же строки столько раз, сколько дней в отставании (FR-055).
+
+    Признак берётся из журнала исходов, а не из памяти процесса: перезапуск
+    сборщика не должен приводить к повторному обходу справочников.
+    """
+    last = await repository.last_successful_run_at(source_id)
+    if last is None:
+        return True
+    return last.astimezone(MOSCOW).date() < moscow_today()
+
+
+async def sync_instrument_links(
+    repository: MarketDataRepository,
+    iss: IssClient,
+    session_date: dt.date,
+    alias_events: list[links.LinkEvent] | None = None,
+) -> list[links.LinkEvent]:
     """Привести связи инструментов в соответствие с составом — раз на прогон.
 
-    ``session_date`` — начало окна прогона, а не каждая его сессия. Источник
-    отвечает про сегодня и на длине дыры не меняется; датировать интервал
-    началом окна — то же самое, что делал прежний посессионный вызов (первая
-    сессия открывала интервал, остальные его лишь продлевали), только ценой
-    трёх обращений вместо трёх на каждую сессию.
+    ``session_date`` — ПОСЛЕДНЯЯ сессия окна прогона, а не каждая его сессия и
+    не первая. Список серий отвечает про сегодня, и датировать его началом окна
+    значило бы утверждать связь за дни, о которых источник не говорил; при
+    смене семейства прежний интервал закрывался бы датой раньше собственного
+    начала (FR-049, FR-034).
     """
-    events = await links.sync_links(repository, iss, session_date)
+    events = await links.sync_links(repository, iss, session_date, alias_events=alias_events)
     for event in events:
         logger.info("состав инструментов: %s", event.describe())
     return events

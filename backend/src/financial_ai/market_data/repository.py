@@ -502,7 +502,14 @@ class MarketDataRepository:
         rows = await self._session.scalars(
             select(FuturesPosition)
             .where(FuturesPosition.session_date.in_(sessions))
-            .order_by(FuturesPosition.asset_id, FuturesPosition.session_date)
+            # Контракт входит в порядок: он часть ключа наблюдения, и без него
+            # порядок строк одной бумаги за одну дату зависел бы от плана
+            # запроса (FR-051).
+            .order_by(
+                FuturesPosition.asset_id,
+                FuturesPosition.contract_code,
+                FuturesPosition.session_date,
+            )
         )
         return list(rows.all())
 
@@ -628,6 +635,8 @@ class MarketDataRepository:
         session_column: str,
         value_columns: tuple[str, ...],
         sessions: list[dt.date],
+        key_column: str | None = None,
+        keys: tuple[str, ...] | None = None,
     ) -> set[dt.date]:
         """Сессии окна, за которые в таблице группы есть непустые наблюдения.
 
@@ -644,9 +653,18 @@ class MarketDataRepository:
 
         column = getattr(model, session_column)
         filled = or_(*(getattr(model, name).is_not(None) for name in value_columns))
-        rows = await self._session.scalars(
-            select(column).where(column.in_(sessions), filled).distinct()
-        )
+        statement = select(column).where(column.in_(sessions), filled)
+
+        # Отбор по источнику. Пустой набор имён означает «этому источнику в
+        # таблице не принадлежит ничего»: такой источник закрывается только
+        # журналом прогонов, и молча брать за него чужие ряды нельзя (FR-047).
+        if key_column is not None and keys is not None:
+            if not keys:
+                return set()
+            key = getattr(model, key_column)
+            statement = statement.where(or_(*(key.startswith(prefix) for prefix in keys)))
+
+        rows = await self._session.scalars(statement.distinct())
         return set(rows.all())
 
     async def group_coverage(
