@@ -164,9 +164,14 @@ class MarketDataScheduler:
                 # на сессию», пока на деле шли позиции по фьючерсам — около
                 # 2,5 минуты на сессию. Обещание расходилось с работой в сто раз.
                 group_ids=[group.group_id.value for group in groups.GROUPS],
-                requested=list(days),
-                date_from=days[0],
-                date_till=days[-1],
+                # Порядок ПОКАЗА — хронологический, каким бы ни был порядок
+                # работы. Сбор берёт последнюю закрытую сессию первой (FR-045),
+                # и если этот порядок положить как есть, диапазон в панели
+                # окажется перевёрнутым, а шкала сессий пойдёт «сегодня, потом
+                # самые старые» — её читают слева направо как хронологию.
+                requested=sorted(days),
+                date_from=min(days),
+                date_till=max(days),
                 started_at=dt.datetime.now(dt.UTC),
             )
 

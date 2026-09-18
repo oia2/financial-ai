@@ -411,8 +411,8 @@ async def test_последняя_сессия_собирается_первой
     )
     await advance.advance(db_session, unlimited, FRIDAY_EVENING)
 
-    assert visited, "сбор не увидел работы"
-    assert visited[0] == SESSIONS[-1]
+    # Сбор идёт от свежих к старым: сегодняшние данные не ждут разбора истории.
+    assert visited == sorted(SESSIONS[1:], reverse=True)
 
 
 async def test_разрыв_сверх_предела_не_отменяет_сегодня(

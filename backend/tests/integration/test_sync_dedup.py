@@ -83,25 +83,37 @@ async def test_sequential_requests_are_not_deduplicated(db_session: AsyncSession
 
 
 async def test_in_progress_is_visible_through_advisory_lock(db_session: AsyncSession) -> None:
-    from financial_ai.sync import advisory
 
     broker = FakeBroker(delay=0.5)
     scheduler = _scheduler(broker)
 
-    assert await advisory.is_held(db_session) is False
+    # Ждём, пока блокировка свободна, а не утверждаем это сразу: она живёт в
+    # соединении, и предыдущий тест мог ещё не успеть его вернуть. Проверка
+    # здесь про то, что блокировку ВИДНО во время синхронизации, а не про
+    # чужую уборку — мигала она именно на этой строке.
+    await _wait_for_lock(db_session, held=False)
 
     task = asyncio.create_task(scheduler.run_once())
 
-    # Ждём появления блокировки, а не фиксированную паузу: под нагрузкой
-    # старт задачи занимает разное время.
-    deadline = asyncio.get_running_loop().time() + 3.0
-    while asyncio.get_running_loop().time() < deadline:
-        if await advisory.is_held(db_session):
-            break
-        await asyncio.sleep(0.01)
-
     # Backend-API видит выполняющуюся синхронизацию, хотя лок берёт Worker.
-    assert await advisory.is_held(db_session) is True
+    await _wait_for_lock(db_session, held=True)
 
     await task
-    assert await advisory.is_held(db_session) is False
+    await _wait_for_lock(db_session, held=False)
+
+
+async def _wait_for_lock(session: AsyncSession, *, held: bool, timeout: float = 5.0) -> None:
+    """Дождаться состояния блокировки и упасть с внятной причиной.
+
+    Ожидание вместо мгновенной проверки: блокировку берёт и отпускает другая
+    задача, и момент перехода не наступает синхронно с нашей строкой.
+    """
+    from financial_ai.sync import advisory
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if await advisory.is_held(session) is held:
+            return
+        await asyncio.sleep(0.01)
+
+    raise AssertionError(f"блокировка не перешла в состояние held={held} за {timeout:g} с")
