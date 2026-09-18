@@ -106,7 +106,13 @@ export function useRuns(): UseQueryResult<RunsDto> {
 
 /** Календарь сессий на месяц. Факт — слева от сегодня, справа ничего. */
 export function useCalendar(month: string): UseQueryResult<CalendarMonthDto> {
-  return useQuery({ queryKey: calendarQueryKey(month), queryFn: () => fetchCalendar(month) });
+  return useQuery({
+    queryKey: calendarQueryKey(month),
+    queryFn: () => fetchCalendar(month),
+    // Прошлый месяц остаётся на экране, пока грузится следующий: иначе сетка
+    // на мгновение пустеет, страница теряет высоту и прыгает под курсором.
+    placeholderData: (previous) => previous,
+  });
 }
 
 /**

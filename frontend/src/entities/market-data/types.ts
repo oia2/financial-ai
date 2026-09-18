@@ -245,6 +245,8 @@ export interface LinkEventDto {
 export interface RunsDto {
   runs: RunSummaryDto[];
   events: LinkEventDto[];
+  /** Сколько изменений состава всего: список ограничен полусотней. */
+  events_total: number;
   /**
    * Причины пропусков из хранилища.
    *
@@ -253,6 +255,8 @@ export interface RunsDto {
    * вмешиваться (FR-002).
    */
   skips: (SessionSkipDto & { decided_at: string })[];
+  /** Сколько пропусков всего: список ограничен двадцатью. */
+  skips_total: number;
 }
 
 export interface CatchupStartResultDto {
@@ -287,6 +291,13 @@ export interface CalendarDayDto {
 }
 
 export interface CalendarMonthDto {
+  /**
+   * Самый ранний месяц, о котором календарь что-то знает.
+   *
+   * Граница листания назад: дальше пустые месяцы листались бы бесконечно.
+   * `null` — календарь пуст.
+   */
+  earliest_month: string | null;
   month: string;
   today: string;
   days: CalendarDayDto[];

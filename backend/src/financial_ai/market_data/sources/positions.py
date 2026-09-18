@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable
 
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
@@ -57,6 +58,7 @@ async def sync_positions(
     repository: MarketDataRepository,
     session_date: dt.date,
     sessions: list[dt.date] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """Собрать позиции за одну торговую сессию.
 
@@ -123,7 +125,16 @@ async def sync_positions(
     skipped_collected = 0
     skipped_early = 0
 
+    stopped = False
     for ticker in wanted:
+        # Единица обращения здесь — инструмент, и их десятки: ждать конца
+        # сессии значило бы ждать минуты после нажатия. Собранное до этого
+        # момента записывается ниже (FR-044).
+        if should_stop is not None and should_stop():
+            logger.info("позиции за %s: сбор прерван по команде", session_date)
+            stopped = True
+            break
+
         asset_id = asset_id_for(ticker)
 
         if asset_id in already:
@@ -171,6 +182,11 @@ async def sync_positions(
             "бумаги с историей позиций потеряли связь с контрактом: "
             + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
         )
+
+    if stopped:
+        # Прерванный сбор не судится правилом «спросили и не получили ничего»:
+        # мы просто не успели спросить остальных.
+        return await repository.upsert_positions(filled)
 
     if requested and not filled:
         # Ровно то различие, ради которого FR-018 существует: настоящая

@@ -403,6 +403,7 @@ async def catch_up(
                 sessions=result.requested,
                 health=health,
                 on_source=on_source,
+                should_stop=should_stop,
             )
             await session.commit()
 
@@ -443,6 +444,7 @@ async def _catch_up_session(
     sessions: list[dt.date],
     health: _SourceHealth,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[SourceOutcome]:
     """Собрать одну пропущенную сессию источниками с выборкой по дате.
 
@@ -470,10 +472,24 @@ async def _catch_up_session(
         (
             positions.SOURCE_ID,
             lambda: _sync_positions(
-                settings, iss, repository, session_date, positions_client, sessions
+                settings,
+                iss,
+                repository,
+                session_date,
+                positions_client,
+                sessions,
+                should_stop=should_stop,
             ),
         ),
     ):
+        # Остановка проверяется и здесь, между источниками. Прежде она ждала
+        # конца сессии, а сессия с позициями идёт по обращению на каждый из
+        # десятков контрактов — минуты после нажатия. Недобранные источники
+        # остаются в плане: полнота считается по каждому из них (FR-044).
+        if should_stop is not None and should_stop():
+            logger.info("догон остановлен внутри сессии %s", session_date)
+            break
+
         # Выбор групп пришёл от человека: к невыбранным источникам не ходим.
         if source_ids is not None and source_id not in source_ids:
             continue
@@ -806,6 +822,7 @@ async def _sync_positions(
     session_date: dt.date,
     client: PositionsClient | None,
     sessions: list[dt.date] | None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """Позиции по фьючерсам за одну сессию.
 
@@ -818,4 +835,6 @@ async def _sync_positions(
     if client is None:
         raise IssError("клиент источника позиций не настроен")
 
-    return await positions.sync_positions(client, repository, session_date, sessions=sessions)
+    return await positions.sync_positions(
+        client, repository, session_date, sessions=sessions, should_stop=should_stop
+    )

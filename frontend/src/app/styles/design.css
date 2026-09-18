@@ -4257,6 +4257,14 @@ input:focus-visible {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 5px;
+
+  /*
+    Шесть рядов всегда: в одних месяцах пять недель, в других шесть, и сетка
+    меняла высоту при листании — страница прыгала под курсором.
+  */
+  grid-auto-rows: 50px;
+  min-height: 330px;
+  align-content: start;
 }
 
 .weekdays span {

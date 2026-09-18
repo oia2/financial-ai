@@ -42,13 +42,18 @@ function sessionsLine(run: RunSummaryDto): string {
 export function RunJournal({
   runs,
   events = [],
+  eventsTotal = 0,
   skips = [],
+  skipsTotal = 0,
 }: {
   runs: RunSummaryDto[];
   /** Изменения состава инструментов: появление, смена и исчезновение фьючерса. */
   events?: LinkEventDto[];
+  /** Сколько изменений состава всего: списки ограничены, и об остатке надо сказать. */
+  eventsTotal?: number;
   /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
   skips?: RunsDto['skips'];
+  skipsTotal?: number;
 }) {
   if (runs.length === 0 && events.length === 0 && skips.length === 0) return null;
 
@@ -80,7 +85,15 @@ export function RunJournal({
             Причина пропуска живёт в хранилище, а не в памяти сборщика: без неё
             человек видит дыру и не знает, ждать ему или вмешиваться (FR-002).
           */}
-          <p className="journal-heading">Пропущенные сессии</p>
+          <p className="journal-heading">
+            Пропущенные сессии
+            {skipsTotal > skips.length && (
+              <span className="quiet">
+                {' '}
+                · показаны последние {skips.length} из {skipsTotal}
+              </span>
+            )}
+          </p>
           <ol>
             {skips.map((skip) => (
               <li key={`${skip.session_date}-${skip.decided_at}`}>
@@ -100,7 +113,15 @@ export function RunJournal({
             этого рост или убыль числа собранных бумаг выглядели бы пропуском
             сбора, а не появлением и исчезновением инструментов (FR-016).
           */}
-          <p className="journal-heading">Состав инструментов</p>
+          <p className="journal-heading">
+            Состав инструментов
+            {eventsTotal > events.length && (
+              <span className="quiet">
+                {' '}
+                · показаны последние {events.length} из {eventsTotal}
+              </span>
+            )}
+          </p>
           <ol>
             {events.map((event) => (
               <li key={`${event.at}-${event.ticker}`}>

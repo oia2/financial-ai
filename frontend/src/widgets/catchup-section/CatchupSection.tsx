@@ -40,7 +40,9 @@ export function CatchupSection({
   state,
   runs,
   events = [],
+  eventsTotal = 0,
   skips = [],
+  journalSkipsTotal = 0,
   paused,
   nextSession,
   emptyStorage,
@@ -57,8 +59,10 @@ export function CatchupSection({
   runs: RunSummaryDto[];
   /** Изменения состава инструментов из журнала. */
   events?: LinkEventDto[];
+  eventsTotal?: number;
   /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
   skips?: RunsDto['skips'];
+  journalSkipsTotal?: number;
   /** Пауза автосбора. Состояние страницы, а не прогона. */
   paused: boolean;
   /** Сессия, которую возьмёт следующий сбор, по торговому календарю. */
@@ -362,7 +366,15 @@ export function CatchupSection({
       */}
       {running && <EventLog log={state.log} />}
 
-      {past && <RunJournal runs={runs} events={events} skips={skips} />}
+      {past && (
+        <RunJournal
+          runs={runs}
+          events={events}
+          eventsTotal={eventsTotal}
+          skips={skips}
+          skipsTotal={journalSkipsTotal}
+        />
+      )}
     </section>
   );
 }

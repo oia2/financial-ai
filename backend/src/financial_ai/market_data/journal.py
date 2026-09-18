@@ -123,6 +123,20 @@ class SkipRecord:
         }
 
 
+async def count_skips(session: AsyncSession) -> int:
+    """Сколько пропусков записано всего.
+
+    Список ограничен, и молчать об остатке нельзя: двадцатая строка иначе
+    выглядит последней.
+    """
+    return int(await session.scalar(select(func.count()).select_from(SessionSkip)) or 0)
+
+
+async def count_link_events(session: AsyncSession) -> int:
+    """Сколько изменений состава записано всего."""
+    return int(await session.scalar(select(func.count()).select_from(AssetFuturesLink)) or 0)
+
+
 async def recent_skips(session: AsyncSession, limit: int = 20) -> list[SkipRecord]:
     """Последние пропуски сессий с причинами.
 

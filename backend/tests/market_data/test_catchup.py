@@ -499,3 +499,35 @@ async def test_single_failure_does_not_close_the_source(
 
     # Все четыре сессии спрошены: одна неудача не оборвала прогон.
     assert len(iss.quote_calls) == 4
+
+
+async def test_stop_is_checked_between_sources(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Остановка не ждёт конца сессии (FR-044).
+
+    Прежде признак проверялся только между сессиями, а сессия с позициями идёт
+    по обращению на каждый из десятков контрактов — минуты после нажатия.
+    Наполовину собранный день ничем не грозит: полнота считается по каждому
+    источнику, и недобранные остаются в плане.
+    """
+    await _seed(db_session, [SESSIONS[4]])
+
+    started: list[str] = []
+
+    def on_source(source_id: str, state: str, outcome: object) -> None:
+        if state == "running":
+            started.append(source_id)
+
+    await ingest.catch_up(
+        db_session,
+        settings,
+        ASOF,
+        FakeIss(),
+        cbr_client,
+        on_source=on_source,
+        should_stop=lambda: len(started) >= 1,
+    )
+
+    # Дошли до первого источника и остановились, не пройдя план сессии целиком.
+    assert len(started) <= 2

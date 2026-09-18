@@ -205,7 +205,9 @@ export function MarketDataPage() {
           state={catchup.data}
           runs={runs.data?.runs ?? []}
           events={runs.data?.events ?? []}
+          eventsTotal={runs.data?.events_total ?? 0}
           skips={runs.data?.skips ?? []}
+          journalSkipsTotal={runs.data?.skips_total ?? 0}
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
           emptyStorage={emptyStorage}

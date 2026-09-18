@@ -33,7 +33,15 @@ function renderWith(
 ) {
   server.use(
     http.get('*/api/market-data/catchup', () => HttpResponse.json(state)),
-    http.get('*/api/market-data/runs', () => HttpResponse.json({ runs, events, skips })),
+    http.get('*/api/market-data/runs', () =>
+      HttpResponse.json({
+        runs,
+        events,
+        events_total: events.length,
+        skips,
+        skips_total: skips.length,
+      }),
+    ),
   );
 
   const client = new QueryClient({

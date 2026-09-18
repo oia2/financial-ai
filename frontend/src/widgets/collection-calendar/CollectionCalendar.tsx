@@ -102,6 +102,10 @@ export function CollectionCalendar({
   const [year, index] = parseMonth(month);
   const firstWeekday = (new Date(year, index - 1, 1).getDay() + 6) % 7;
   const forward = shift(monthKey(new Date()), 1);
+  // Назад — не дальше самой ранней известной сессии: пустые месяцы иначе
+  // листались бы бесконечно, а показать там нечего.
+  const backward = calendar.data?.earliest_month ?? null;
+  const atStart = backward !== null && month <= backward;
 
   return (
     <section className="schedule-section" aria-labelledby="scheduleTitle">
@@ -158,6 +162,7 @@ export function CollectionCalendar({
                 className="icon-button"
                 type="button"
                 aria-label="Предыдущий месяц"
+                disabled={atStart}
                 onClick={() => setMonth(shift(month, -1))}
               >
                 ‹
@@ -175,9 +180,11 @@ export function CollectionCalendar({
                 ›
               </button>
               <span className="small-note">
-                {month >= forward
-                  ? 'дальше не листается: будущие сессии не подтверждены торгами'
-                  : ''}
+                {atStart
+                  ? 'дальше назад истории нет'
+                  : month >= forward
+                    ? 'дальше не листается: будущие сессии не подтверждены торгами'
+                    : ''}
               </span>
             </div>
 

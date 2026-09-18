@@ -20,7 +20,9 @@ export const server = setupServer(
   http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('idle'))),
   // Сбор по умолчанию идёт: это умолчание сборщика, и тесты видят то же, что
   // человек на свежем запуске.
-  http.get('*/api/market-data/runs', () => HttpResponse.json({ runs: [], events: [], skips: [] })),
+  http.get('*/api/market-data/runs', () =>
+    HttpResponse.json({ runs: [], events: [], events_total: 0, skips: [], skips_total: 0 }),
+  ),
   http.get('*/api/market-data/calendar', () =>
     HttpResponse.json({ month: '2026-09', today: '2026-09-03', days: [] }),
   ),

@@ -138,10 +138,15 @@ async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
         runs = await journal.recent_runs(session, limit=limit)
         events = await journal.recent_link_events(session)
         skips = await journal.recent_skips(session)
+        skips_total = await journal.count_skips(session)
+        events_total = await journal.count_link_events(session)
+
     return {
         "runs": [run.to_dict() for run in runs],
         "events": [event.to_dict() for event in events],
+        "events_total": events_total,
         "skips": [skip.to_dict() for skip in skips],
+        "skips_total": skips_total,
     }
 
 
