@@ -166,6 +166,23 @@ describe('сводка полноты', () => {
     expect(within(section).getByText('01.09.2026')).toBeInTheDocument();
   });
 
+  it('следующий сбор: момент и взятая сессия — разные строки', async () => {
+    // При отставании сессия, которую возьмёт сбор, лежит в прошлом. Рядом со
+    // словом «следующий» она читалась бы как ошибка.
+    server.use(
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(coverageFixture({ next_session: '2026-04-24' })),
+      ),
+    );
+
+    renderMarketData();
+
+    const schedule = (await screen.findByText('Следующий сбор')).closest('ul') as HTMLElement;
+    expect(schedule.textContent).toMatch(/сегодня после/);
+    expect(within(schedule).getByText('Возьмёт сессию')).toBeInTheDocument();
+    expect(within(schedule).getByText('24.04.2026')).toBeInTheDocument();
+  });
+
   it('клетка календаря открывает сведения о дате', async () => {
     server.use(
       http.get('*/api/market-data/calendar', () =>

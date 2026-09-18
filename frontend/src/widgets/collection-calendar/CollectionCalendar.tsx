@@ -123,16 +123,27 @@ export function CollectionCalendar({
               </>
             ) : (
               <>
-                {nextSession === null ? 'по расписанию' : formatIsoDate(nextSession)} после{' '}
-                {threshold.local}
+                {`сегодня после ${threshold.local} `}
                 {/*
                   Московское время — только дополнение к биржевому порогу и
                   только когда пояс зрителя не совпадает с биржевым: иначе оно
-                  повторяет уже сказанное (FR-022).
+                  повторяет уже сказанное (FR-022). Пробел перед скобкой —
+                  часть текста, а не отступ: без него строка слипается.
                 */}
                 {!moscowIsLocal() && <span className="msk">(порог {threshold.exchange})</span>}
               </>
             )}
+          </strong>
+        </li>
+        <li>
+          {/*
+            Какую сессию возьмёт ближайший сбор. Отдельной строкой, потому что
+            при отставании это дата из прошлого: рядом со словом «следующий»
+            она читалась бы как ошибка.
+          */}
+          <span>Возьмёт сессию</span>
+          <strong className="mono">
+            {nextSession === null ? '—' : formatIsoDate(nextSession)}
           </strong>
         </li>
         <li>
@@ -244,6 +255,13 @@ export function CollectionCalendar({
                   </button>
                 );
               })}
+              {/*
+                Добираем сетку до шести рядов: иначе февраль короче марта, и
+                страница прыгает под курсором при листании.
+              */}
+              {Array.from({ length: Math.max(0, 42 - firstWeekday - days.length) }, (_, cell) => (
+                <span key={`tail-${cell}`} />
+              ))}
             </div>
           </div>
 
