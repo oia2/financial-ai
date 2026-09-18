@@ -113,25 +113,32 @@ async def _source_outcomes(
     Нужен, чтобы неполнота группы объяснялась именем источника, а не оставалась
     числом. У «глобальных рядов» четыре источника, и ошибка одного из них — это
     ошибка конкретного ряда, а не группы вообще.
-    """
-    if not window:
-        return []
 
+    У группы без оси сессий окна нет, но источники есть, и молчать о них нельзя:
+    пустой список читался бы как «источников ноль». Их исход берётся по
+    последнему успешному прогону — для справочника это и есть весь его ответ.
+    """
     outcomes: list[dict[str, object]] = []
     for source_id in group.source_ids:
-        covered = await repository.sessions_with_successful_run(window, source_id)
-        title = plan.title_of(source_id)
         scope = next(
             (spec.scope for spec in plan.CATCHUP_PLAN if spec.source_id == source_id),
             plan.SESSION,
         )
+        if window:
+            covered = await repository.sessions_with_successful_run(window, source_id)
+            status = "ok" if len(covered) >= len(window) else "failed"
+            count = len(covered)
+        else:
+            status = "ok" if await repository.last_successful_run_at(source_id) else "failed"
+            count = 0
+
         outcomes.append(
             {
                 "source_id": source_id,
-                "title": title,
+                "title": plan.title_of(source_id),
                 "scope": scope,
-                "status": "ok" if len(covered) >= len(window) else "failed",
-                "sessions_covered": len(covered),
+                "status": status,
+                "sessions_covered": count,
             }
         )
     return outcomes

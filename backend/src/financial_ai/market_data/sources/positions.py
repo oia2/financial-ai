@@ -86,14 +86,21 @@ async def sync_positions(
     already = await repository.assets_with_positions(session_date)
     first_seen = await repository.first_position_dates()
 
-    # Бумага, по которой позиции собирались, обязана иметь связь. Её пропажа —
-    # неуспех с причиной, а не «фьючерса нет»: второе выглядит нормой (FR-020a).
-    lost = sorted(asset_id for asset_id in first_seen if asset_id not in links)
-    if lost:
-        raise EmptyPositionsError(
-            "бумаги с историей позиций потеряли связь с контрактом: "
-            + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
-        )
+    # Бумага, по которой позиции собирались, обязана иметь связь — действующую
+    # либо закрытую. Закрытая означает, что контракта больше нет, и это
+    # объяснение: событие о закрытии человеку показано. Неуспехом остаётся
+    # потеря, которую ничто не объясняет (FR-020a).
+    #
+    # Спрашивается это только у бумаг, торговавшихся в эту сессию. Ушедшая с
+    # торгов бумага позиций не даёт по определению, и требовать у неё связи
+    # значило бы ронять источник вечно: на стенде 2026-09-18 так и вышло —
+    # DOMRF и FIXR с рынка ушли, а сбор по остальным 122 бумагам остановился.
+    traded = await repository.assets_traded_on(session_date)
+    lost: list[str] = []
+    for asset_id in sorted(set(first_seen) & traded):
+        if asset_id in links or await repository.link_history(asset_id):
+            continue
+        lost.append(asset_id)
 
     wanted = sorted(ticker for ticker in known_tickers if asset_id_for(ticker) in links)
     if not wanted:
@@ -145,6 +152,15 @@ async def sync_positions(
         )
 
     filled = [row for row in rows if _has_values(row)]
+
+    if lost:
+        # Собранное записывается ДО отказа: видимость расхождения не
+        # оплачивается потерей данных по остальным бумагам (FR-020a).
+        await repository.upsert_positions(filled)
+        raise EmptyPositionsError(
+            "бумаги с историей позиций потеряли связь с контрактом: "
+            + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
+        )
 
     if requested and not filled:
         # Ровно то различие, ради которого FR-018 существует: настоящая

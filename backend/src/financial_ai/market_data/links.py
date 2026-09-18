@@ -254,6 +254,7 @@ async def sync_links(
         )
 
     events.extend(await _close_disappeared(repository, candidates, active, aliases, session_date))
+    events.extend(await _explain_orphans(repository, candidates, aliases, session_date))
     return events
 
 
@@ -286,6 +287,50 @@ async def _close_disappeared(
                 ticker=asset_id.removeprefix("EQ_AST_"),
                 contract_code=contract_code,
                 detail=f"контракта {contract_code} больше нет в списке серий",
+            )
+        )
+    return events
+
+
+async def _explain_orphans(
+    repository: MarketDataRepository,
+    candidates: dict[str, Candidate],
+    aliases: dict[str, str],
+    session_date: dt.date,
+) -> list[LinkEvent]:
+    """Объяснить бумаги с историей позиций, у которых связи нет и не было.
+
+    Такие бумаги остались от сбора, шедшего до появления связей: позиции по ним
+    собраны, а интервала нет, и закрывать нечего. Пока это не записано, каждая
+    сессия выглядит потерей соответствия — то есть неуспехом, — и одна ушедшая
+    с рынка серия останавливала бы сбор по всем прочим бумагам навсегда.
+
+    Исчезновение контракта объяснением **является**: оно записывается закрытым
+    интервалом и показывается событием (FR-020a, уточнение 2026-09-18).
+    """
+    linked = {aliases.get(ticker, asset_id_for(ticker)) for ticker, _ in candidates.items()}
+
+    events: list[LinkEvent] = []
+    for asset_id in sorted(await repository.assets_with_position_history()):
+        if asset_id in linked or await repository.link_history(asset_id):
+            continue
+
+        # Интервал записывается сразу закрытым: связь была — до того, как их
+        # стали хранить, — и на эту дату её уже нет.
+        await repository.record_closed_link(
+            asset_id=asset_id,
+            valid_from=session_date,
+            valid_till=session_date - dt.timedelta(days=1),
+            contract_code="unknown",
+            chosen_by=BY_UNDERLYING,
+        )
+        events.append(
+            LinkEvent(
+                kind=CLOSED,
+                asset_id=asset_id,
+                ticker=asset_id.removeprefix("EQ_AST_"),
+                contract_code=None,
+                detail="контракта больше нет в списке серий, позиции по бумаге не собираются",
             )
         )
     return events

@@ -145,7 +145,7 @@ description: "Task list for feature implementation"
 - [X] T047 [P] Обновить `README.md` и `AGENTS.md`: состав источников без дивидендов, объявление календаря, новые таблицы
 - [X] T048 [P] Обновить `backend/src/financial_ai/market_data/PROVENANCE.md`: что перенесено из исследовательского репозитория в этой фиче и что расходится сознательно
 - [X] T049 Сверить раздел с макетом: запустить `verify.cjs` и `check-width.cjs` из `design-assets/market-data-collection-v4/` проекта Open Design и сопоставить состояния с [contracts/ui-states.md](./contracts/ui-states.md)
-- [ ] T050 Пройти сценарии [quickstart.md](./quickstart.md) на живом стенде, включая проверку 1 (сбор не зависит от настроек модели) и проверку 2 (сессия собирается в тот же вечер)
+- [X] T050 Пройти сценарии [quickstart.md](./quickstart.md) на живом стенде, включая проверку 1 (сбор не зависит от настроек модели) и проверку 2 (сессия собирается в тот же вечер)
 - [ ] T051 Полный гейт `scripts/check.sh` целиком, без `--no-docker`
 
 ---

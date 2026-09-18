@@ -789,7 +789,13 @@ async def _sync_positions(
     for event in events:
         logger.info("состав инструментов: %s", event.describe())
 
-    contracts = await client.contracts(iss)
+    # Запасное соответствие строится только тогда, когда связей нет вовсе:
+    # два обращения к ISS за тем, чем всё равно не воспользуются, — плата ни
+    # за что.
+    contracts: dict[str, str] = {}
+    if not await repository.active_links_on(session_date):
+        contracts = await client.contracts(iss)
+
     return await positions.sync_positions(
         client, repository, session_date, contracts, sessions=sessions
     )

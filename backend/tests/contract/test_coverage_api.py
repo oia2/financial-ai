@@ -121,6 +121,13 @@ async def test_у_группы_есть_исход_каждого_источни
     # У «глобальных рядов» четыре источника: неполнота должна называть, какой
     # именно ряд не собрался, а не оставаться числом.
     assert len(groups["global"]["sources"]) == 4
+
+    # У справочника оси сессий нет, но источники есть: пустой список читался бы
+    # как «источников ноль».
+    assert {source["source_id"] for source in groups["reference"]["sources"]} == {
+        "equity_sectors",
+        "equity_lot_sizes",
+    }
     assert {source["source_id"] for source in groups["global"]["sources"]} == {
         "global_series",
         "cbr",

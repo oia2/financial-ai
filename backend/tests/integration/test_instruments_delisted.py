@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 import pytest
 
 from financial_ai.config import Settings
 from financial_ai.market_data import coverage, links
-from financial_ai.market_data.repository import MarketDataRepository
+from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources import positions
 from tests.market_data.conftest import FakePositionsClient
 
@@ -73,3 +74,40 @@ async def test_позиции_по_ушедшей_бумаге_не_спраши
 
     # Спрошен только SBER: связи с SGZH на эту дату нет.
     assert [contract for contract, _ in client.calls] == ["SBRF_F"]
+
+
+async def test_ушедшая_бумага_с_историей_позиций_не_роняет_источник(
+    db_session: object,
+) -> None:
+    """Случай со стенда 2026-09-18: DOMRF и FIXR.
+
+    Позиции по ним собраны прежним сбором, с торгов бумаги ушли, контрактов в
+    списке серий нет. Прежнее правило требовало связи у любой бумаги с историей
+    позиций — и источник падал на каждой сессии, останавливая сбор по всем
+    остальным бумагам навсегда.
+    """
+    repository = MarketDataRepository(db_session)  # type: ignore[arg-type]
+    await seed_assets(repository, DAY, ["SBER"])
+    await links.sync_links(repository, RecordedIss(), DAY)  # type: ignore[arg-type]
+
+    # Бумаги на доске нет: котировки за сессию отсутствуют, а позиции по ней
+    # когда-то собирались.
+    await repository.upsert_positions(
+        [
+            PositionRow(
+                asset_id="EQ_AST_DOMRF",
+                session_date=dt.date(2026, 9, 1),
+                contract_code="DOMRF_F",
+                fiz_long=Decimal("10"),
+                fiz_short=None,
+                jur_long=None,
+                jur_short=None,
+            )
+        ]
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
+    written = await positions.sync_positions(client, repository, DAY, client.contract_map)  # type: ignore[arg-type]
+
+    assert written == 1

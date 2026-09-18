@@ -933,6 +933,40 @@ class MarketDataRepository:
         )
         return active is not None
 
+    async def assets_with_position_history(self) -> set[str]:
+        """Бумаги, по которым позиции когда-либо собирались.
+
+        Ими проверяется потеря соответствия: «фьючерса нет» и «мы его потеряли»
+        различаются только наличием истории (FR-020a).
+        """
+        rows = await self._session.scalars(select(FuturesPosition.asset_id).distinct())
+        return set(rows.all())
+
+    async def record_closed_link(
+        self,
+        asset_id: str,
+        valid_from: dt.date,
+        valid_till: dt.date,
+        contract_code: str,
+        chosen_by: str,
+    ) -> None:
+        """Записать сразу закрытый интервал связи.
+
+        Открыть и тут же закрыть двумя вызовами нельзя: закрытие идёт запросом
+        UPDATE, а только что добавленный объект ещё не сброшен в базу, и запрос
+        его не видит. Молча получался бы вечно действующий интервал — ровно то,
+        чего эта таблица не должна допускать.
+        """
+        self._session.add(
+            AssetFuturesLink(
+                asset_id=asset_id,
+                valid_from=valid_from,
+                valid_till=valid_till,
+                contract_code=contract_code,
+                chosen_by=chosen_by,
+            )
+        )
+
     async def close_link(self, asset_id: str, valid_till: dt.date) -> bool:
         """Закрыть действующую связь датой.
 
