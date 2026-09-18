@@ -320,3 +320,37 @@ async def test_stop_with_nothing_running_is_not_an_error(
 
     assert response.status_code == 200
     assert response.json()["status"] == "idle"
+
+
+async def test_stopped_automatic_run_stays_on_screen(
+    worker_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Итог автоматического прогона не исчезает, когда он кончился (FR-025).
+
+    Прежде состояние автосбора отдавалось, только пока он ИДЁТ: человек,
+    остановивший его, в тот же миг видел пустую панель и предложение начать
+    ручной сбор, будто прогона и не было.
+    """
+    from financial_ai.market_data.runner import CatchupState, CatchupStatus
+    from financial_ai.worker.app import app
+
+    _install_runner()
+
+    class FakeScheduler:
+        def __init__(self) -> None:
+            self.state = CatchupState(
+                status=CatchupStatus.STOPPED,
+                requested=list(SESSIONS),
+                closed=SESSIONS[:2],
+                started_at=dt.datetime(2026, 9, 18, 10, tzinfo=dt.UTC),
+                finished_at=dt.datetime(2026, 9, 18, 10, 5, tzinfo=dt.UTC),
+            )
+
+    app.state.market_data_scheduler = FakeScheduler()
+    try:
+        payload = (await worker_client.get("/internal/catchup")).json()
+    finally:
+        app.state.market_data_scheduler = None
+
+    assert payload["status"] == "stopped"
+    assert payload["sessions"]["requested"] == len(SESSIONS)

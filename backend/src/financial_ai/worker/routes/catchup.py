@@ -102,15 +102,28 @@ async def catchup_status(request: Request) -> dict[str, object]:
     процессе и вместе с ним исчезает. Зависшего «идёт» не бывает по устройству.
     """
     runner = request.app.state.catchup_runner
+    scheduler = getattr(request.app.state, "market_data_scheduler", None)
+    auto = getattr(scheduler, "state", None)
+
+    # Идущий прогон важнее любого прошедшего: их не бывает двух сразу.
     if runner.is_active:
         return runner.status()
+    if auto is not None and auto.status in (CatchupStatus.RUNNING, CatchupStatus.STOPPING):
+        return auto.snapshot()
 
-    scheduler = getattr(request.app.state, "market_data_scheduler", None)
-    state = getattr(scheduler, "state", None)
-    if state is not None and state.status is CatchupStatus.RUNNING:
-        return state.snapshot()
+    # Иначе показывается ПОСЛЕДНИЙ по времени начала — чей бы он ни был.
+    # Прежде здесь стоял автоматический «только если идёт», и его итог исчезал
+    # в тот же миг, как прогон кончился: человек, остановивший автосбор, видел
+    # пустую панель и предложение начать ручной, будто ничего и не было
+    # (FR-025).
+    manual = runner.status()
+    if auto is None or auto.started_at is None:
+        return manual
 
-    return runner.status()
+    started = manual.get("started_at")
+    if started is None or auto.started_at.isoformat() > str(started):
+        return auto.snapshot()
+    return manual
 
 
 @router.get("/runs")

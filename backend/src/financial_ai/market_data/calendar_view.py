@@ -83,9 +83,10 @@ async def build_month(
         }
         days.append(CalendarDay(day, kind, state if kind == KIND_SESSION else {}))
 
-    # Граница листания назад. Дальше самой ранней известной сессии календарь
-    # ничего не знает, и пустые месяцы там листались бы до 1970 года.
-    earliest = await repository.earliest_trading_session()
+    # Граница листания назад — по НАБЛЮДЕНИЯМ, а не по календарю: календарь
+    # знает торги с 2013 года, а собранного там нет и не предполагается.
+    # Листать туда — листать пустоту.
+    earliest = await repository.earliest_observed_session()
 
     return {
         "month": f"{year:04d}-{month:02d}",

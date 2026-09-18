@@ -213,3 +213,20 @@ async def test_ошибка_источника_названа_днём_и_при
     # У собравшегося источника списка неудач нет — пустой, а не выдуманный.
     equity = next(s for s in groups["quotes"]["sources"] if s["source_id"] == "equity_d1")
     assert equity["failures"] == []
+
+
+async def test_календарь_не_листается_в_пустоту(db_session: object) -> None:
+    """Граница листания — по наблюдениям, а не по календарю (T091).
+
+    Календарь знает торги с 2013 года, а собранного там нет и не
+    предполагается: листать туда — листать пустые месяцы.
+    """
+    from financial_ai.market_data import calendar_view
+
+    repository = await seed(db_session, ["SBER"])
+    await repository.add_trading_sessions([dt.date(2013, 3, 25)])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    month = await calendar_view.build_month(db_session, Settings(), ASOF.year, ASOF.month)  # type: ignore[arg-type]
+
+    assert month["earliest_month"] == f"{ASOF:%Y-%m}"

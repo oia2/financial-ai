@@ -146,10 +146,15 @@ class MarketDataRepository:
             statement = statement.where(TradingSession.session_date <= not_after)
         return await self._session.scalar(statement.limit(1))
 
-    async def earliest_trading_session(self) -> dt.date | None:
-        """Самая ранняя известная сессия: граница, дальше которой листать нечего."""
+    async def earliest_observed_session(self) -> dt.date | None:
+        """Самая ранняя сессия, за которую ЕСТЬ наблюдения.
+
+        Граница листания календаря. Не самая ранняя сессия календаря: тот
+        знает торги с 2013 года, а собранного там нет и не предполагается —
+        листать туда значит листать пустоту.
+        """
         return await self._session.scalar(
-            select(TradingSession.session_date).order_by(TradingSession.session_date).limit(1)
+            select(EquityDailyBar.session_date).order_by(EquityDailyBar.session_date).limit(1)
         )
 
     async def next_trading_session(self, after: dt.date) -> dt.date | None:
