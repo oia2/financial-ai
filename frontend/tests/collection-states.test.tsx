@@ -156,6 +156,30 @@ describe('прогон закончился', () => {
     expect(await screen.findByText('Прогонов ещё не было')).toBeInTheDocument();
   });
 
+  it('разрыв больше предела: отказ автосбора, а не ошибка прогона', async () => {
+    renderWith(
+      catchupFixture('finished', {
+        skips: [
+          {
+            session_date: '2026-09-15',
+            reason: 'gap_over_limit',
+            detail: 'разрыв 41 сессии при пределе 30',
+          },
+        ],
+      }),
+      [FINISHED_RUN],
+    );
+
+    // Числа приходят с сервера: интерфейс их не выводит и не округляет. То же
+    // число стоит и в списке пропусков — ищем именно уведомление.
+    const notice = (await screen.findByText('Автосбор не берёт этот разрыв')).closest(
+      '.run-notice',
+    ) as HTMLElement;
+    expect(notice).toHaveClass('error');
+    expect(within(notice).getByText(/разрыв 41 сессии при пределе 30/)).toBeInTheDocument();
+    expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
+  });
+
   it('изменение состава инструментов названо, а не спрятано в числах', async () => {
     // Иначе рост или убыль числа собранных бумаг выглядели бы пропуском
     // сбора, а не появлением и исчезновением инструментов (FR-016).

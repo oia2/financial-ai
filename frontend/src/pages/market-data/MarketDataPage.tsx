@@ -243,6 +243,7 @@ export function MarketDataPage() {
           }}
           lastClosed={coverage.data.asof_date}
           paused={collectionPaused}
+          collecting={running ? (catchup.data?.current?.session_date ?? null) : null}
         />
       )}
 

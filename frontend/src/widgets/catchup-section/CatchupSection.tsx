@@ -63,6 +63,13 @@ export function CatchupSection({
   const past = !running;
   const stopping = state.status === 'stopping' || state.stop_requested;
 
+  /*
+    Разрыв больше предела — не ошибка прогона, а отказ автосбора брать работу:
+    сам прогон прошёл нормально. Причина и числа приходят с сервера, интерфейс
+    их не выводит (FR-002).
+  */
+  const blockedByGap = state.skips.find((skip) => skip.reason === 'gap_over_limit');
+
   // Прогонов ещё не было: единственный случай, когда панели нечего показать.
   if (past && state.sessions.requested === 0 && runs.length === 0) {
     return (
@@ -191,6 +198,18 @@ export function CatchupSection({
             <p>
               Текущая сессия доводится до конца, следующая не начнётся: день, собранный наполовину,
               неотличим от собранного полностью.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {blockedByGap !== undefined && (
+        <div className="run-notice error">
+          <div>
+            <strong>Автосбор не берёт этот разрыв</strong>
+            <p>
+              {blockedByGap.detail ?? 'Разрыв больше предела'}. Лавина обращений к бирже без спроса
+              запрещена, поэтому разрыв закрывается ручным сбором — можно частями.
             </p>
           </div>
         </div>

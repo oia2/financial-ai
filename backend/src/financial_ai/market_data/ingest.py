@@ -641,6 +641,21 @@ async def _run_delayed_source(
             attempt,
             DELAYED_SOURCE_ATTEMPTS,
         )
+        if attempt < DELAYED_SOURCE_ATTEMPTS and on_source is not None:
+            # Номер попытки виден на экране: без него ожидание публикации
+            # неотличимо от зависания, а повтор — от бездействия.
+            on_source(
+                source_id,
+                "running",
+                SourceOutcome(
+                    source_id,
+                    STATUS_FAILED,
+                    failure_reason=(
+                        f"данные ещё не опубликованы, попытка {attempt + 1} "
+                        f"из {DELAYED_SOURCE_ATTEMPTS}"
+                    ),
+                ),
+            )
     return outcome
 
 

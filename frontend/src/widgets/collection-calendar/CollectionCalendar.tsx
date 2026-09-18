@@ -54,6 +54,7 @@ export function CollectionCalendar({
   threshold,
   lastClosed,
   paused,
+  collecting = null,
 }: {
   /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
   nextSession: string | null;
@@ -61,6 +62,8 @@ export function CollectionCalendar({
   threshold: { local: string; exchange: string };
   lastClosed: string | null;
   paused: boolean;
+  /** Сессия, которую собирают прямо сейчас. Помечается отдельно (FR-024). */
+  collecting?: string | null;
 }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
   const calendar = useCalendar(month);
@@ -155,12 +158,13 @@ export function CollectionCalendar({
                 const missing = Object.values(day.groups).filter(
                   (state) => state === 'missing',
                 ).length;
+                const active = day.date === collecting;
                 const className = [
                   'calendar-day',
                   day.kind === 'nontrade' ? 'nontrade' : '',
-                  day.kind === 'open' ? 'open-day' : '',
+                  day.kind === 'open' && !active ? 'open-day' : '',
                   day.kind === 'future' ? 'expected' : '',
-                  day.kind === 'session' && missing > 0 ? 'partial' : '',
+                  active || (day.kind === 'session' && missing > 0) ? 'partial' : '',
                 ]
                   .filter(Boolean)
                   .join(' ');
@@ -178,7 +182,11 @@ export function CollectionCalendar({
                         ))}
                       </div>
                     )}
-                    {NOTE[day.kind] !== undefined && <small>{NOTE[day.kind]}</small>}
+                    {active ? (
+                      <small>собирается сейчас</small>
+                    ) : (
+                      NOTE[day.kind] !== undefined && <small>{NOTE[day.kind]}</small>
+                    )}
                   </button>
                 );
               })}
