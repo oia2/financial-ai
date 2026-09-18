@@ -145,6 +145,16 @@ class CatchupState:
     def remaining(self) -> int:
         return len(self.requested) - len(self.closed) - len(self.failed)
 
+    @property
+    def unfinished(self) -> list[dt.date]:
+        """Сессии плана, до которых прогон не дошёл.
+
+        Исход есть у каждой пройденной сессии — собранной, недособранной или
+        пропущенной с причиной. Остальные и составляют то, что продолжение
+        обязано доделать: «остановка — не отмена» (FR-058).
+        """
+        return [day for day in self.requested if day not in self.outcomes]
+
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
         """Отметить состояние источника и момент последнего ответа."""
         previous = self.sources.get(source_id)
@@ -168,7 +178,15 @@ class CatchupState:
             del self.log[:-LOG_KEPT]
 
     def begin_session(self, day: dt.date) -> None:
-        """Новая сессия — план источников начинается заново."""
+        """Новая сессия — ПОСЕССИОННЫЙ план начинается заново.
+
+        Диапазонные и суточные источники при этом сохраняют своё состояние:
+        они идут ОДИН раз на прогон, перед циклом сессий, и стирать их вместе с
+        посессионными значило бы держать их ожидающими до конца прогона.
+        Именно так «Глобальные ряды» и «Курсы и ставка ЦБ» и выглядели весь
+        ручной прогон — тем же способом, каким до FR-056 висел ожидающим
+        торговый календарь (FR-057).
+        """
         if self.current is not None and self.current != day:
             outcome = self.outcomes.get(self.current)
             if outcome == "failed":
@@ -177,7 +195,16 @@ class CatchupState:
                 self.note_event(f"Сессия {self.current:%d.%m} собрана")
 
         self.current = day
-        self.sources = {}
+        per_session = {
+            spec.source_id
+            for spec in plan_module.for_mode(self.mode)
+            if spec.scope == plan_module.SESSION
+        }
+        self.sources = {
+            source_id: state
+            for source_id, state in self.sources.items()
+            if source_id not in per_session
+        }
 
     def note_skip(self, day: dt.date, reason: str, detail: str | None = None) -> None:
         self.outcomes[day] = "skipped"
@@ -275,6 +302,15 @@ class CatchupRunner:
 
     def status(self) -> dict[str, object]:
         return self._state.snapshot()
+
+    @property
+    def state(self) -> CatchupState:
+        """Состояние прогона как оно есть — не снимок для ответа.
+
+        Нужно продолжению: оно читает непройденные сессии остановленного
+        прогона, а в снимке их нет и быть не должно (FR-058).
+        """
+        return self._state
 
     @property
     def is_active(self) -> bool:

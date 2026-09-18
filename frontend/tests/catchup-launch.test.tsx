@@ -6,14 +6,16 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { AppShell } from '@/app/App';
 import { AppProviders } from '@/app/providers';
 import { navigate } from '@/app/router';
+import { ToastHost } from '@/shared/ui/toast/ToastHost';
 
+import { catchupFixture } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
 
 function renderMarketData() {
@@ -178,5 +180,84 @@ describe('форма запуска догона', () => {
     await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
 
     expect(captured.body).toEqual({ date_from: '2026-06-01', date_till: '2026-09-03' });
+  });
+});
+
+describe('продолжение остановленного прогона', () => {
+  function renderStopped() {
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('stopped'))),
+    );
+    return renderMarketData();
+  }
+
+  it('просит именно продолжение, а не новый прогон', async () => {
+    const captured = captureStart();
+    renderStopped();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Продолжить прогон' }));
+
+    // Диапазон не передаётся: его считает сервер по непройденным сессиям
+    // остановленного прогона (FR-058).
+    expect(captured.body).toMatchObject({ resume: true });
+    expect(captured.body).not.toHaveProperty('date_from');
+  });
+
+  it('состояние перечитывается сразу, а не со следующим опросом', async () => {
+    // У остановленного прогона опрос выключен — состояние не изменится само, и
+    // панель показывала бы остановку с предложением продолжить уже после того,
+    // как продолжение началось (FR-059).
+    let reads = 0;
+    server.use(
+      http.get('*/api/market-data/catchup', () => {
+        reads += 1;
+        return HttpResponse.json(catchupFixture('stopped'));
+      }),
+    );
+    captureStart();
+    renderMarketData();
+
+    await screen.findByRole('button', { name: 'Продолжить прогон' });
+    const before = reads;
+    await userEvent.click(screen.getByRole('button', { name: 'Продолжить прогон' }));
+
+    await waitFor(() => expect(reads).toBeGreaterThan(before));
+  });
+
+  it('продолжать было нечего — об этом сказано', async () => {
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('stopped'))),
+      http.post('*/api/market-data/catchup', () =>
+        HttpResponse.json({
+          status: 'running',
+          groups: ['quotes'],
+          date_from: '2026-04-20',
+          date_till: '2026-09-03',
+          clamped: false,
+          requested_sessions: 312,
+          resumed: false,
+        }),
+      ),
+    );
+    // Сообщение — всплывающее, и хозяин всплывашек живёт в `App`, а не в
+    // оболочке: без него сообщению негде показаться.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    });
+    window.history.pushState(null, '', '/market-data');
+    navigate('market-data');
+    render(
+      <AppProviders client={client}>
+        <ToastHost>
+          <AppShell />
+        </ToastHost>
+      </AppProviders>,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Продолжить прогон' }));
+
+    expect(
+      await screen.findByText(/Остановленный прогон не сохранился: запущен обычный догон/),
+    ).toBeInTheDocument();
   });
 });

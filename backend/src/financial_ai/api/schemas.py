@@ -121,6 +121,15 @@ class CatchupStartIn(BaseModel):
     groups: list[str] | None = Field(default=None, description="Группы источников. Пусто — все")
     date_from: dt.date | None = Field(default=None, description="Начало диапазона")
     date_till: dt.date | None = Field(default=None, description="Конец диапазона")
+    # Умолчание — `None`, а не `False`: граница передаёт тело worker'у как
+    # есть, отбрасывая незаполненные поля. С умолчанием `False` в запросе
+    # появлялось бы поле, которого человек не отправлял, — ровно та разница
+    # между «поля нет» и «поле равно null», ради которой модель здесь и не
+    # описывает ответы.
+    resume: bool | None = Field(
+        default=None,
+        description="Продолжить остановленный прогон его непройденными сессиями",
+    )
 
 
 class CollectionPauseIn(BaseModel):

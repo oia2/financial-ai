@@ -267,6 +267,12 @@ export interface CatchupStartResultDto {
   clamped?: boolean;
   requested_sessions: number;
   reason?: string | null;
+  /**
+   * Продолжение ли это на самом деле. Прогон живёт в памяти сборщика и вместе
+   * с ним исчезает: после перезапуска продолжать нечего, и человеку, нажавшему
+   * «Продолжить», надо сказать, что запущен обычный догон (FR-058).
+   */
+  resumed?: boolean;
 }
 
 /** Что человек ввёл до ответа сервера. Серверным полем не является (FR-040). */
@@ -274,6 +280,8 @@ export interface LaunchRequest {
   groups: GroupId[] | null;
   date_from: string | null;
   date_till: string | null;
+  /** Продолжить остановленный прогон его непройденными сессиями (FR-058). */
+  resume?: boolean;
 }
 
 export function isCatchupActive(status: CatchupStatus): boolean {

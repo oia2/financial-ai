@@ -114,7 +114,7 @@ export function useCatchupControl() {
         setNothingToCatchUp(false);
         setPageNotice(null);
         setClamp(
-          result.clamped === true
+          result.clamped === true && !resumed
             ? {
                 requestedFrom: request.date_from,
                 requestedTill: request.date_till,
@@ -124,8 +124,18 @@ export function useCatchupControl() {
             : null,
         );
 
+        // Состояние перечитывается СРАЗУ. У остановленного прогона опрос
+        // выключен — само оно не изменится, — и панель показывала бы остановку
+        // с предложением продолжить уже после того, как продолжение началось
+        // (FR-059).
+        void queryClient.invalidateQueries({ queryKey: catchupQueryKey });
+
         if (resumed) {
-          toast.show('Продолжение запущено: только незакрытые сессии.');
+          toast.show(
+            result.resumed === false
+              ? 'Остановленный прогон не сохранился: запущен обычный догон.'
+              : 'Продолжение запущено: только непройденные сессии.',
+          );
           return;
         }
 
@@ -165,11 +175,21 @@ export function useCatchupControl() {
    * Продолжить догон.
    *
    * Немедленный запуск с группами прошлого прогона, без формы — как в
-   * артефакте. Диапазон не передаётся: сервер заново вычисляет пропуски, и
-   * уже закрытые сессии в план не попадают (FR-025).
+   * артефакте. Диапазон не передаётся: его берёт сервер — по НЕПРОЙДЕННЫМ
+   * сессиям остановленного прогона. Прежде продолжение считало пропуски заново
+   * по всему окну, и счётчик сессий менялся скачком: кнопка обещала
+   * продолжение, а делала новый прогон (FR-025, FR-058).
    */
   function resume(groups: GroupId[]) {
-    launch({ groups: groups.length > 0 ? groups : null, date_from: null, date_till: null }, true);
+    launch(
+      {
+        groups: groups.length > 0 ? groups : null,
+        date_from: null,
+        date_till: null,
+        resume: true,
+      },
+      true,
+    );
   }
 
   function requestStop() {

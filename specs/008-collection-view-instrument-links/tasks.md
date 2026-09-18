@@ -405,3 +405,10 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T116 Спрашивать секторы и лоты раз в сутки и пометить их в плане суточными в backend/src/financial_ai/market_data/{plan.py,ingest.py,advance.py} per FR-055 (contradicts)
 - [X] T117 Показывать торговый календарь в плане его исходом и помечать «следующим» только посессионный источник в backend/src/financial_ai/market_data/advance.py и frontend/src/widgets/catchup-section/SourceRail.tsx per FR-056 (contradicts)
 - [X] T118 Покрыть испытаниями каждое из правил FR-047…FR-056 в backend/tests/market_data/ и frontend/src/widgets/catchup-section/__tests__/
+
+## Phase 27: Продолжение остановленного прогона
+
+- [X] T119 Сохранять состояние диапазонных источников через границу сессии в backend/src/financial_ai/market_data/runner.py per FR-057 (contradicts)
+- [X] T120 Продолжать остановленный прогон его непройденными сессиями в backend/src/financial_ai/worker/routes/catchup.py, backend/src/financial_ai/market_data/runner.py и frontend/src/features/catchup-launch/useCatchupControl.ts per FR-058 (contradicts)
+- [X] T121 Перечитывать состояние сразу после команды в frontend/src/features/catchup-launch/useCatchupControl.ts per FR-059 (contradicts)
+- [X] T122 Покрыть испытаниями FR-057…FR-059 в backend/tests/market_data/ и frontend/tests/

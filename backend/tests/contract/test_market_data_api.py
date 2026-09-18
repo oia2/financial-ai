@@ -196,6 +196,27 @@ async def test_start_without_parameters_sends_an_empty_body(
     assert json.loads(route.calls.last.request.content) == {}
 
 
+async def test_просьба_продолжить_доходит_до_сборщика(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Продолжение — просьба человека, и граница передаёт её как есть (FR-058)."""
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.post(CATCHUP_URL).respond(
+            json={
+                "status": "running",
+                "groups": [],
+                "requested_sessions": 3,
+                "clamped": False,
+                "resumed": True,
+            }
+        )
+
+        response = await api_client.post("/api/market-data/catchup", json={"resume": True})
+
+    assert json.loads(route.calls.last.request.content) == {"resume": True}
+    assert response.json()["resumed"] is True
+
+
 @pytest.mark.parametrize(
     ("status_code", "code"),
     [

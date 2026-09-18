@@ -354,3 +354,98 @@ async def test_stopped_automatic_run_stays_on_screen(
 
     assert payload["status"] == "stopped"
     assert payload["sessions"]["requested"] == len(SESSIONS)
+
+
+# --- продолжение остановленного прогона (FR-058) -----------------------------
+
+
+# Хранилище с историей и дырой внутри: на ПУСТОМ догон не работает намеренно —
+# это не дыра, а отсутствие истории, и её закрывает первичная загрузка.
+COLLECTED = [SESSIONS[0], SESSIONS[1], SESSIONS[4]]
+MISSING = [SESSIONS[2], SESSIONS[3]]
+
+
+async def test_продолжение_берёт_непройденные_сессии_остановленного_прогона(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """«Продолжить» обязано продолжать, а не начинать новый прогон.
+
+    Прежде продолжение считало пропуски заново по всему окну: счётчик сессий
+    менялся скачком, и остановка переставала отличаться от отмены.
+    """
+    import asyncio
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp(delay=0.05))
+
+    await worker_client.post("/internal/catchup", json={})
+    # Остановка приходит ВНУТРИ первой сессии: она доводится до конца, вторая
+    # не начинается — ровно то состояние, которое продолжению и предстоит
+    # доделать.
+    await asyncio.sleep(0.02)
+    await worker_client.delete("/internal/catchup")
+    await _wait_idle(runner)
+
+    left = list(runner.state.unfinished)
+    assert left == MISSING[1:], "прогон прошёл целиком — продолжать нечего"
+
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp())
+    response = await worker_client.post("/internal/catchup", json={"resume": True})
+    await _wait_idle(runner)
+
+    body = response.json()
+    assert body["resumed"] is True
+    assert body["date_from"] == left[0].isoformat()
+    assert body["date_till"] == left[-1].isoformat()
+    assert body["requested_sessions"] == len(left)
+
+
+async def test_обычный_запуск_продолжением_не_становится(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Обратная форма: без просьбы продолжать диапазон не сужается."""
+    import asyncio
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp(delay=0.05))
+
+    await worker_client.post("/internal/catchup", json={})
+    await asyncio.sleep(0.02)
+    await worker_client.delete("/internal/catchup")
+    await _wait_idle(runner)
+
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp())
+    response = await worker_client.post("/internal/catchup", json={})
+    await _wait_idle(runner)
+
+    body = response.json()
+    assert body["resumed"] is False
+    assert body["requested_sessions"] == len(MISSING)
+
+
+async def test_продолжать_нечего_и_об_этом_сказано(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Прогон живёт в памяти сборщика и вместе с ним исчезает.
+
+    После перезапуска продолжать нечего, и продолжение вырождается в обычный
+    догон. Молчать об этом нельзя: человек нажал «продолжить».
+    """
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp())
+
+    response = await worker_client.post("/internal/catchup", json={"resume": True})
+    await _wait_idle(runner)
+
+    body = response.json()
+    assert body["resumed"] is False
+    assert body["requested_sessions"] == len(MISSING)

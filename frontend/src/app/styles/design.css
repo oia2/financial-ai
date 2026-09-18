@@ -1894,7 +1894,14 @@ time {
   font-size: 12px;
   color: var(--muted);
   margin: 0;
-  max-width: 75ch;
+}
+/* Пояснение занимает ширину плашки целиком. Ограничение в 75ch оставляло
+   объяснению остановки полторы строки при пустой правой половине, и текст
+   выглядел обрезанным — при том что плашка на всю ширину раздела. Перенесено
+   из `market-data.css` артефакта Open Design (FR-021). */
+.run-notice > div {
+  flex: 1;
+  min-width: 0;
 }
 .run-notice.error {
   border-color: color-mix(in oklch, var(--negative) 32%, var(--border));

@@ -382,3 +382,72 @@ async def test_stop_is_written_to_the_event_log(
     texts = [event["text"] for event in instance.status()["log"]]  # type: ignore[index]
     assert any("Запрошена остановка" in text for text in texts)
     assert any("остановлен по команде" in text for text in texts)
+
+
+# --- состояние диапазонных источников (FR-057) -------------------------------
+
+
+def test_диапазонный_источник_переживает_границу_сессии() -> None:
+    """Он идёт ОДИН раз на прогон — перед циклом сессий.
+
+    План источников начинается заново на каждой сессии, и вместе с
+    посессионными стирались диапазонные: «Глобальные ряды» и «Курсы и ставка
+    ЦБ» оставались ожидающими до конца ручного прогона — тем же способом,
+    каким до FR-056 висел ожидающим торговый календарь.
+    """
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    state.note_source("global_series", "done")
+    state.note_source("equity_d1", "done")
+
+    state.begin_session(SESSIONS[1])
+
+    plan_rows = {row["source_id"]: row["state"] for row in state.snapshot()["current"]["sources"]}  # type: ignore[index]
+    assert plan_rows["global_series"] == "done"
+    assert plan_rows["equity_d1"] == "pending"
+
+
+def test_посессионный_источник_границу_сессии_не_переживает() -> None:
+    """Обратная форма: план сессии обязан начинаться заново, иначе счёт врёт."""
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    for spec in plan_module.for_mode(plan_module.MODE_MANUAL):
+        state.note_source(spec.source_id, "done")
+
+    state.begin_session(SESSIONS[1])
+
+    rows = state.snapshot()["current"]["sources"]  # type: ignore[index]
+    per_session = [row for row in rows if row["scope"] == plan_module.SESSION]
+    assert per_session and all(row["state"] == "pending" for row in per_session)
+
+
+# --- непройденные сессии (FR-058) --------------------------------------------
+
+
+def test_непройденными_считаются_сессии_без_исхода() -> None:
+    """Продолжению нужно ровно это: что осталось доделать."""
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=list(SESSIONS))
+    state.outcomes[SESSIONS[0]] = "collected"
+    state.outcomes[SESSIONS[1]] = "failed"
+    state.outcomes[SESSIONS[2]] = "skipped"
+
+    assert state.unfinished == SESSIONS[3:]
+
+
+def test_пройденный_целиком_прогон_продолжать_нечем() -> None:
+    """Обратная форма: доведённый до конца прогон продолжения не предлагает."""
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=list(SESSIONS))
+    for day in SESSIONS:
+        state.outcomes[day] = "collected"
+
+    assert state.unfinished == []

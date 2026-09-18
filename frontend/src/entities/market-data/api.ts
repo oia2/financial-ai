@@ -52,6 +52,7 @@ export function startCatchup(request: LaunchRequest): Promise<CatchupStartResult
   if (request.groups !== null) payload.groups = request.groups;
   if (request.date_from !== null) payload.date_from = request.date_from;
   if (request.date_till !== null) payload.date_till = request.date_till;
+  if (request.resume === true) payload.resume = true;
 
   return apiPost<CatchupStartResultDto>('/api/market-data/catchup', payload);
 }

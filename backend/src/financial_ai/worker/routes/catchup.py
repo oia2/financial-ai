@@ -43,6 +43,10 @@ class CatchupRequest(BaseModel):
     )
     date_from: dt.date | None = Field(default=None, description="Начало диапазона")
     date_till: dt.date | None = Field(default=None, description="Конец диапазона")
+    resume: bool = Field(
+        default=False,
+        description="Продолжить остановленный прогон его непройденными сессиями",
+    )
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -53,6 +57,31 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
+def _unfinished(request: Request) -> list[dt.date]:
+    """Непройденные сессии последнего ОСТАНОВЛЕННОГО прогона — чьим бы он ни был.
+
+    Остановить можно и ручной прогон, и автоматический, а человек продолжает
+    то, что видел на экране, а не тот из двух механизмов, о котором он знать не
+    обязан — по тому же правилу, по какому работает остановка.
+    """
+    runner = request.app.state.catchup_runner
+    scheduler = getattr(request.app.state, "market_data_scheduler", None)
+
+    candidates = [runner.state, getattr(scheduler, "state", None)]
+    stopped = [
+        state
+        for state in candidates
+        if state is not None and state.status is CatchupStatus.STOPPED and state.started_at
+    ]
+    if not stopped:
+        return []
+
+    # Последний по времени начала: их не бывает двух идущих, но остановленных
+    # в памяти может лежать два — ручной и автоматический.
+    latest = max(stopped, key=lambda state: state.started_at)
+    return latest.unfinished
+
+
 @router.post("/catchup")
 async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
     """Запустить догон."""
@@ -61,8 +90,24 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
     if payload.date_from and payload.date_till and payload.date_from > payload.date_till:
         return _error(422, "invalid_range", "date_from позже date_till")
 
+    date_from, date_till = payload.date_from, payload.date_till
+    resumed = False
+
+    if payload.resume:
+        # Продолжение берёт диапазон НЕПРОЙДЕННЫХ сессий остановленного
+        # прогона. Считать пропуски заново по всему окну значило бы начинать
+        # новый прогон под именем продолжения: счётчик сессий менялся скачком,
+        # и остановка переставала отличаться от отмены (FR-058).
+        #
+        # Сами сессии при этом пересчитываются как обычно: собранное между
+        # остановкой и продолжением в план возвращаться не должно.
+        pending = _unfinished(request)
+        if pending:
+            date_from, date_till = min(pending), max(pending)
+            resumed = True
+
     try:
-        state = await runner.start(payload.groups, payload.date_from, payload.date_till)
+        state = await runner.start(payload.groups, date_from, date_till)
     except CatchupAlreadyRunningError as error:
         return _error(409, "catchup_already_running", str(error))
     except UnknownGroupError as error:
@@ -74,7 +119,7 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
     except NothingToCatchUpError as error:
         return {"status": "idle", "requested_sessions": 0, "reason": str(error)}
 
-    logger.info("догон запущен: сессий %s", state["requested"])
+    logger.info("догон запущен: сессий %s, продолжение %s", state["requested"], resumed)
     return {
         "status": state["status"],
         "groups": state["groups"],
@@ -82,6 +127,10 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
         "date_till": state["date_till"],
         "clamped": state["clamped"],
         "requested_sessions": state["requested"],
+        # Продолжение ли это на самом деле. Прогон живёт в памяти сборщика и
+        # вместе с ним исчезает: после перезапуска продолжать нечего, и молчать
+        # об этом нельзя — человек нажал «продолжить», а получил обычный догон.
+        "resumed": resumed,
     }
 
 
