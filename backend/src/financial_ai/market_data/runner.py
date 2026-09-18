@@ -157,11 +157,11 @@ class CatchupState:
         if previous is not None and previous[0] == state:
             return
         if state == "done":
-            self._note(f"{plan_module.title_of(source_id)} · собран{_suffix(detail)}")
+            self.note_event(f"{plan_module.title_of(source_id)} · собран{_suffix(detail)}")
         elif state == "failed":
-            self._note(f"{plan_module.title_of(source_id)} · не отдал данные{_suffix(detail)}")
+            self.note_event(f"{plan_module.title_of(source_id)} · не отдал данные{_suffix(detail)}")
 
-    def _note(self, text: str) -> None:
+    def note_event(self, text: str) -> None:
         """Записать событие. Хвост обрезается: журнал — не бесконечная лента."""
         self.log.append((dt.datetime.now(dt.UTC), text))
         if len(self.log) > LOG_KEPT:
@@ -172,9 +172,9 @@ class CatchupState:
         if self.current is not None and self.current != day:
             outcome = self.outcomes.get(self.current)
             if outcome == "failed":
-                self._note(f"Сессия {self.current:%d.%m} собрана не полностью")
+                self.note_event(f"Сессия {self.current:%d.%m} собрана не полностью")
             elif outcome == "collected":
-                self._note(f"Сессия {self.current:%d.%m} собрана")
+                self.note_event(f"Сессия {self.current:%d.%m} собрана")
 
         self.current = day
         self.sources = {}
@@ -182,7 +182,7 @@ class CatchupState:
     def note_skip(self, day: dt.date, reason: str, detail: str | None = None) -> None:
         self.outcomes[day] = "skipped"
         self.skips.append((day, reason, detail))
-        self._note(f"Сессия {day:%d.%m} пропущена: {detail or reason}")
+        self.note_event(f"Сессия {day:%d.%m} пропущена: {detail or reason}")
 
     def _session_plan(self) -> list[dict[str, object]]:
         """План источников текущей сессии с состоянием каждого."""
@@ -319,6 +319,9 @@ class CatchupRunner:
         self._stop_requested = True
         self._state.stop_requested = True
         self._state.status = CatchupStatus.STOPPING
+        # Остановка — событие прогона наравне с прочими: без неё человек видит,
+        # что сбор встал, и не знает, сам он это сделал или что-то сломалось.
+        self._state.note_event("Запрошена остановка · идущий источник доводится до конца")
         logger.info("догон: запрошена остановка на сессии %s", self._state.current)
         return self._state.snapshot()
 
@@ -407,6 +410,9 @@ class CatchupRunner:
         await self._reconcile_daily_ml()
         self._state.status = (
             CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
+        )
+        self._state.note_event(
+            "Прогон остановлен по команде" if self._stop_requested else "Прогон завершён"
         )
 
         logger.info(

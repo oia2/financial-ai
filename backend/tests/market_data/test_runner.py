@@ -360,3 +360,25 @@ async def test_full_window_has_nothing_to_catch_up(
 
     with pytest.raises(NothingToCatchUpError):
         await instance.start()
+
+
+@pytest.mark.db
+async def test_stop_is_written_to_the_event_log(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Остановка — событие прогона (T093).
+
+    Без неё человек видит, что сбор встал, и не знает, сам он это сделал или
+    что-то сломалось.
+    """
+    await _seed(db_session, [SESSIONS[4]])
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp(delay=0.05))
+    instance = CatchupRunner(settings)
+
+    await instance.start()
+    instance.stop()
+    await _wait_until_idle(instance)
+
+    texts = [event["text"] for event in instance.status()["log"]]  # type: ignore[index]
+    assert any("Запрошена остановка" in text for text in texts)
+    assert any("остановлен по команде" in text for text in texts)

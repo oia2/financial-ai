@@ -67,6 +67,7 @@ class MarketDataScheduler:
         if self._state.status is CatchupStatus.RUNNING:
             self._stop_requested = True
             self._state.status = CatchupStatus.STOPPING
+            self._state.note_event("Запрошена остановка · идущий источник доводится до конца")
             logger.info("автоматический сбор: запрошена остановка")
         return self._state
 
@@ -202,6 +203,9 @@ class MarketDataScheduler:
         if self._state.status in (CatchupStatus.RUNNING, CatchupStatus.STOPPING):
             self._state.status = (
                 CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
+            )
+            self._state.note_event(
+                "Прогон остановлен по команде" if self._stop_requested else "Прогон завершён"
             )
             self._state.finished_at = dt.datetime.now(dt.UTC)
         self._stop_requested = False
