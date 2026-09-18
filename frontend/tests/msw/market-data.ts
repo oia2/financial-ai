@@ -209,6 +209,9 @@ export function catchupFixture(
       : null,
     started_at: '2026-09-10T09:12:04Z',
     finished_at: active ? null : '2026-09-10T09:40:00Z',
+    // У идущего прогона момент последнего ответа источника есть всегда: им
+    // отличают долгий источник от зависшего.
+    last_response_at: active ? '2026-09-10T09:39:52Z' : null,
     requested: 90,
     closed: 18,
     failed: 1,

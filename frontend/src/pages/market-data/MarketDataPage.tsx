@@ -192,16 +192,6 @@ export function MarketDataPage() {
         </span>
       </p>
 
-      {/*
-        Недоступность сборщика — одно состояние на весь раздел, а не отметка в
-        одном блоке. Уведомление идёт ПЕРЕД панелью, потому что описывает её:
-        иначе панель отсчитывает сессии, будто сбор идёт, а сообщение об
-        обратном лежит ниже (contracts/ui-states.md).
-      */}
-      {(workerDown || disconnected) && !emptyStorage && (
-        <WorkerUnavailable offline={disconnected} />
-      )}
-
       {catchup.data !== undefined && (
         <CatchupSection
           stale={workerDown || disconnected}
@@ -232,23 +222,22 @@ export function MarketDataPage() {
 
       {emptyStorage ? (
         <EmptyStorage />
-      ) : disconnected || workerDown ? (
-        // Объяснение уже дано выше, у панели: второй раз тем же словом —
-        // повтор, а не помощь.
-        <div className="empty-summary">
-          <p>Сводка не обновлялась с последнего успешного чтения.</p>
-        </div>
-      ) : coverage.data === undefined ? (
-        <div className="empty-summary" aria-live="polite">
-          <p>Читаем состояние данных…</p>
-        </div>
-      ) : (
+      ) : coverage.data !== undefined ? (
+        // Сводка остаётся на месте и при потерянной связи: это и есть то
+        // «последнее известное состояние», о котором сказала строка выше.
+        // Подменять её объяснением значило бы прятать собранное (FR-042).
         <GroupsSection
           asofDate={coverage.data.asof_date}
           groups={coverage.data.groups}
           universe={coverage.data.universe}
           onOpenDetails={setDetails}
         />
+      ) : disconnected || workerDown ? (
+        <Unreachable offline={disconnected} />
+      ) : (
+        <div className="empty-summary" aria-live="polite">
+          <p>Читаем состояние данных…</p>
+        </div>
       )}
 
       {coverage.data !== undefined && (
@@ -296,14 +285,20 @@ function EmptyStorage() {
   );
 }
 
-function WorkerUnavailable({ offline }: { offline: boolean }) {
+/**
+ * Показать нечего: связи нет и собранного в кэше тоже.
+ *
+ * Отличается от недоступности при наличии кэша: там сводка остаётся и о ней
+ * сказано строкой в панели. Здесь показывать нечего вовсе.
+ */
+function Unreachable({ offline }: { offline: boolean }) {
   return (
     <div className="empty-summary">
       <h2>{offline ? 'Нет связи с сервером Financial AI' : 'Сборщик данных недоступен'}</h2>
       <p>
         {offline
-          ? 'Ответ не получен. Всё показанное ниже — последнее известное состояние; оно не означает, что сбор идёт.'
-          : 'Сервер Financial AI отвечает, а сборщик рыночных данных — нет. Всё показанное ниже — последнее известное состояние; оно не означает, что сбор идёт.'}
+          ? 'Ответ не получен, и показать пока нечего: сводка ни разу не прочитана.'
+          : 'Сервер Financial AI отвечает, а сборщик рыночных данных — нет. Собранного в этом сеансе ещё не читали, поэтому показать нечего.'}
       </p>
     </div>
   );

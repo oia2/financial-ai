@@ -16,7 +16,12 @@
  */
 
 import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
-import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
+import {
+  formatAgo,
+  formatDuration,
+  formatIsoDate,
+  formatShortStamp,
+} from '@/shared/lib/market-format';
 
 import { RunJournal } from './RunJournal';
 import { SessionProgress } from './SessionProgress';
@@ -60,22 +65,36 @@ export function CatchupSection({
   nothingToCatchUp: boolean;
   notice: React.ReactNode;
   /**
-   * Связи со сборщиком нет: показанное — последнее известное состояние.
+   * Связи со сборщиком нет.
    *
-   * Панель при этом НЕ должна выглядеть идущей. Иначе на экране спорят два
-   * блока: уведомление говорит «сборщик недоступен», а панель рядом отсчитывает
-   * сессии, будто сбор продолжается (contracts/ui-states.md).
+   * Панель заменяется одной строкой — так в макете. Счётчики и ленты при
+   * потерянной связи показывали бы идущий сбор, которого, может быть, уже нет
+   * (contracts/ui-states.md: «вида, будто сбор идёт»).
    */
   stale?: boolean;
   onStart: () => void;
   onStop: () => void;
   onRepeat: () => void;
 }) {
-  // Без связи со сборщиком идущим прогон считаться не может: что с ним сейчас,
-  // неизвестно. Показанное становится последним известным состоянием.
-  const running = !stale && (state.status === 'running' || state.status === 'stopping');
+  if (stale) {
+    return (
+      <>
+        {notice}
+        <div className="run-quiet" data-od-id="run-unavailable">
+          <span className="status-dot error" />
+          <strong>Сборщик недоступен</strong>
+          <span className="quiet">
+            Сервер отвечает, а сборщик рыночных данных — нет. Ниже показано последнее известное
+            состояние: оно не означает, что сбор идёт.
+          </span>
+        </div>
+      </>
+    );
+  }
+
+  const running = state.status === 'running' || state.status === 'stopping';
   const past = !running;
-  const stopping = !stale && (state.status === 'stopping' || state.stop_requested);
+  const stopping = state.status === 'stopping' || state.stop_requested;
 
   /*
     Разрыв больше предела — не ошибка прогона, а отказ автосбора брать работу:
@@ -150,11 +169,7 @@ export function CatchupSection({
           <h2 id="runTitle">{title}</h2>
         </div>
 
-        {stale ? (
-          // Команды без связи со сборщиком не отправляются: нажатие не дошло
-          // бы, а кнопка обещала бы обратное.
-          <span className="quiet">Связи со сборщиком нет — последнее известное состояние</span>
-        ) : past ? (
+        {past ? (
           <div className="panel-actions">
             {nothingToCatchUp ? (
               <span className="quiet">Догонять нечего</span>
@@ -287,10 +302,25 @@ export function CatchupSection({
             <b>{formatShortStamp(state.finished_at)}</b>
           </div>
         )}
+        {past && state.started_at !== null && state.finished_at !== null && (
+          <div>
+            <span>Длительность</span>
+            <b>{formatDuration(state.started_at, state.finished_at)}</b>
+          </div>
+        )}
         {running && state.last_response_at !== null && (
           <div>
             <span>Последний ответ источника</span>
-            <b>{formatShortStamp(state.last_response_at)}</b>
+            <b>{formatAgo(state.last_response_at)}</b>
+            <span className="msk">· {formatShortStamp(state.last_response_at)}</span>
+          </div>
+        )}
+        {running && state.started_at !== null && (
+          <div>
+            {/* Сколько прогон ИДЁТ — факт. Сколько ещё продлится, раздел не
+                обещает: оценка вычислялась бы по прошлым прогонам (FR-027). */}
+            <span>Идёт</span>
+            <b>{formatDuration(state.started_at, null)}</b>
           </div>
         )}
       </div>

@@ -182,6 +182,23 @@ describe('прогон закончился', () => {
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
   });
 
+  it('идущий прогон называет, сколько идёт и когда был последний ответ', async () => {
+    // В макете у идущего прогона две строки итога: «Последний ответ источника —
+    // N с назад» и «Идёт — MM:SS». Это факты, а не обещание длительности:
+    // сколько прогон ещё продлится, раздел не говорит (FR-027).
+    renderWith(catchupFixture('running'));
+
+    expect(await screen.findByText('Последний ответ источника')).toBeInTheDocument();
+    expect(screen.getByText(/назад/)).toBeInTheDocument();
+    expect(screen.getByText('Идёт')).toBeInTheDocument();
+  });
+
+  it('законченный прогон называет длительность', async () => {
+    renderWith(catchupFixture('finished'), [FINISHED_RUN]);
+
+    expect(await screen.findByText('Длительность')).toBeInTheDocument();
+  });
+
   it('связи со сборщиком нет: панель не выглядит идущей', async () => {
     // Иначе на экране спорят два блока: уведомление говорит «сборщик
     // недоступен», а панель рядом отсчитывает сессии, будто сбор продолжается
@@ -211,11 +228,11 @@ describe('прогон закончился', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Обновить сводку рыночных данных' }));
 
-    expect(await screen.findByText('Сборщик данных недоступен')).toBeInTheDocument();
-    expect(
-      await screen.findByText(/Связи со сборщиком нет — последнее известное состояние/),
-    ).toBeInTheDocument();
-    // Команда без связи не отправляется: кнопка обещала бы то, чего не будет.
+    // Панель заменяется одной строкой — так в макете: счётчики и ленты при
+    // потерянной связи показывали бы сбор, которого, может быть, уже нет.
+    expect(await screen.findByText('Сборщик недоступен')).toBeInTheDocument();
+    expect(screen.getByText(/Ниже показано последнее известное состояние/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Собираем сессию/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Остановить прогон' })).not.toBeInTheDocument();
   });
 

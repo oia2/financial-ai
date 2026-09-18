@@ -299,3 +299,5 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T068 Отдавать неудачи источника по дням в сводке в `backend/src/financial_ai/market_data/coverage.py`, per FR-032, contracts/coverage-api.md (missing)
 - [X] T069 Перенести список неудач в `frontend/src/widgets/completeness-table/GroupsSection.tsx` и `app/styles/design.css`, per FR-021 (missing)
 - [X] T070 Добрать расхождения сверки страницы: строка часового пояса `tz-line`, «Ошибка источника» в легенде календаря, опорная бумага в пояснении, текст про порог — per FR-021, FR-022 (partial)
+- [X] T071 Привести состояние «сборщик недоступен» к макету: панель заменяется одной строкой, сводка ниже остаётся последним известным состоянием, per FR-021, contracts/ui-states.md (contradicts)
+- [X] T072 Добрать итог прогона по макету: длительность у законченного, «N с назад» и «Идёт» у идущего, per FR-021 (partial)
