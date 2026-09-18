@@ -257,3 +257,14 @@ Task: "Испытание: соответствие потеряно"
 
 - [X] T059 Дать ручному сбору истории собирать позиции за даты раньше самой ранней связи в `backend/src/financial_ai/market_data/links.py` и `sources/positions.py`: `open_link` сравнивает с интервалом без даты окончания и при том же контракте не сдвигает `valid_from` назад, а `sync_positions` роняет весь источник на пустом наборе связей, per FR-035, FR-017 (contradicts)
 - [X] T060 Удалить `plan.session_sources` в `backend/src/financial_ai/market_data/plan.py`: счётчик посессионных источников оказался на фронтенде, и функция не вызывается ниоткуда, per Constitution II (unrequested)
+
+---
+
+## Phase 10: Convergence
+
+Четвёртая сверка. Находки Phase 9 закрыты, находок уровня HIGH нет впервые за
+четыре прохода. Первая из этих двух — край, который открыла T059: подстановка
+самого раннего интервала не различает настоящее семейство и заглушку.
+
+- [X] T061 Не подставлять заглушку `unknown` как семейство контрактов для дат раньше первого интервала в `backend/src/financial_ai/market_data/repository.py` (`earliest_links_after`): её пишет `_explain_orphans` для бумаг, у которых контракта больше нет, и ручной сбор спросил бы биржу кодом, которого не существует, per FR-022, AGENTS.md «аккуратность обращений» (contradicts)
+- [X] T062 Удалить `ratioWidth` в `frontend/src/shared/lib/market-format.ts`: его единственным потребителем были шкалы таблицы полноты, заменённой раскрытием групп по макету v4, per Constitution II (unrequested)

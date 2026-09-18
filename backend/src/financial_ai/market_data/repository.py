@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from financial_ai.market_data.models import (
+    UNKNOWN_CONTRACT,
     AssetAlias,
     AssetFuturesLink,
     AssetSector,
@@ -96,7 +97,7 @@ class PositionRow:
     jur_short: Decimal | None
     # Каким семейством контрактов наблюдение собрано. Часть ключа: повторный
     # сбор той же даты другим контрактом не должен затирать прежнее молча.
-    contract_code: str = "unknown"
+    contract_code: str = UNKNOWN_CONTRACT
 
 
 @dataclass(frozen=True, slots=True)
@@ -953,6 +954,10 @@ class MarketDataRepository:
 
         Бумаги, чья связь уже закрыта к этой дате, сюда не попадают: их
         инструмента не стало, и воскрешать его нельзя.
+
+        Заглушка вместо семейства тоже не попадает: ею помечены бумаги, у
+        которых контракта больше нет, и спросить биржу этим кодом значило бы
+        выполнить обращение, заведомо не приносящее данных (FR-022).
         """
         first = (
             select(
@@ -971,7 +976,10 @@ class MarketDataRepository:
                     AssetFuturesLink.valid_from == first.c.valid_from,
                 ),
             )
-            .where(first.c.valid_from > day)
+            .where(
+                first.c.valid_from > day,
+                AssetFuturesLink.contract_code != UNKNOWN_CONTRACT,
+            )
         )
         return {row.asset_id: row.contract_code for row in rows.all()}
 

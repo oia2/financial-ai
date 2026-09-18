@@ -22,12 +22,6 @@ export function formatRatio(value: number | null | undefined): string {
   })}%`;
 }
 
-/** Ширина полосы в процентах: доля единицы, ограниченная диапазоном 0…100. */
-export function ratioWidth(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '0%';
-  return `${Math.min(100, Math.max(0, value * 100))}%`;
-}
-
 /** Дата ISO в русском виде: `2026-09-03` → `03.09.2026`. */
 export function formatIsoDate(value: string | null | undefined): string {
   if (!value) return DASH;

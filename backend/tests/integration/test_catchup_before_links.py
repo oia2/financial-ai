@@ -22,6 +22,7 @@ from decimal import Decimal
 import pytest
 
 from financial_ai.market_data import links
+from financial_ai.market_data.models import UNKNOWN_CONTRACT
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources import positions
 from tests.market_data.conftest import FakePositionsClient
@@ -77,6 +78,50 @@ async def test_наблюдение_помнит_семейство_которы
     # А интервал по-прежнему утверждает только то, что подтвердил источник.
     (interval,) = await repository.link_history("EQ_AST_SBER")
     assert interval.valid_from == TODAY
+
+
+async def test_заглушка_семейства_биржу_не_спрашивает(db_session: object) -> None:
+    """Бумага без контракта помечена заглушкой — и ею не спрашивают.
+
+    `_explain_orphans` записывает закрытый интервал с `unknown` бумагам, у
+    которых контракта больше нет. Подставить эту пометку как семейство для
+    более ранних дат значило бы спросить биржу кодом, которого не существует:
+    обращение, заведомо не приносящее данных (FR-022).
+    """
+    repository = MarketDataRepository(db_session)  # type: ignore[arg-type]
+    await _links_from_today(repository, db_session)
+
+    # Бумага с историей позиций, которой в списке серий нет: связь помечается
+    # заглушкой и сразу закрывается.
+    await repository.upsert_positions(
+        [
+            PositionRow(
+                asset_id="EQ_AST_DOMRF",
+                session_date=PAST,
+                contract_code="DOMRF_F",
+                fiz_long=Decimal("1"),
+                fiz_short=None,
+                jur_long=None,
+                jur_short=None,
+            )
+        ]
+    )
+    await repository.record_closed_link(
+        asset_id="EQ_AST_DOMRF",
+        valid_from=TODAY,
+        valid_till=TODAY - dt.timedelta(days=1),
+        contract_code=UNKNOWN_CONTRACT,
+        chosen_by=links.BY_UNDERLYING,
+    )
+    await seed_assets(repository, PAST, ["SBER", "GAZP", "DOMRF"])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    assert UNKNOWN_CONTRACT not in (await repository.earliest_links_after(PAST)).values()
+
+    client = FakePositionsClient(contracts={})
+    await positions.sync_positions(client, repository, PAST)  # type: ignore[arg-type]
+
+    assert UNKNOWN_CONTRACT not in [code for code, _ in client.calls]
 
 
 async def test_закрытая_связь_в_прошлое_не_воскресает(db_session: object) -> None:

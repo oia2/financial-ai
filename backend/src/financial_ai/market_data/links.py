@@ -34,6 +34,7 @@ import logging
 from dataclasses import dataclass
 
 from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.models import UNKNOWN_CONTRACT
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.positions_client import CONTRACT_SUFFIX
@@ -328,7 +329,7 @@ async def _explain_orphans(
             asset_id=asset_id,
             valid_from=session_date,
             valid_till=session_date - dt.timedelta(days=1),
-            contract_code="unknown",
+            contract_code=UNKNOWN_CONTRACT,
             chosen_by=BY_UNDERLYING,
         )
         events.append(
