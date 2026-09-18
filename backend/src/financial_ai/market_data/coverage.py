@@ -163,10 +163,22 @@ async def _source_outcomes(
             (spec.scope for spec in plan.CATCHUP_PLAN if spec.source_id == source_id),
             plan.SESSION,
         )
+        broken = failures.get(source_id, [])
+
         if window:
             covered = await repository.sessions_with_successful_run(window, source_id)
-            status = "ok" if len(covered) >= len(window) else "failed"
             count = len(covered)
+            # Три состояния, а не два. «Не всё покрыто» и «источник падал» —
+            # разные вещи: первое бывает на любом недособранном окне и ничего
+            # не требует, второе требует вмешательства. Пока состояний было
+            # два, экран называл ошибкой всякую неполноту и не мог показать
+            # причину, потому что причины не было.
+            if count >= len(window):
+                status = "ok"
+            elif broken:
+                status = "failed"
+            else:
+                status = "partial"
         else:
             status = "ok" if await repository.last_successful_run_at(source_id) else "failed"
             count = 0
@@ -181,10 +193,13 @@ async def _source_outcomes(
                 # Свежие сверху: «источник с ошибкой» без дня и причины — это
                 # состояние, с которым человеку нечего делать.
                 "failures": sorted(
-                    failures.get(source_id, []),
+                    broken,
                     key=lambda row: str(row["session_date"]),
                     reverse=True,
                 )[:FAILURES_SHOWN],
+                # Сколько их всего: список ограничен, и молчать об остатке
+                # нельзя — иначе двадцатая строка выглядит последней.
+                "failures_total": len(broken),
             }
         )
     return outcomes

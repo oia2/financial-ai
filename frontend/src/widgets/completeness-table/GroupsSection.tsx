@@ -154,7 +154,7 @@ function Group({
 }
 
 function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupCoverageDto }) {
-  const [kind, label] = sourceBadge(source, group);
+  const [kind, label] = sourceBadge(source);
 
   return (
     <tr>
@@ -172,7 +172,7 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
       </td>
       <td data-label="Примечание">
         {SCOPE_NOTE[source.scope] ?? ''}
-        <SourceFailures failures={source.failures} />
+        <SourceFailures failures={source.failures} total={source.failures_total} />
       </td>
     </tr>
   );
@@ -185,12 +185,23 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
  * причины «ошибка источника» — это состояние, с которым нечего делать:
  * неизвестно ни когда, ни из-за чего, и проверить у источника нечего.
  */
-function SourceFailures({ failures }: { failures: SourceCoverageDto['failures'] }) {
+function SourceFailures({
+  failures,
+  total,
+}: {
+  failures: SourceCoverageDto['failures'];
+  total: number;
+}) {
   if (failures.length === 0) return null;
 
   return (
     <details className="source-failures">
-      <summary>Неудачи по дням · {failures.length}</summary>
+      <summary>
+        Неудачи по дням · {total}
+        {total > failures.length && (
+          <span className="quiet"> · показаны последние {failures.length}</span>
+        )}
+      </summary>
       <ol>
         {failures.map((failure) => (
           <li key={failure.session_date}>
@@ -216,8 +227,11 @@ const SCOPE_NOTE: Record<string, string> = {
  */
 function groupBadge(group: GroupCoverageDto): Badge {
   if (group.looks_collected_but_empty) return ['error', 'Значения отсутствуют'];
+  // Ошибкой называется ошибка, а не всякая неполнота: у падавшего источника
+  // есть записанные неудачи, и они названы днём и причиной.
   if (group.sources.some((source) => source.status === 'failed'))
     return ['error', 'Ошибка источника'];
+  if (group.sources.some((source) => source.status === 'partial')) return ['partial', 'Частично'];
   if (group.has_history && (group.gaps ?? 0) > 0) return ['partial', 'Частично'];
   return ['complete', 'Собрано'];
 }
@@ -228,10 +242,10 @@ function groupBadge(group: GroupCoverageDto): Badge {
  * «Ошибка» и «частично» — разные состояния: источник, не собравший ни одной
  * сессии окна, и источник с пропусками требуют разных действий.
  */
-function sourceBadge(source: SourceCoverageDto, group: GroupCoverageDto): Badge {
+function sourceBadge(source: SourceCoverageDto): Badge {
   if (source.status === 'ok') return ['complete', 'Собрано'];
-  if (!group.has_history || source.sessions_covered === 0) return ['error', 'Ошибка'];
-  return ['partial', 'Частично'];
+  if (source.status === 'partial') return ['partial', 'Частично'];
+  return ['error', 'Ошибка'];
 }
 
 function volumeOf(group: GroupCoverageDto): string {

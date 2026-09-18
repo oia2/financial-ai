@@ -23,6 +23,7 @@ import {
   formatShortStamp,
 } from '@/shared/lib/market-format';
 
+import { EventLog } from './EventLog';
 import { RunJournal } from './RunJournal';
 import { SessionProgress } from './SessionProgress';
 import { SourceRail } from './SourceRail';
@@ -260,7 +261,12 @@ export function CatchupSection({
       {notice}
 
       <div className={`run-grid${state.sessions.requested <= 1 ? ' single' : ''}`}>
-        <SessionProgress sessions={state.sessions} skips={state.skips} />
+        <SessionProgress
+          sessions={state.sessions}
+          skips={state.skips}
+          skipsTotal={state.skips_total}
+          current={state.current}
+        />
 
         {state.sessions.requested > 1 && (
           <div className="source-progress">
@@ -324,6 +330,13 @@ export function CatchupSection({
           </div>
         )}
       </div>
+
+      {/*
+        Журнал событий — только у идущего прогона: он отвечает «что было
+        последние минуты». У законченного на этом месте журнал прогонов,
+        который отвечает «как прошло» и переживает перезапуск.
+      */}
+      {running && <EventLog log={state.log} />}
 
       {past && <RunJournal runs={runs} events={events} skips={skips} />}
     </section>

@@ -84,6 +84,21 @@ class NothingToCatchUpError(RuntimeError):
     """Пропущенных сессий в выбранном диапазоне нет."""
 
 
+# Сколько пропусков отдавать в состоянии прогона. Остальные считаются числом:
+# длинный прогон даёт сотни, и раскрытый список без потолка не листается.
+SKIPS_SHOWN = 50
+
+# Сколько событий прогона держать. Журнал отвечает на вопрос «что было
+# последние минуты», а не хранит всю историю прогона: для неё есть таблица
+# исходов сбора.
+LOG_KEPT = 40
+
+
+def _suffix(detail: str | None) -> str:
+    """Подробность события, если источник её дал."""
+    return f" · {detail}" if detail else ""
+
+
 @dataclass(slots=True)
 class CatchupState:
     """Снимок состояния задания.
@@ -114,6 +129,11 @@ class CatchupState:
     # Счёт идёт внутри одной сессии: следующая пройдёт тот же план заново.
     sources: dict[str, tuple[str, str | None]] = field(default_factory=dict)
 
+    # Журнал событий прогона: (момент, что произошло). Отвечает на вопрос «что
+    # было последние минуты» — тот, на который лента источников не отвечает:
+    # она показывает только НЫНЕШНЕЕ положение дел, а произошедшее стирает.
+    log: list[tuple[dt.datetime, str]] = field(default_factory=list)
+
     current: dt.date | None = None
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
@@ -127,18 +147,42 @@ class CatchupState:
 
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
         """Отметить состояние источника и момент последнего ответа."""
+        previous = self.sources.get(source_id)
         self.sources[source_id] = (state, detail)
         if state != "running":
             self.last_response_at = dt.datetime.now(dt.UTC)
 
+        # В журнал попадает СМЕНА состояния, а не каждый вызов: иначе «идёт»
+        # писалось бы перед каждым обращением и вытеснило бы всё остальное.
+        if previous is not None and previous[0] == state:
+            return
+        if state == "done":
+            self._note(f"{plan_module.title_of(source_id)} · собран{_suffix(detail)}")
+        elif state == "failed":
+            self._note(f"{plan_module.title_of(source_id)} · не отдал данные{_suffix(detail)}")
+
+    def _note(self, text: str) -> None:
+        """Записать событие. Хвост обрезается: журнал — не бесконечная лента."""
+        self.log.append((dt.datetime.now(dt.UTC), text))
+        if len(self.log) > LOG_KEPT:
+            del self.log[:-LOG_KEPT]
+
     def begin_session(self, day: dt.date) -> None:
         """Новая сессия — план источников начинается заново."""
+        if self.current is not None and self.current != day:
+            outcome = self.outcomes.get(self.current)
+            if outcome == "failed":
+                self._note(f"Сессия {self.current:%d.%m} собрана не полностью")
+            elif outcome == "collected":
+                self._note(f"Сессия {self.current:%d.%m} собрана")
+
         self.current = day
         self.sources = {}
 
     def note_skip(self, day: dt.date, reason: str, detail: str | None = None) -> None:
         self.outcomes[day] = "skipped"
         self.skips.append((day, reason, detail))
+        self._note(f"Сессия {day:%d.%m} пропущена: {detail or reason}")
 
     def _session_plan(self) -> list[dict[str, object]]:
         """План источников текущей сессии с состоянием каждого."""
@@ -180,9 +224,18 @@ class CatchupState:
                     if day in self.outcomes
                 ],
             },
+            # Пропусков за длинный прогон бывают сотни. Раскрытый список без
+            # потолка — это страница, которую невозможно долистать; счётчик
+            # рядом честнее, чем все строки разом.
+            # Свежие сверху: человек читает журнал сверху вниз и первым должен
+            # увидеть последнее, а не то, что было полчаса назад.
+            "log": [
+                {"at": moment.isoformat(), "text": text} for moment, text in reversed(self.log)
+            ],
+            "skips_total": len(self.skips),
             "skips": [
                 {"session_date": day.isoformat(), "reason": reason, "detail": detail}
-                for day, reason, detail in self.skips
+                for day, reason, detail in self.skips[-SKIPS_SHOWN:]
             ],
             "current": (
                 {"session_date": self.current.isoformat(), "sources": self._session_plan()}

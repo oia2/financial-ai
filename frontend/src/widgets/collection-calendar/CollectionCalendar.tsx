@@ -9,10 +9,20 @@
  * может. Пунктир — не украшение, а признание незнания (FR-023).
  */
 
-import { useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
+import type { CalendarDayDto } from '@/entities/market-data';
 import { useCalendar } from '@/entities/market-data';
 import { formatIsoDate } from '@/shared/lib/market-format';
+
+/** Названия групп в сведениях о дате. Порядок — как в таблице групп. */
+const GROUP_TITLE: Record<string, string> = {
+  quotes: 'Котировки',
+  aggregates: 'Агрегаты торгов',
+  global: 'Глобальные ряды',
+  positions: 'Позиции по фьючерсам',
+  reference: 'Справочники',
+};
 
 const MONTHS = [
   'Январь',
@@ -56,6 +66,8 @@ export function CollectionCalendar({
   paused,
   collecting = null,
   proxySecurity = 'SBER · TQBR',
+  skipReasons = {},
+  onCollect,
 }: {
   /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
   nextSession: string | null;
@@ -67,8 +79,13 @@ export function CollectionCalendar({
   collecting?: string | null;
   /** Опорная бумага календаря: по её торгам он и строится. */
   proxySecurity?: string;
+  /** Причины пропусков по датам: из журнала, поэтому переживают перезапуск. */
+  skipReasons?: Record<string, string>;
+  /** Поставить одну сессию в ручной сбор. */
+  onCollect?: (date: string) => void;
 }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
+  const [opened, setOpened] = useState<CalendarDayDto | null>(null);
   const calendar = useCalendar(month);
 
   const days = calendar.data?.days ?? [];
@@ -173,7 +190,16 @@ export function CollectionCalendar({
                   .join(' ');
 
                 return (
-                  <button key={day.date} className={className} type="button" disabled>
+                  <button
+                    key={day.date}
+                    className={className}
+                    type="button"
+                    // Нажимается только состоявшаяся сессия: о будущем и о
+                    // неторговом дне рассказывать нечего.
+                    disabled={day.kind !== 'session'}
+                    aria-label={`Сессия ${formatIsoDate(day.date)}`}
+                    onClick={() => setOpened(day)}
+                  >
                     <span>{Number(day.date.slice(8))}</span>
                     {day.kind === 'session' && (
                       <div className="day-dots">
@@ -233,6 +259,107 @@ export function CollectionCalendar({
           </aside>
         </div>
       </details>
+
+      <DateDialog
+        day={opened}
+        reason={opened === null ? undefined : skipReasons[opened.date]}
+        onCollect={onCollect}
+        onClose={() => setOpened(null)}
+      />
     </section>
+  );
+}
+
+/**
+ * Сведения о дате: что за неё собрано и можно ли собрать сейчас.
+ *
+ * Перенесено из артефакта (`dateDialog`). Отвечает на вопрос, который
+ * календарь ставит, но сам не закрывает: точка под датой говорит «не собрано»,
+ * а чего именно не хватает — видно только здесь.
+ */
+function DateDialog({
+  day,
+  reason,
+  onCollect,
+  onClose,
+}: {
+  day: CalendarDayDto | null;
+  reason: string | undefined;
+  onCollect: ((date: string) => void) | undefined;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = ref.current;
+    if (dialog === null) return;
+    if (day !== null && !dialog.open) dialog.showModal();
+    if (day === null && dialog.open) dialog.close();
+  }, [day]);
+
+  const missing =
+    day === null ? 0 : Object.values(day.groups).filter((state) => state === 'missing').length;
+
+  return (
+    <dialog className="drawer" ref={ref} onClose={onClose} aria-labelledby="dateTitle">
+      <div className="drawer-heading">
+        <h2 id="dateTitle">{day === null ? 'Сессия' : `Сессия ${formatIsoDate(day.date)}`}</h2>
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="Закрыть сведения о дате"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="drawer-body">
+        {day !== null && (
+          <div className="date-group">
+            <h3>Что собрано</h3>
+            <div className="date-source">
+              {Object.entries(day.groups).map(([group, state]) => (
+                <Fragment key={group}>
+                  <span>{GROUP_TITLE[group] ?? group}</span>
+                  <span className={`badge ${state === 'collected' ? 'complete' : 'partial'}`}>
+                    {state === 'collected' ? 'Собрано' : 'Не собрано'}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
+            <p>
+              {reason !== undefined
+                ? `Причина пропуска: ${reason}.`
+                : missing === 0
+                  ? 'Сессия собрана полностью.'
+                  : `Не собрано групп: ${missing}.`}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="drawer-footer">
+        <button className="secondary-button" type="button" onClick={onClose}>
+          Закрыть
+        </button>
+        {/*
+          Собрать одну сессию — тот же ручной сбор, только диапазоном в один
+          день. Второго способа делать то же самое заводить незачем.
+        */}
+        {day !== null && missing > 0 && onCollect !== undefined && (
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => {
+              onCollect(day.date);
+              onClose();
+            }}
+          >
+            Собрать эту сессию
+          </button>
+        )}
+      </div>
+    </dialog>
   );
 }

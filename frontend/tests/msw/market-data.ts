@@ -45,6 +45,7 @@ function sourcesOf(group: GroupCoverageDto['group'], covered: number): SourceCov
     status: 'ok',
     sessions_covered: covered,
     failures: [],
+    failures_total: 0,
   }));
 }
 
@@ -148,6 +149,8 @@ export function catchupFixture(
       outcomes: [],
     },
     skips: [],
+    skips_total: 0,
+    log: [],
     current: null,
     started_at: null,
     finished_at: null,
@@ -160,11 +163,18 @@ export function catchupFixture(
     remaining: 0,
   };
 
-  if (status === 'idle') return { ...base, ...overrides };
+  // Счётчик пропусков идёт за самим списком: тест, задающий пропуски, не
+  // должен помнить про второе поле, иначе подпись разойдётся с данными.
+  const withTotals = (state: CatchupStateDto): CatchupStateDto => ({
+    ...state,
+    skips_total: state.skips_total || state.skips.length,
+  });
+
+  if (status === 'idle') return withTotals({ ...base, ...overrides });
 
   const active = status === 'running' || status === 'stopping';
 
-  return {
+  return withTotals({
     ...base,
     groups: ['quotes', 'aggregates', 'global', 'positions', 'reference'],
     date_from: '2026-04-20',
@@ -217,5 +227,5 @@ export function catchupFixture(
     failed: 1,
     remaining: 71,
     ...overrides,
-  };
+  });
 }

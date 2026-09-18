@@ -250,6 +250,10 @@ export function MarketDataPage() {
           lastClosed={coverage.data.asof_date}
           paused={collectionPaused}
           collecting={running ? (catchup.data?.current?.session_date ?? null) : null}
+          skipReasons={Object.fromEntries(
+            (runs.data?.skips ?? []).map((skip) => [skip.session_date, skip.detail ?? skip.reason]),
+          )}
+          onCollect={(date) => control.launch({ groups: null, date_from: date, date_till: date })}
         />
       )}
 

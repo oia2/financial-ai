@@ -12,7 +12,7 @@
  * сегмент читался бы как «сто процентов». Там работа видна по источникам.
  */
 
-import type { SessionProgressDto, SessionSkipDto } from '@/entities/market-data';
+import type { RunSourceDto, SessionProgressDto, SessionSkipDto } from '@/entities/market-data';
 import { formatIsoDate } from '@/shared/lib/market-format';
 
 const FILL: Record<string, string> = {
@@ -64,13 +64,99 @@ function skipWord(count: number): string {
  */
 const DENSE_FROM = 40;
 
+/**
+ * Шкала обычного вечернего сбора: счёт идёт по ИСТОЧНИКАМ, а не по сессиям.
+ *
+ * Перенесено из артефакта вместе с причиной, которая там названа прямо:
+ * «обычный вечерний сбор — это одна сессия, и шкала по сессиям выродилась бы в
+ * один сегмент». А таких прогонов подавляющее большинство.
+ *
+ * В счёт входят только посессионные источники: диапазонные и суточные на
+ * следующий день не повторятся, и обещать обратное счётчик не должен (FR-007).
+ */
+function SourceScale({ session }: { session: { session_date: string; sources: RunSourceDto[] } }) {
+  const plan = session.sources.filter((source) => source.scope === 'session');
+  const tally = {
+    done: plan.filter((source) => source.state === 'done').length,
+    failed: plan.filter((source) => source.state === 'failed').length,
+    running: plan.filter((source) => source.state === 'running').length,
+    pending: plan.filter((source) => source.state === 'pending').length,
+  };
+  const passed = tally.done + tally.failed;
+
+  const marks: [keyof typeof tally, string][] = [
+    ['done', 'собрано'],
+    ['running', 'идёт'],
+    ['failed', errors(tally.failed)],
+    ['pending', 'осталось'],
+  ];
+
+  return (
+    <div className="session-progress">
+      <div className="metric-heading">
+        <span>Сессия {formatIsoDate(session.session_date)} · источники</span>
+        <strong className="count-big">
+          {passed} <small>из {plan.length}</small>
+        </strong>
+      </div>
+
+      <div
+        className="segmented-track"
+        role="img"
+        aria-label={`Собрано ${tally.done} источников из ${plan.length}`}
+      >
+        {plan.map((source) => (
+          <span
+            key={source.source_id}
+            className={SOURCE_FILL[source.state] ?? FILL.pending}
+            style={{ flex: 1 }}
+            title={source.title}
+          />
+        ))}
+      </div>
+
+      <div className="outcome-legend">
+        {marks
+          .filter(([key]) => tally[key] > 0)
+          .map(([key, label]) => (
+            <span key={key}>
+              <i className={SOURCE_FILL[key] ?? FILL.pending} />
+              {tally[key]} {label}
+            </span>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+/** Состояние источника → заливка сегмента. Та же палитра, что у сессий. */
+const SOURCE_FILL: Record<string, string> = {
+  done: 'fill-complete',
+  failed: 'fill-error',
+  running: 'fill-running',
+  pending: 'fill-wait',
+  skipped: 'fill-skipped',
+};
+
 export function SessionProgress({
   sessions,
   skips,
+  skipsTotal,
+  current = null,
 }: {
   sessions: SessionProgressDto;
   skips: SessionSkipDto[];
+  /** Сколько пропусков всего: список ограничен, и молчать об остатке нельзя. */
+  skipsTotal: number;
+  /** Текущая сессия с её планом источников: по ней считает шкала одиночного прогона. */
+  current?: { session_date: string; sources: RunSourceDto[] } | null;
 }) {
+  // Прогон из одной сессии шкалой по сессиям не показывается: один сегмент на
+  // всю ширину не сообщает ничего.
+  if (sessions.requested <= 1 && current !== null) {
+    return <SourceScale session={current} />;
+  }
+
   const processed = sessions.collected + sessions.partial + sessions.failed;
 
   const counts: [string, number][] = [
@@ -129,7 +215,12 @@ export function SessionProgress({
 
       {skips.length > 0 && (
         <details className="skip-details" data-od-id="skipped-sessions">
-          <summary>{skipWord(skips.length)}</summary>
+          <summary>
+            {skipWord(skipsTotal)}
+            {skipsTotal > skips.length && (
+              <span className="quiet"> · показаны последние {skips.length}</span>
+            )}
+          </summary>
           <ul className="skip-list">
             {skips.map((skip) => (
               <li key={`${skip.session_date}-${skip.reason}`}>

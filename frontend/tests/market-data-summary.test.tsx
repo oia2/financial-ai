@@ -106,6 +106,7 @@ describe('сводка полноты', () => {
             { session_date: '2026-09-02', reason: 'источник не ответил вовремя' },
             { session_date: '2026-08-29', reason: 'HTTP 503 от источника' },
           ];
+          brent.failures_total = 2;
         }
         return HttpResponse.json(report);
       }),
@@ -114,7 +115,7 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const global = await groupBlock('global');
-    expect(within(global).getByText('Неудачи по дням · 2')).toBeInTheDocument();
+    expect(within(global).getByText(/Неудачи по дням · 2/)).toBeInTheDocument();
     expect(within(global).getByText('02.09.2026')).toBeInTheDocument();
     expect(within(global).getByText('источник не ответил вовремя')).toBeInTheDocument();
     expect(within(global).getByText('HTTP 503 от источника')).toBeInTheDocument();
@@ -163,6 +164,34 @@ describe('сводка полноты', () => {
     const section = await groupsSection();
     expect(within(section).getByText(/состав бумаг — на/)).toBeInTheDocument();
     expect(within(section).getByText('01.09.2026')).toBeInTheDocument();
+  });
+
+  it('клетка календаря открывает сведения о дате', async () => {
+    server.use(
+      http.get('*/api/market-data/calendar', () =>
+        HttpResponse.json({
+          month: '2026-09',
+          today: '2026-09-03',
+          days: [
+            {
+              date: '2026-09-02',
+              kind: 'session',
+              groups: { quotes: 'collected', positions: 'missing' },
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderMarketData();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Сессия 02.09.2026' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Сессия 02.09.2026' });
+    expect(within(dialog).getByText('Позиции по фьючерсам')).toBeInTheDocument();
+    expect(within(dialog).getByText('Не собрано')).toBeInTheDocument();
+    // Собрать одну сессию — тот же ручной сбор диапазоном в один день.
+    expect(within(dialog).getByRole('button', { name: 'Собрать эту сессию' })).toBeInTheDocument();
   });
 
   it('не выводит конкретных значений наблюдений', async () => {

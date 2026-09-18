@@ -309,3 +309,13 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T073 Сделать дорожку сплошной на длинном прогоне — в макете Open Design (`v4.css`, `v4.js`) и в `frontend/src/widgets/catchup-section/SessionProgress.tsx`: при 216 сессиях 215 зазоров по 3px дают 645 пикселей там, где дорожке отведено около 400, и шкалы не видно, per FR-021 (contradicts)
 - [X] T074 Писать псевдоним при СМЕНЕ имени, а не в каждом прогоне, в `backend/src/financial_ai/market_data/links.py`: на стенде накопилось 23 276 строк на 506 бумаг, per FR-038, Constitution II (contradicts)
 - [X] T075 Свернуть накопленные дубликаты псевдонимов миграцией `backend/migrations/versions/0012_collapse_alias_duplicates.py`, per FR-038 (partial)
+
+## Phase 15: Журнал событий, шкала источников, сведения о дате
+
+Запрошено владельцем проекта 2026-09-18.
+
+- [X] T076 Три состояния источника вместо двух в `backend/src/financial_ai/market_data/coverage.py`: `partial` — неполнота без неудач, `failed` — только с записанными неудачами; экран называл ошибкой всякую неполноту, per FR-032 (contradicts)
+- [X] T077 Журнал событий идущего прогона: `log` в состоянии прогона (`runner.py`) и виджет `frontend/src/widgets/catchup-section/EventLog.tsx`, per FR-021 (missing)
+- [X] T078 Шкала по источникам для прогона из одной сессии в `frontend/src/widgets/catchup-section/SessionProgress.tsx`, per FR-021, FR-026 (missing)
+- [X] T079 Сведения о дате и сбор одной сессии в `frontend/src/widgets/collection-calendar/CollectionCalendar.tsx`: клетка календаря открывает состав дня, причину пропуска и запуск ручного сбора диапазоном в один день, per FR-021 (missing)
+- [X] T080 Потолок у всех журналов: `skips_total`, `failures_total`, `LOG_KEPT`, и подпись «показаны последние N» — раскрытый список не должен оказаться бесконечным, per Constitution II (partial)

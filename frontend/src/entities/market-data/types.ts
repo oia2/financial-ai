@@ -28,7 +28,16 @@ export interface SourceCoverageDto {
   title: string;
   /** `session`, `period` или `daily` — как часто источник ходит за данными. */
   scope: string;
-  status: 'ok' | 'failed';
+  /**
+   * Три состояния, а не два.
+   *
+   * `partial` — окно покрыто не целиком, но источник не падал: обычное
+   * состояние недособранного окна, оно ничего не требует. `failed` — были
+   * записанные неудачи, и они названы в `failures`. Пока состояний было два,
+   * экран называл ошибкой всякую неполноту и не мог показать причину, потому
+   * что причины не было.
+   */
+  status: 'ok' | 'partial' | 'failed';
   sessions_covered: number;
   /**
    * Неудачи по дням: что именно и когда сломалось.
@@ -38,6 +47,8 @@ export interface SourceCoverageDto {
    * вмешиваться, не по чему.
    */
   failures: { session_date: string; reason: string | null }[];
+  /** Сколько неудач всего: список ограничен, и молчать об остатке нельзя. */
+  failures_total: number;
 }
 
 /**
@@ -181,6 +192,10 @@ export interface CatchupStateDto {
   clamped: boolean;
   sessions: SessionProgressDto;
   skips: SessionSkipDto[];
+  /** Сколько пропусков всего: список ограничен полусотней. */
+  skips_total: number;
+  /** Журнал событий прогона, свежие сверху. Только пока прогон идёт. */
+  log: { at: string; text: string }[];
   /** Текущая сессия и план её источников в порядке выполнения (FR-003). */
   current: { session_date: string; sources: RunSourceDto[] } | null;
   started_at: string | null;
