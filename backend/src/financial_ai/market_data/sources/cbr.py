@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 from dataclasses import dataclass
@@ -29,6 +30,10 @@ from bs4 import BeautifulSoup
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
+
+# Коды, при которых повтор осмыслен — те же, что у клиента биржи.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+RETRY_BACKOFF_FACTOR = 1.7
 
 SOURCE_ID = "cbr"
 
@@ -77,6 +82,14 @@ class CbrError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class CbrConfig:
     timeout_seconds: float = 60.0
+
+    # Повторы. Сайт ЦБ рвёт часть соединений: на стенде 2026-09-19 — 54 неуспеха
+    # на 118 успехов, то есть почти треть, при нуле неуспехов у остальных
+    # источников. Повторов у него не было вовсе, и каждый оборванный запрос
+    # стоил всей сессии: она оставалась недобранной и собиралась заново целиком,
+    # вместе с прочими источниками.
+    retries: int = 4
+    retry_backoff_seconds: float = 1.0
 
 
 async def fetch_key_rate(
@@ -192,19 +205,47 @@ def parse_zcyc_html(html: str) -> dict[str, dict[dt.date, Decimal | None]]:
 async def _get(
     url: str, params: dict[str, str], config: CbrConfig, client: httpx.AsyncClient | None
 ) -> str:
+    """Один запрос к ЦБ с повторами.
+
+    Повторяется и обрыв связи, и ответ из перечня кодов: сайт ЦБ роняет часть
+    соединений, и без повторов единичный обрыв стоил всей сессии — она
+    оставалась недобранной и собиралась заново целиком, вместе с прочими
+    источниками, которые в этом не виноваты.
+    """
     owns = client is None
     http = client or httpx.AsyncClient(timeout=config.timeout_seconds)
+    delay = config.retry_backoff_seconds
+    last_error = "неизвестная причина"
+
     try:
-        response = await http.get(url, params=params)
-    except httpx.HTTPError as error:
-        raise CbrError(f"ЦБ недоступен: {error}") from error
+        for attempt in range(1, config.retries + 1):
+            try:
+                response = await http.get(url, params=params)
+            except httpx.HTTPError as error:
+                # У обрыва соединения текст пустой: без имени класса в сообщении
+                # остаётся «ЦБ недоступен: » — причина, по которой нечего искать.
+                last_error = str(error) or type(error).__name__
+            else:
+                if response.status_code == httpx.codes.OK:
+                    return response.text
+                if response.status_code not in RETRYABLE_STATUS_CODES:
+                    raise CbrError(f"ЦБ ответил {response.status_code} на {url}")
+                last_error = f"HTTP {response.status_code}"
+
+            if attempt < config.retries:
+                logger.warning(
+                    "ЦБ: попытка %d не удалась (%s), повтор через %.1f с",
+                    attempt,
+                    last_error,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay *= RETRY_BACKOFF_FACTOR
     finally:
         if owns:
             await http.aclose()
 
-    if response.status_code != httpx.codes.OK:
-        raise CbrError(f"ЦБ ответил {response.status_code} на {url}")
-    return response.text
+    raise CbrError(f"ЦБ недоступен: {last_error}")
 
 
 def _parse_cbr_date(raw: str) -> dt.date | None:

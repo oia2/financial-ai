@@ -179,3 +179,40 @@ async def test_error_status_is_reported() -> None:
     respx.get(cbr.ZCYC_URL).mock(return_value=httpx.Response(503))
     with pytest.raises(cbr.CbrError, match="503"):
         await cbr.fetch_zcyc(cbr.CbrConfig(), dt.date(2026, 8, 26), dt.date(2026, 8, 28))
+
+
+@respx.mock
+async def test_оборванное_соединение_повторяется() -> None:
+    """Сайт ЦБ роняет часть соединений (T106).
+
+    На стенде 2026-09-19 — 54 неуспеха на 118 успехов, почти треть, при нуле
+    неуспехов у остальных источников. Повторов у ЦБ не было вовсе, и каждый
+    обрыв стоил всей сессии: она оставалась недобранной и собиралась заново
+    целиком, вместе с прочими источниками.
+    """
+    route = respx.get(cbr.KEY_RATE_URL).mock(
+        side_effect=[
+            httpx.ConnectError("нет связи"),
+            httpx.Response(200, text=KEY_RATE_HTML),
+        ]
+    )
+
+    config = cbr.CbrConfig(retry_backoff_seconds=0.0)
+    rates = await cbr.fetch_key_rate(config, dt.date(2026, 9, 2), dt.date(2026, 9, 2))
+
+    assert route.call_count == 2
+    assert rates
+
+
+@respx.mock
+async def test_причина_названа_даже_когда_обрыв_молчит() -> None:
+    """У обрыва соединения текст пустой.
+
+    Без имени класса в сообщении оставалось «ЦБ недоступен: » — причина, по
+    которой нечего искать.
+    """
+    respx.get(cbr.KEY_RATE_URL).mock(side_effect=httpx.ConnectError(""))
+
+    config = cbr.CbrConfig(retries=1, retry_backoff_seconds=0.0)
+    with pytest.raises(cbr.CbrError, match="ConnectError"):
+        await cbr.fetch_key_rate(config, dt.date(2026, 9, 2), dt.date(2026, 9, 2))
