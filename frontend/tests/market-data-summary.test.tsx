@@ -162,7 +162,8 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const section = await groupsSection();
-    expect(within(section).getByText(/состав бумаг — на/)).toBeInTheDocument();
+    // Дата сама по себе ничего не объясняет — сказано, откуда она взялась.
+    expect(within(section).getByText(/по последней собранной сессии/)).toBeInTheDocument();
     expect(within(section).getByText('01.09.2026')).toBeInTheDocument();
   });
 

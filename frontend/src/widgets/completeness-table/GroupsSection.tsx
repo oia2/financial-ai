@@ -47,7 +47,7 @@ export function GroupsSection({
             */}
             {universe.asof_date !== null && universe.asof_date !== asofDate && (
               <>
-                , состав бумаг — на{' '}
+                {' · состав бумаг — по последней собранной сессии '}
                 <span className="mono">{formatIsoDate(universe.asof_date)}</span>
               </>
             )}

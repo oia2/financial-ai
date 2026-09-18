@@ -120,6 +120,10 @@ export function CatchupSection({
   */
   const blockedByGap = state.skips.find((skip) => skip.reason === 'gap_over_limit');
 
+  // Несобранное прошедшего прогона: неудачи, пропуски и то, к чему не
+  // приступили. Последнее — остаток остановленного прогона.
+  const unfinished = state.sessions.failed + state.sessions.skipped + state.sessions.pending;
+
   // Прогонов ещё не было: единственный случай, когда панели нечего показать.
   if (past && state.sessions.requested === 0 && runs.length === 0) {
     return (
@@ -305,10 +309,19 @@ export function CatchupSection({
               </strong>
             </div>
             <p className="small-note" style={{ marginTop: 12 }}>
+              {/*
+                Непройденные сессии — тоже несобранные. У остановленного
+                прогона они и составляют остаток: сказать про него «все сессии
+                собраны» значило бы объявить собранным то, к чему даже не
+                приступали.
+              */}
               {running
                 ? `дальше ещё ${state.sessions.pending} · ${state.sessions.skipped} пропущены с причинами`
-                : state.sessions.failed + state.sessions.skipped > 0
-                  ? `не собрано: ${state.sessions.failed + state.sessions.skipped}`
+                : unfinished > 0
+                  ? `не собрано: ${unfinished}` +
+                    (state.sessions.pending > 0
+                      ? ` (из них ${state.sessions.pending} не начинались)`
+                      : '')
                   : 'все сессии прогона собраны'}
             </p>
           </div>

@@ -190,6 +190,23 @@ describe('прогон закончился', () => {
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
   });
 
+  it('у остановленного прогона непройденное названо несобранным', async () => {
+    // «Все сессии прогона собраны» про прогон, который бросили на середине,
+    // объявляло бы собранным то, к чему даже не приступали.
+    const stopped = catchupFixture('stopped');
+    renderWith(
+      {
+        ...stopped,
+        sessions: { ...stopped.sessions, requested: 90, collected: 18, failed: 0, pending: 72 },
+      },
+      [FINISHED_RUN],
+    );
+
+    expect(await screen.findByText(/не собрано: 72/)).toBeInTheDocument();
+    expect(screen.getByText(/72 не начинались/)).toBeInTheDocument();
+    expect(screen.queryByText('все сессии прогона собраны')).not.toBeInTheDocument();
+  });
+
   it('остановленный прогон предлагает продолжить или отменить', async () => {
     // Остановка — не отмена: непройденные сессии никуда не делись, и человек
     // выбирает, доводить их или бросить. Молчаливый переход к «начать заново»
