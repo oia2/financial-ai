@@ -45,6 +45,16 @@ const NOTE: Record<string, string> = {
   future: 'ожидается',
 };
 
+/**
+ * Совпадает ли пояс зрителя с биржевым.
+ *
+ * Москва — UTC+3 круглый год. Сравнение по смещению, а не по названию зоны:
+ * зон с тем же смещением несколько, и все они для нас одно и то же.
+ */
+function moscowIsLocal(): boolean {
+  return new Date().getTimezoneOffset() === -180;
+}
+
 function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -103,14 +113,22 @@ export function CollectionCalendar({
         <li>
           <span>Следующий сбор</span>
           <strong>
-            {paused
-              ? 'не будет'
-              : nextSession === null
-                ? 'по расписанию'
-                : formatIsoDate(nextSession)}
-            <span className="msk">
-              {paused ? 'пока автосбор на паузе' : `после ${threshold.local}`}
-            </span>
+            {paused ? (
+              <>
+                не будет <span className="msk">пока автосбор на паузе</span>
+              </>
+            ) : (
+              <>
+                {nextSession === null ? 'по расписанию' : formatIsoDate(nextSession)} после{' '}
+                {threshold.local}
+                {/*
+                  Московское время — только дополнение к биржевому порогу и
+                  только когда пояс зрителя не совпадает с биржевым: иначе оно
+                  повторяет уже сказанное (FR-022).
+                */}
+                {!moscowIsLocal() && <span className="msk">(порог {threshold.exchange})</span>}
+              </>
+            )}
           </strong>
         </li>
         <li>

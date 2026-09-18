@@ -49,6 +49,8 @@ export function CatchupSection({
   stale = false,
   onStart,
   onStop,
+  offerContinue,
+  onDiscard,
   onRepeat,
 }: {
   state: CatchupStateDto;
@@ -75,6 +77,16 @@ export function CatchupSection({
   stale?: boolean;
   onStart: () => void;
   onStop: () => void;
+  /**
+   * Предложить выбор после остановки.
+   *
+   * Решает страница, а не панель: отказ от предложения — состояние экрана, а
+   * не сборщика. Прогон остановлен в любом случае, вопрос лишь в том, показывать
+   * ли ещё выбор «продолжить или бросить».
+   */
+  offerContinue: boolean;
+  /** Отказаться от остановленного прогона: непройденное остаётся непройденным. */
+  onDiscard: () => void;
   onRepeat: () => void;
 }) {
   if (stale) {
@@ -170,7 +182,19 @@ export function CatchupSection({
           <h2 id="runTitle">{title}</h2>
         </div>
 
-        {past ? (
+        {past && offerContinue ? (
+          // Остановка — не отмена. Прогон прерван по команде, непройденные
+          // сессии никуда не делись, и человек выбирает: доводить или бросить.
+          // Молчаливый переход к «начать заново» этот выбор стирал бы.
+          <div className="panel-actions">
+            <button className="secondary-button" type="button" onClick={onDiscard}>
+              Отменить прогон
+            </button>
+            <button className="primary-button" type="button" onClick={onRepeat}>
+              Продолжить прогон
+            </button>
+          </div>
+        ) : past ? (
           <div className="panel-actions">
             {nothingToCatchUp ? (
               <span className="quiet">Догонять нечего</span>

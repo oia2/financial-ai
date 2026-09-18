@@ -28,7 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import gaps, groups, ingest
+from financial_ai.market_data import completeness, gaps, groups, ingest
 from financial_ai.market_data import plan as plan_module
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssError
@@ -349,10 +349,19 @@ class CatchupRunner:
 
             report = await gaps.find_gaps(session, self._settings, asof)
 
-        if report.needs_backfill:
-            raise BackfillRequiredError("в хранилище нет наблюдений: нужна первичная загрузка")
+            if report.needs_backfill:
+                raise BackfillRequiredError("в хранилище нет наблюдений: нужна первичная загрузка")
 
-        sessions, clamped = _clamp(report.missing_sessions, date_from, date_till)
+            # Что брать в сбор — считается по ВСЕМ группам с осью сессий, тем же
+            # правилом, что и в ежедневном цикле. Прежде ручной догон шёл по
+            # отчёту о котировках, и сессия с собранными барами и пустыми
+            # позициями в план не попадала: на стенде 2026-09-18 он запросил
+            # четыре сессии там, где недобранных были сотни (FR-031, FR-032).
+            missing = await completeness.incomplete_sessions(
+                repository, calendar, self._settings, asof, closed=report.window
+            )
+
+        sessions, clamped = _clamp(missing, date_from, date_till)
         if not sessions:
             raise NothingToCatchUpError("пропущенных сессий нет")
 

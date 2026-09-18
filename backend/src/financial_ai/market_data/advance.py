@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import completeness, groups, ingest
+from financial_ai.market_data import completeness, ingest
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -109,7 +109,9 @@ async def pending_sessions(
 
     last_closed = closed[-1]
 
-    missing = await _incomplete_sessions(repository, calendar, settings, closed, last_closed)
+    missing = await completeness.incomplete_sessions(
+        repository, calendar, settings, last_closed, closed=closed
+    )
     if not missing:
         return [], last_closed
 
@@ -159,53 +161,6 @@ async def pending_sessions(
             )
 
     return ready, last_closed
-
-
-async def _incomplete_sessions(
-    repository: MarketDataRepository,
-    calendar: TradingCalendar,
-    settings: Settings,
-    closed: list[dt.date],
-    last_closed: dt.date,
-) -> list[dt.date]:
-    """Закрытые сессии, за которые данные неполны.
-
-    Признак собранности — не наличие баров, а **успешный исход каждого
-    источника группы**. Прежде считались бары: котировки записывались,
-    остальные источники могли упасть, и день навсегда числился собранным. Дыра
-    в позициях или агрегатах не закрывалась никогда, а ранжирование из-за неё не
-    запускалось, потому что полнота требуется по всему окну.
-
-    Окно у каждой группы своё, и это не мелочь: позиции нужны модели на 82
-    сессии, остальное — на 314. Требовать позиции за сессию трёхсотдневной
-    давности значило бы ходить на биржу за данными, которых там нет и которые
-    модели не нужны.
-
-    Группы без оси сессий пропускаются: у справочника нет окна, и «недобранным»
-    он не бывает.
-    """
-    incomplete: set[dt.date] = set()
-    closed_set = set(closed)
-
-    # **По всем группам с осью сессий, а не по обязательным для модели.**
-    # Раньше здесь стоял `groups.required(settings)`, то есть перечень
-    # `DAILY_ML_REQUIRED_DATA_GROUPS`. На стенде в нём стояли одни котировки, и
-    # день с собранными котировками считался готовым: дыры в позициях и
-    # глобальных рядах работой не становились и не добирались никогда.
-    # Перечень обязательных групп отвечает на другой вопрос — запускать ли
-    # ранжирование, — и на состав сбора влиять не должен (spec 008, FR-031).
-    for group in groups.GROUPS:
-        depth = group.window_sessions(settings)
-        if depth is None:
-            continue
-
-        window = [day for day in await calendar.window(last_closed, depth) if day in closed_set]
-        if not window:
-            continue
-
-        incomplete.update(await completeness.missing_sessions(repository, group, window))
-
-    return sorted(incomplete)
 
 
 def _after_retry_delay(

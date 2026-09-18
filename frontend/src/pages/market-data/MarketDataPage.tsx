@@ -71,6 +71,13 @@ export function MarketDataPage() {
   const queryClient = useQueryClient();
   const [details, setDetails] = useState<GroupCoverageDto | null>(null);
 
+  /*
+    От какого остановленного прогона человек уже отказался.
+    Опознаётся моментом начала: это состояние ЭКРАНА, а не сборщика — прогон
+    остановлен в любом случае, вопрос лишь в том, предлагать ли ещё выбор.
+  */
+  const [discarded, setDiscarded] = useState<string | null>(null);
+
   // Пока состояние не прочитано, сбор считается идущим: это умолчание сборщика,
   // и мигать надписью «остановлено» на первом кадре незачем.
   const collectionPaused = collection.data?.paused ?? false;
@@ -210,6 +217,8 @@ export function MarketDataPage() {
               </RunNotice>
             )
           }
+          offerContinue={catchup.data.status === 'stopped' && discarded !== catchup.data.started_at}
+          onDiscard={() => setDiscarded(catchup.data?.started_at ?? null)}
           onStart={control.openDrawer}
           onStop={control.requestStop}
           onRepeat={() => control.resume(catchup.data.groups)}

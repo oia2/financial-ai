@@ -182,6 +182,23 @@ describe('прогон закончился', () => {
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
   });
 
+  it('остановленный прогон предлагает продолжить или отменить', async () => {
+    // Остановка — не отмена: непройденные сессии никуда не делись, и человек
+    // выбирает, доводить их или бросить. Молчаливый переход к «начать заново»
+    // этот выбор стирал бы.
+    renderWith(catchupFixture('stopped'), [FINISHED_RUN]);
+
+    expect(await screen.findByRole('button', { name: 'Продолжить прогон' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Отменить прогон' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Отменить прогон' }));
+
+    // Отказ — состояние экрана: выбор больше не предлагается, а панель
+    // показывает обычный итог прошедшего прогона.
+    expect(screen.queryByRole('button', { name: 'Продолжить прогон' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ручной сбор' })).toBeInTheDocument();
+  });
+
   it('журнал событий: что было последние минуты', async () => {
     // Лента источников показывает НЫНЕШНЕЕ положение дел и произошедшее
     // стирает: собравшийся источник в ней просто становится галочкой.

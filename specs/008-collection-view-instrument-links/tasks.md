@@ -319,3 +319,11 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T078 Шкала по источникам для прогона из одной сессии в `frontend/src/widgets/catchup-section/SessionProgress.tsx`, per FR-021, FR-026 (missing)
 - [X] T079 Сведения о дате и сбор одной сессии в `frontend/src/widgets/collection-calendar/CollectionCalendar.tsx`: клетка календаря открывает состав дня, причину пропуска и запуск ручного сбора диапазоном в один день, per FR-021 (missing)
 - [X] T080 Потолок у всех журналов: `skips_total`, `failures_total`, `LOG_KEPT`, и подпись «показаны последние N» — раскрытый список не должен оказаться бесконечным, per Constitution II (partial)
+
+## Phase 16: План ручного сбора, слипшаяся строка, выбор после остановки
+
+Найдено владельцем проекта на живом стенде 2026-09-18.
+
+- [X] T081 Считать план ручного сбора по ВСЕМ группам, а не по котировкам, в `backend/src/financial_ai/market_data/runner.py` и `completeness.py`: на стенде догон запросил четыре сессии там, где недобранных были сотни — это исходная жалоба фичи, закрытая для автосбора и оставшаяся в ручном, per FR-031, FR-032 (contradicts)
+- [X] T082 Разделить строку «Следующий сбор» в `frontend/src/widgets/collection-calendar/CollectionCalendar.tsx`: дата и порог слипались, а московское время показывается только при несовпадении поясов, per FR-021, FR-022 (contradicts)
+- [X] T083 Состояние «остановлен вами» с выбором «продолжить или отменить» — в макете Open Design и в `frontend/src/widgets/catchup-section/CatchupSection.tsx`: остановка не отмена, непройденные сессии никуда не делись, per FR-021 (missing)

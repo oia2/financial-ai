@@ -81,7 +81,33 @@ async def _seed(session: AsyncSession, collected: list[dt.date]) -> None:
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
     if collected:
         await repository.upsert_daily_bars([_bar(day) for day in collected])
+        await _mark_collected(repository, collected)
     await session.commit()
+
+
+async def _mark_collected(repository: MarketDataRepository, days: list[dt.date]) -> None:
+    """Отметить сессии собранными ПО ВСЕМ группам.
+
+    Котировок мало: сессия закрыта, когда закрыт каждый источник каждой группы.
+    Прежде план сбора считался по одним котировкам, и бар делал сессию
+    «собранной» — из-за этого ручной догон брал в работу вчетверо меньше, чем
+    было недобрано (FR-031, FR-032).
+    """
+    from financial_ai.market_data import groups as group_registry
+
+    moment = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    for day in days:
+        for group in group_registry.GROUPS:
+            for source_id in group.source_ids:
+                await repository.record_run(
+                    run_id=f"seed-{day}-{source_id}",
+                    source_id=source_id,
+                    status="ok",
+                    started_at=moment,
+                    finished_at=moment,
+                    session_date=day,
+                    rows_written=1,
+                )
 
 
 def _install_runner(delay: float = 0.0) -> CatchupRunner:

@@ -90,6 +90,12 @@ async def find_gaps(session: AsyncSession, settings: Settings, asof_date: dt.dat
             needs_backfill=True,
         )
 
+    # Здесь счёт идёт по КОТИРОВКАМ, и это осознанно: отчёт отвечает на вопрос
+    # «есть ли у сессии пространство строк», и его же читает набор для
+    # ранжирования, объявляя неполноту окна. Вопрос «что брать в сбор» —
+    # другой, и на него отвечает `completeness.incomplete_sessions` по всем
+    # группам (FR-031); путать их нельзя, иначе полнота набора начнёт зависеть
+    # от групп, которых модель не требует.
     with_bars = await repository.sessions_with_daily_bars(window)
     collected = await repository.sessions_with_successful_run(window, equity_d1.SOURCE_ID)
 

@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import datetime as dt
 
+from financial_ai.config import Settings
+from financial_ai.market_data import groups
+from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
 
@@ -68,3 +71,45 @@ async def missing_sessions(
             break
 
     return [day for day in window if day not in (closed or set())]
+
+
+async def incomplete_sessions(
+    repository: MarketDataRepository,
+    calendar: TradingCalendar,
+    settings: Settings,
+    last_closed: dt.date,
+    closed: list[dt.date] | None = None,
+) -> list[dt.date]:
+    """Закрытые сессии, за которые данные неполны, — по ВСЕМ группам.
+
+    Одно правило на ежедневный сбор и на ручной. Прежде их было два: автосбор
+    считал по всем группам, а ручной догон — только по котировкам, и сессия с
+    собранными котировками и пустыми позициями в план не попадала. Ровно с этой
+    жалобы фича и началась; для автосбора её закрыли, для ручного — нет, и на
+    стенде 2026-09-18 ручной догон запросил четыре сессии там, где недобранных
+    были сотни (FR-031, FR-032).
+
+    Окно у каждой группы своё: позиции нужны модели на 82 сессии, остальное на
+    314. Требовать позиции за сессию трёхсотдневной давности значило бы ходить
+    на биржу за данными, которых там нет и которые модели не нужны.
+
+    ``closed`` ограничивает ответ известными закрытыми сессиями. Без него
+    берётся всё окно группы.
+    """
+    incomplete: set[dt.date] = set()
+    closed_set = set(closed) if closed is not None else None
+
+    for group in groups.GROUPS:
+        depth = group.window_sessions(settings)
+        if depth is None:
+            continue
+
+        window = await calendar.window(last_closed, depth)
+        if closed_set is not None:
+            window = [day for day in window if day in closed_set]
+        if not window:
+            continue
+
+        incomplete.update(await missing_sessions(repository, group, window))
+
+    return sorted(incomplete)
