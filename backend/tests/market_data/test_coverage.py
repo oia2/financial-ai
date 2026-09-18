@@ -149,6 +149,22 @@ async def test_collected_but_empty_is_distinguishable_from_collected(
     ]
     await _seed(db_session, quotes=SESSIONS, positions=empty_rows)
 
+    # Источник отработал успешно и записал пустые строки — именно так дефект и
+    # выглядел. Сессию закрывает успешный прогон: пустая строка сама по себе
+    # покрытием не считается, иначе дыра пряталась бы дважды.
+    repository = MarketDataRepository(db_session)
+    for day in SESSIONS:
+        await repository.record_run(
+            run_id=f"seed-positions-{day}",
+            source_id="futures_positions",
+            status="ok",
+            started_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+            finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+            session_date=day,
+            rows_written=1,
+        )
+    await db_session.commit()
+
     report = await coverage.build_report(db_session, settings, ASOF)
     positions = _group(report, "positions")
 

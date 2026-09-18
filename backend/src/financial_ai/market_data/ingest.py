@@ -118,6 +118,7 @@ async def ingest_session(
     cbr_client: httpx.AsyncClient | None = None,
     positions_client: PositionsClient | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> IngestResult:
     """Собрать данные одной торговой сессии.
 
@@ -225,11 +226,22 @@ async def ingest_session(
             (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
             (cbr.SOURCE_ID, lambda: _sync_cbr(repository, session_date, cbr_client)),
         ):
+            # Остановка проверяется между обращениями: начатое доводится до
+            # конца — оно уже отправлено, и бросить ответ значило бы спросить
+            # то же самое ещё раз, — а новых не будет (FR-044).
+            if should_stop is not None and should_stop():
+                logger.info("сбор сессии %s прерван по команде", session_date)
+                return result
+
             outcome = await run_source(
                 repository, run_id, source_id, session_date, action, on_source=on_source
             )
             result.outcomes.append(outcome)
             await session.commit()
+
+        if should_stop is not None and should_stop():
+            logger.info("сбор сессии %s прерван по команде", session_date)
+            return result
 
         # Связи инструментов — перед позициями: иначе появление нового фьючерса
         # заметили бы только через сутки, а позиции спрашивались бы вчерашним
@@ -246,7 +258,15 @@ async def ingest_session(
             run_id,
             positions.SOURCE_ID,
             session_date,
-            lambda: _sync_positions(settings, iss, repository, day, pos_client, sessions=None),
+            lambda: _sync_positions(
+                settings,
+                iss,
+                repository,
+                day,
+                pos_client,
+                sessions=None,
+                should_stop=should_stop,
+            ),
             on_source=on_source,
         )
         result.outcomes.append(delayed)

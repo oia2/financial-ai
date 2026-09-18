@@ -288,3 +288,33 @@ async def test_cbr_series_are_stored(
     series = {r.series_id for r in rows}
     assert "CBR_KEY_RATE" in series
     assert any(s.startswith("CBR_ZCYC_") for s in series)
+
+
+@pytest.mark.db
+async def test_ingest_session_stops_between_sources(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Ежедневный сбор прерывается внутри сессии (FR-044, T095).
+
+    Прежде признак остановки смотрели только между сессиями, а ingest_session
+    его не принимал вовсе: остановка автосбора ждала всю сессию, включая
+    обращение за позициями по каждому из десятков контрактов.
+    """
+    started: list[str] = []
+
+    def on_source(source_id: str, state: str, outcome: object) -> None:
+        if state == "running":
+            started.append(source_id)
+
+    result = await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=FakeIss(),
+        cbr_client=cbr_client,
+        on_source=on_source,
+        should_stop=lambda: len(started) >= 2,
+    )
+
+    # План сессии — десять источников; до конца он не дошёл.
+    assert len(result.outcomes) < 10

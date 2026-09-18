@@ -231,10 +231,12 @@ async def build_report(
         window_size = group.window_sessions(settings)
         window = await calendar.window(asof_date, window_size) if window_size else []
 
+        missing: list[dt.date] = []
         if window:
             # Те же недостающие сессии, что найдёт сбор: правило полноты одно
             # на сводку, поиск пропусков и решение о работе (FR-032).
-            pending.update(await completeness.missing_sessions(repository, group, window))
+            missing = await completeness.missing_sessions(repository, group, window)
+            pending.update(missing)
 
         raw = await repository.group_coverage(
             group.model,
@@ -251,10 +253,16 @@ async def build_report(
                 title=group.title,
                 has_history=group.has_history,
                 window_sessions=len(window) if group.has_history else None,
-                sessions_covered=raw.sessions_covered,
+                # Покрытие группы считается ТЕМ ЖЕ правилом, что и исход
+                # каждого её источника: сессия закрыта, если есть непустое
+                # наблюдение либо успешный прогон. Прежде строка группы шла от
+                # наблюдений, а раскрытие — от исходов прогонов, и на экране
+                # рядом стояли два числа об одном и том же: «11 из 82» сверху и
+                # «13 из 82» внутри (FR-032).
+                sessions_covered=(len(window) - len(missing)) if group.has_history else None,
                 period_from=raw.period_from,
                 period_till=raw.period_till,
-                gaps=(len(window) - (raw.sessions_covered or 0)) if group.has_history else None,
+                gaps=len(missing) if group.has_history else None,
                 rows_total=raw.rows_total,
                 rows_with_values=raw.rows_with_values,
                 sources=sources,

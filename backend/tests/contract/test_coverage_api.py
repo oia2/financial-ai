@@ -230,3 +230,30 @@ async def test_календарь_не_листается_в_пустоту(db_s
     month = await calendar_view.build_month(db_session, Settings(), ASOF.year, ASOF.month)  # type: ignore[arg-type]
 
     assert month["earliest_month"] == f"{ASOF:%Y-%m}"
+
+
+async def test_числа_строки_группы_и_её_источников_сходятся(db_session: object) -> None:
+    """Одно число об одном и том же (T096, FR-032).
+
+    Строка группы считалась по наблюдениям, а раскрытие — по исходам прогонов,
+    и на экране рядом стояли «11 из 82» сверху и «13 из 82» внутри.
+    """
+    repository = await seed(db_session, ["SBER"])
+    # Сессия без наблюдений, но с успешным прогоном: биржа ответила, данных за
+    # день нет. Для правила полноты она закрыта.
+    await repository.record_run(
+        run_id="run-quotes",
+        source_id="equity_d1",
+        status="ok",
+        started_at=dt.datetime(2026, 9, 16, 19, 40, tzinfo=dt.UTC),
+        finished_at=dt.datetime(2026, 9, 16, 19, 41, tzinfo=dt.UTC),
+        session_date=ASOF,
+        rows_written=0,
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+    quotes = next(row for row in report["groups"] if row["group"] == "quotes")
+    source = quotes["sources"][0]
+
+    assert quotes["sessions_covered"] == source["sessions_covered"]

@@ -327,8 +327,10 @@ async def advance(
 
     collected: list[dt.date] = []
     for day in pending:
-        # Проверка МЕЖДУ сессиями, как у управляемого догона: начатую доводим до
-        # конца. День, собранный наполовину, неотличим от собранного полностью.
+        # Проверка между сессиями — грубая: внутри сессии признак смотрится
+        # ещё и между обращениями к бирже (FR-044). Без этого остановка
+        # автосбора ждала всю сессию, а сессия с позициями идёт по обращению на
+        # каждый из десятков контрактов — минуты после нажатия.
         if should_stop is not None and should_stop():
             logger.info("сбор остановлен перед сессией %s", day)
             break
@@ -336,7 +338,9 @@ async def advance(
         if on_session_start is not None:
             on_session_start(day)
 
-        result = await ingest.ingest_session(session, settings, day, on_source=on_source)
+        result = await ingest.ingest_session(
+            session, settings, day, on_source=on_source, should_stop=should_stop
+        )
         if result.succeeded:
             collected.append(day)
         else:
