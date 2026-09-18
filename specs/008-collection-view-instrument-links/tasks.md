@@ -290,3 +290,12 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T064 Перенести композицию страницы из артефакта в `frontend/src/pages/market-data/MarketDataPage.tsx`: панель сбора идёт сразу после шапки, перед группами, per FR-021 (partial)
 - [X] T065 Убрать запуск сбора из шапки: в макете действия не дублируются — пауза только в шапке, запуск только в панели, per FR-021, verify.cjs «действия не дублируются» (contradicts)
 - [X] T066 Сделать недоступность сборщика одним состоянием раздела в `MarketDataPage.tsx` и `widgets/catchup-section/CatchupSection.tsx`: уведомление идёт перед панелью, панель не выглядит идущей, команды не предлагаются, per contracts/ui-states.md «вида, будто сбор идёт» (contradicts)
+
+## Phase 13: Ошибка источника и добор макета
+
+Запрошено владельцем проекта 2026-09-18 после сверки страницы с артефактом.
+
+- [X] T067 Показать неудачи источника по дням в макете Open Design (`v4.js`, `v4.css`): дата и причина в раскрытии группы, per FR-021
+- [X] T068 Отдавать неудачи источника по дням в сводке в `backend/src/financial_ai/market_data/coverage.py`, per FR-032, contracts/coverage-api.md (missing)
+- [X] T069 Перенести список неудач в `frontend/src/widgets/completeness-table/GroupsSection.tsx` и `app/styles/design.css`, per FR-021 (missing)
+- [X] T070 Добрать расхождения сверки страницы: строка часового пояса `tz-line`, «Ошибка источника» в легенде календаря, опорная бумага в пояснении, текст про порог — per FR-021, FR-022 (partial)

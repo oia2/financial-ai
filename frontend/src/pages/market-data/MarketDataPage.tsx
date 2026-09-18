@@ -44,6 +44,17 @@ import { GroupDetailsDrawer } from '@/widgets/completeness-table/GroupDetailsDra
  * Время показывается местное, московское — только у порога и только как
  * дополнение: это биржевое правило, а не наше (FR-022).
  */
+/**
+ * Город зрителя по его часовому поясу.
+ *
+ * Берётся у браузера, а не спрашивается и не хранится: пояс — свойство того,
+ * кто смотрит, и второе его объявление разошлось бы с первым.
+ */
+function viewerZone(): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return zone.split('/').pop()?.replace(/_/g, ' ') ?? zone;
+}
+
 function localThreshold(exchangeTime: string): string {
   const [hours = 19, minutes = 30] = exchangeTime.split(':').map(Number);
   const moscow = new Date(Date.UTC(2026, 0, 1, hours - 3, minutes));
@@ -169,6 +180,17 @@ export function MarketDataPage() {
           </button>
         </div>
       </div>
+
+      {/*
+        Строка о часовом поясе — из артефакта. Всё время в разделе местное,
+        и сказать об этом нужно один раз в начале, а не приписывать к каждому
+        числу: московское появляется только у биржевого порога (FR-022).
+      */}
+      <p className="tz-line">
+        <span>
+          Время — ваше, <b>{viewerZone()}</b>.
+        </span>
+      </p>
 
       {/*
         Недоступность сборщика — одно состояние на весь раздел, а не отметка в

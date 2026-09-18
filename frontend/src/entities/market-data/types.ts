@@ -30,6 +30,14 @@ export interface SourceCoverageDto {
   scope: string;
   status: 'ok' | 'failed';
   sessions_covered: number;
+  /**
+   * Неудачи по дням: что именно и когда сломалось.
+   *
+   * «Ошибка источника» без дня и причины — состояние, с которым человеку
+   * нечего делать: проверить у источника нечего и решить, ждать или
+   * вмешиваться, не по чему.
+   */
+  failures: { session_date: string; reason: string | null }[];
 }
 
 /**

@@ -103,6 +103,12 @@ class GroupCoverage:
         return payload
 
 
+# Сколько неудач источника показывать. Их бывает больше, но список — не
+# журнал: человеку нужно увидеть, что именно и когда сломалось, а не пролистать
+# триста строк.
+FAILURES_SHOWN = 20
+
+
 async def _last_collected_session(
     repository: MarketDataRepository,
     calendar: TradingCalendar,
@@ -136,6 +142,21 @@ async def _source_outcomes(
     пустой список читался бы как «источников ноль». Их исход берётся по
     последнему успешному прогону — для справочника это и есть весь его ответ.
     """
+    # Неудачи по дням — один запрос на группу, а не на источник. Берётся
+    # ПОСЛЕДНИЙ прогон каждой пары «сессия — источник» и только неуспешный:
+    # иначе удачный повтор не снимал бы отметку, и перечень превратился бы в
+    # журнал былых неудач.
+    failures: dict[str, list[dict[str, object]]] = {}
+    for run in await repository.failed_runs_for_sessions(window):
+        if run.session_date is None:
+            continue
+        failures.setdefault(run.source_id, []).append(
+            {
+                "session_date": run.session_date.isoformat(),
+                "reason": run.failure_reason,
+            }
+        )
+
     outcomes: list[dict[str, object]] = []
     for source_id in group.source_ids:
         scope = next(
@@ -157,6 +178,13 @@ async def _source_outcomes(
                 "scope": scope,
                 "status": status,
                 "sessions_covered": count,
+                # Свежие сверху: «источник с ошибкой» без дня и причины — это
+                # состояние, с которым человеку нечего делать.
+                "failures": sorted(
+                    failures.get(source_id, []),
+                    key=lambda row: str(row["session_date"]),
+                    reverse=True,
+                )[:FAILURES_SHOWN],
             }
         )
     return outcomes

@@ -5240,6 +5240,44 @@ details.skip-details > summary::-webkit-details-marker {
 }
 
 /*
+  Неудачи источника поимённо: дата моноширинно, причина рядом. Перенесено из
+  артефакта вместе с разметкой — «ошибка источника» без дня и причины не
+  проверяется ничем.
+*/
+.source-failures {
+  margin-top: 6px;
+}
+
+.source-failures > summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.source-failures ol {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.source-failures li {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.source-failures li:first-child {
+  border-top: 0;
+}
+
+.source-failures .mono {
+  color: var(--fg);
+}
+
+/*
   Изменения состава инструментов — второй список в том же журнале: событие
   появления и исчезновения фьючерса объясняет, почему бумаг стало больше или
   меньше, и путать его с прогонами нельзя.

@@ -180,3 +180,36 @@ async def test_следующий_сбор_это_самая_ранняя_нес
     # Котировки за ASOF есть, прочие источники не собраны — сессия недобрана,
     # и следующей будет именно она.
     assert report["next_session"] == ASOF.isoformat()
+
+
+async def test_ошибка_источника_названа_днём_и_причиной(db_session: object) -> None:
+    """«Ошибка источника» без дня и причины — состояние, с которым нечего делать.
+
+    Человеку нужно знать, что именно и когда сломалось: только так это можно
+    проверить у источника и решить, ждать или вмешиваться.
+    """
+    repository = await seed(db_session, ["SBER"])
+    await repository.record_run(
+        run_id="run-brent",
+        source_id="brent",
+        status="failed",
+        started_at=dt.datetime(2026, 9, 16, 19, 40, tzinfo=dt.UTC),
+        finished_at=dt.datetime(2026, 9, 16, 19, 41, tzinfo=dt.UTC),
+        session_date=ASOF,
+        rows_written=0,
+        failure_reason="источник не ответил вовремя",
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+    groups = {row["group"]: row for row in report["groups"]}
+    brent = next(s for s in groups["global"]["sources"] if s["source_id"] == "brent")
+
+    assert brent["status"] == "failed"
+    assert brent["failures"] == [
+        {"session_date": ASOF.isoformat(), "reason": "источник не ответил вовремя"}
+    ]
+
+    # У собравшегося источника списка неудач нет — пустой, а не выдуманный.
+    equity = next(s for s in groups["quotes"]["sources"] if s["source_id"] == "equity_d1")
+    assert equity["failures"] == []

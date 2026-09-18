@@ -55,6 +55,7 @@ export function CollectionCalendar({
   lastClosed,
   paused,
   collecting = null,
+  proxySecurity = 'SBER · TQBR',
 }: {
   /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
   nextSession: string | null;
@@ -64,6 +65,8 @@ export function CollectionCalendar({
   paused: boolean;
   /** Сессия, которую собирают прямо сейчас. Помечается отдельно (FR-024). */
   collecting?: string | null;
+  /** Опорная бумага календаря: по её торгам он и строится. */
+  proxySecurity?: string;
 }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
   const calendar = useCalendar(month);
@@ -196,9 +199,9 @@ export function CollectionCalendar({
           <aside className="calendar-guide">
             <h3>Обозначения</h3>
             <p>
-              Календарь строится по состоявшимся торгам опорной бумаги, поэтому слева от
-              сегодняшнего дня — факт, а справа пунктиром — предположение: справочника праздников у
-              платформы нет.
+              Календарь строится по состоявшимся торгам опорной бумаги ({proxySecurity}), поэтому
+              слева от сегодняшнего дня — факт, а справа пунктиром — предположение: справочника
+              праздников у платформы нет.
             </p>
             <div className="calendar-legend">
               <span>
@@ -208,6 +211,10 @@ export function CollectionCalendar({
               <span>
                 <i className="day-symbol partial" />
                 Есть пробелы
+              </span>
+              <span>
+                <i className="day-symbol failed" />
+                Ошибка источника
               </span>
               <span>
                 <i className="day-symbol open-day" />

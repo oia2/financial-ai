@@ -170,8 +170,36 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
           ? `${source.sessions_covered} из ${group.window_sessions ?? source.sessions_covered} сессий`
           : 'текущее состояние'}
       </td>
-      <td data-label="Примечание">{SCOPE_NOTE[source.scope] ?? ''}</td>
+      <td data-label="Примечание">
+        {SCOPE_NOTE[source.scope] ?? ''}
+        <SourceFailures failures={source.failures} />
+      </td>
     </tr>
+  );
+}
+
+/**
+ * Неудачи источника поимённо.
+ *
+ * Перенесено из артефакта Open Design (`renderFailures` в `v4.js`). Без дня и
+ * причины «ошибка источника» — это состояние, с которым нечего делать:
+ * неизвестно ни когда, ни из-за чего, и проверить у источника нечего.
+ */
+function SourceFailures({ failures }: { failures: SourceCoverageDto['failures'] }) {
+  if (failures.length === 0) return null;
+
+  return (
+    <details className="source-failures">
+      <summary>Неудачи по дням · {failures.length}</summary>
+      <ol>
+        {failures.map((failure) => (
+          <li key={failure.session_date}>
+            <span className="mono">{formatIsoDate(failure.session_date)}</span>
+            <span>{failure.reason ?? 'причина не записана'}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 

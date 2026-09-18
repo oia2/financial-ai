@@ -92,6 +92,34 @@ describe('сводка полноты', () => {
     ).toBeInTheDocument();
   });
 
+  it('ошибка источника названа днём и причиной', async () => {
+    // «Ошибка источника» без дня — состояние, с которым нечего делать:
+    // проверить у источника нечего.
+    server.use(
+      http.get('*/api/market-data/coverage', () => {
+        const report = coverageFixture();
+        const global = report.groups.find((row) => row.group === 'global');
+        const brent = global?.sources.find((source) => source.source_id === 'brent');
+        if (brent !== undefined) {
+          brent.status = 'failed';
+          brent.failures = [
+            { session_date: '2026-09-02', reason: 'источник не ответил вовремя' },
+            { session_date: '2026-08-29', reason: 'HTTP 503 от источника' },
+          ];
+        }
+        return HttpResponse.json(report);
+      }),
+    );
+
+    renderMarketData();
+
+    const global = await groupBlock('global');
+    expect(within(global).getByText('Неудачи по дням · 2')).toBeInTheDocument();
+    expect(within(global).getByText('02.09.2026')).toBeInTheDocument();
+    expect(within(global).getByText('источник не ответил вовремя')).toBeInTheDocument();
+    expect(within(global).getByText('HTTP 503 от источника')).toBeInTheDocument();
+  });
+
   it('неполнота позиций объяснена числами, а не догадкой', async () => {
     renderMarketData();
 
