@@ -55,6 +55,15 @@ function skipWord(count: number): string {
   return `Почему пропущено ${count} сессий`;
 }
 
+/**
+ * Сегментов, после которых дорожка рисуется сплошной.
+ *
+ * За порогом сегмент тоньше собственного зазора: при 216 сессиях 215 зазоров
+ * по 3px дают 645 пикселей там, где дорожке отведено около 400. Сегменты
+ * схлопываются в ноль, и вместо шкалы видна ровная полоса фона.
+ */
+const DENSE_FROM = 40;
+
 export function SessionProgress({
   sessions,
   skips,
@@ -86,7 +95,7 @@ export function SessionProgress({
         «собрано / с ошибкой / пропущено / осталось» — суть этой шкалы.
       */}
       <div
-        className="segmented-track"
+        className={`segmented-track${sessions.requested > DENSE_FROM ? ' dense' : ''}`}
         role="img"
         aria-label={
           `Собрано ${sessions.collected} из ${sessions.requested}; ` +

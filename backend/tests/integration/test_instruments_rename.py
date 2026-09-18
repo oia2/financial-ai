@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+from sqlalchemy import text
 
 from financial_ai.market_data import links
 from financial_ai.market_data.repository import MarketDataRepository
@@ -99,3 +100,45 @@ async def test_связь_с_контрактом_переживает_пере�
     assert [(row.contract_code, row.valid_from, row.valid_till) for row in history] == [
         ("SGZH_F", DAY, None)
     ]
+
+
+async def test_псевдоним_не_пишется_заново_каждый_прогон(db_session: object) -> None:
+    """Имя записывается при СМЕНЕ, а не в каждом прогоне.
+
+    Прежняя версия писала строку на каждый тикер в каждом прогоне: на стенде
+    2026-09-18 это дало 23 276 строк на 506 бумаг — по 46 интервалов на тикер,
+    и все действующие одновременно. Поведение не ломалось только потому, что
+    чтение складывало дубликаты в словарь.
+    """
+    repository = MarketDataRepository(db_session)  # type: ignore[arg-type]
+    await seed_assets(repository, DAY, ["SGZH"])
+
+    for _ in range(3):
+        await links.sync_aliases(repository, RecordedIss(), DAY)  # type: ignore[arg-type]
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    rows = await db_session.execute(  # type: ignore[attr-defined]
+        text("select ticker, count(*) from market_asset_alias group by ticker")
+    )
+    assert dict(rows.all()) == dict.fromkeys(recorded_isins(), 1)  # type: ignore[arg-type]
+
+
+async def test_переименование_записывается_один_раз(db_session: object) -> None:
+    repository = MarketDataRepository(db_session)  # type: ignore[arg-type]
+    await seed_assets(repository, DAY, ["SGZH"])
+    await links.sync_aliases(repository, RecordedIss(), DAY)  # type: ignore[arg-type]
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    renamed = RecordedIss(isins=RENAMED_ISINS, series=RENAMED_SERIES)
+    first = await links.sync_aliases(repository, renamed, NEXT)  # type: ignore[arg-type]
+    second = await links.sync_aliases(repository, renamed, NEXT)  # type: ignore[arg-type]
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    # Второй прогон по тому же составу событием не является и строки не пишет.
+    assert [event.ticker for event in first] == ["SGZ"]
+    assert second == []
+
+    rows = await db_session.execute(  # type: ignore[attr-defined]
+        text("select count(*) from market_asset_alias where ticker = 'SGZ'")
+    )
+    assert rows.scalar_one() == 1

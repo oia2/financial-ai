@@ -138,6 +138,12 @@ async def sync_aliases(
     Новый тикер при известном ISIN — переименование, а не появление бумаги.
     Сущность остаётся прежней: наблюдения продолжают ложиться в тот же ряд, а
     новое имя действует с этой сессии.
+
+    **Псевдоним пишется только когда имя меняется.** Прежняя версия писала
+    строку на каждый тикер в каждом прогоне: на стенде 2026-09-18 это дало
+    23 276 строк на 506 бумаг — по 46 интервалов на тикер, и все действующие
+    одновременно. Ошибка не ломала поведение только потому, что чтение
+    складывало дубликаты в словарь.
     """
     isins = await iss.fetch_equity_isins()
     if not isins:
@@ -145,15 +151,21 @@ async def sync_aliases(
 
     events: list[LinkEvent] = []
     known = await repository.tickers_with_history()
+    active = await repository.aliases_on(session_date)
 
     for ticker, isin in sorted(isins.items()):
         existing = await repository.asset_by_isin(isin)
         asset_id = asset_id_for(ticker)
 
         if existing is None or existing == asset_id:
-            # Бумага новая либо уже под своим именем: псевдоним всё равно
-            # записывается, иначе переименование назад некуда будет отнести.
-            await repository.upsert_alias(ticker, asset_id, session_date)
+            # Бумага новая либо уже под своим именем. Имя, уже записанное и
+            # действующее, переписывать не надо: это тот же самый факт.
+            if active.get(ticker) != asset_id:
+                await repository.upsert_alias(ticker, asset_id, session_date)
+            continue
+
+        if active.get(ticker) == existing:
+            # Переименование уже записано в прошлый раз — повторять нечего.
             continue
 
         previous = existing.removeprefix("EQ_AST_")

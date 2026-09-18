@@ -182,6 +182,24 @@ describe('прогон закончился', () => {
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
   });
 
+  it('длинный прогон: дорожка сплошная, а не полоса из одних зазоров', async () => {
+    // При 216 сессиях 215 зазоров по 3px дают 645 пикселей там, где дорожке
+    // отведено около 400: сегменты схлопываются в ноль, и шкалы не видно.
+    const long = catchupFixture('running');
+    renderWith({ ...long, sessions: { ...long.sessions, requested: 216, pending: 197 } });
+
+    const track = await screen.findByRole('img', { name: /Собрано/ });
+    expect(track).toHaveClass('dense');
+  });
+
+  it('короткий прогон: сегменты разделены зазорами', async () => {
+    const short = catchupFixture('running');
+    renderWith({ ...short, sessions: { ...short.sessions, requested: 12, pending: 9 } });
+
+    const track = await screen.findByRole('img', { name: /Собрано/ });
+    expect(track).not.toHaveClass('dense');
+  });
+
   it('идущий прогон называет, сколько идёт и когда был последний ответ', async () => {
     // В макете у идущего прогона две строки итога: «Последний ответ источника —
     // N с назад» и «Идёт — MM:SS». Это факты, а не обещание длительности:

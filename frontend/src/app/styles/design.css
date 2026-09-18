@@ -3762,6 +3762,28 @@ time {
   height: 100%;
 }
 
+/*
+  Длинный прогон: зазоры между сегментами съедают всю ширину. При 216 сессиях
+  это 215 зазоров по 3px — 645 пикселей там, где дорожке отведено около 400, и
+  от шкалы остаётся ровная серая полоса. Считать отдельные сессии на такой
+  длине всё равно нельзя, поэтому дорожка становится сплошной.
+*/
+.segmented-track.dense {
+  gap: 0;
+}
+
+.segmented-track.dense span {
+  border-radius: 0;
+}
+
+.segmented-track.dense span:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.segmented-track.dense span:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
 .fill-complete {
   background: var(--fg);
 }
