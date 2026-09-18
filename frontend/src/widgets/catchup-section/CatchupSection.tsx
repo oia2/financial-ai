@@ -15,7 +15,7 @@
  *  - причина прерывания берётся из ответа сервера, а не формулируется здесь.
  */
 
-import type { CatchupStateDto, LinkEventDto, RunSummaryDto } from '@/entities/market-data';
+import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
 import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
 
 import { RunJournal } from './RunJournal';
@@ -34,6 +34,7 @@ export function CatchupSection({
   state,
   runs,
   events = [],
+  skips = [],
   paused,
   nextSession,
   emptyStorage,
@@ -47,6 +48,8 @@ export function CatchupSection({
   runs: RunSummaryDto[];
   /** Изменения состава инструментов из журнала. */
   events?: LinkEventDto[];
+  /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
+  skips?: RunsDto['skips'];
   /** Пауза автосбора. Состояние страницы, а не прогона. */
   paused: boolean;
   /** Сессия, которую возьмёт следующий сбор, по торговому календарю. */
@@ -277,7 +280,7 @@ export function CatchupSection({
         )}
       </div>
 
-      {past && <RunJournal runs={runs} events={events} />}
+      {past && <RunJournal runs={runs} events={events} skips={skips} />}
     </section>
   );
 }

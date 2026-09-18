@@ -24,8 +24,9 @@ HTML и делает это по обращению **на инструмент 
 
 **Соответствие акции и контракта строится из ISS.** Правилом код не выводится
 (`SBER → SBRF_F`, `NVTK → NOTKM_F`), а файла соответствий оригинала в
-репозитории нет. ISS отдаёт и базовый актив, и код контракта — см.
-:func:`build_contract_map`.
+репозитории нет. Само правило выбора живёт в `market_data/links.py` и здесь не
+повторяется: два кода одного правила однажды разошлись бы, и выяснилось бы это
+на данных.
 """
 
 from __future__ import annotations
@@ -41,7 +42,6 @@ import httpx
 from bs4 import BeautifulSoup
 
 from financial_ai.config import Settings
-from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -141,41 +141,6 @@ class PageState:
         return bool(self.viewstate and self.instruments)
 
 
-async def build_contract_map(iss: IssClient) -> dict[str, str]:
-    """Соответствие «тикер акции → код контракта» по данным ISS.
-
-    Тикер акции — `underlying_asset` в списке серий срочного рынка, код
-    контракта — `asset_code` оттуда же плюс суффикс. Когда у акции несколько
-    кодов (классический контракт и вечный, обычный и мини), берётся тот, у
-    которого больше суммарный открытый интерес: позиции живут там, где торгуют.
-
-    Проверено на живых ответах 2026-09-04 — правило выбирает `SBRF_F` против
-    `SBERF_F`, `GAZR_F` против `GAZPF_F`, `BELUGA_F` против `BELUGAM_F`.
-    """
-    series = await iss.fetch_futures_series()
-    open_interest = await iss.fetch_futures_open_interest()
-
-    candidates: dict[str, set[str]] = {}
-    for row in series:
-        underlying = row.get("underlying_asset")
-        asset_code = row.get("asset_code")
-        if not isinstance(underlying, str) or not isinstance(asset_code, str):
-            continue
-        if not underlying.strip() or not asset_code.strip():
-            continue
-        candidates.setdefault(underlying.strip().upper(), set()).add(asset_code.strip().upper())
-
-    mapping: dict[str, str] = {}
-    for ticker, codes in candidates.items():
-        # Сортировка по имени вторым ключом: при равном интересе выбор не должен
-        # зависеть от порядка ответа биржи.
-        best = max(sorted(codes), key=lambda code: open_interest.get(code, 0))
-        mapping[ticker] = f"{best}{CONTRACT_SUFFIX}"
-
-    logger.info("соответствие акций и контрактов: %d базовых активов", len(mapping))
-    return mapping
-
-
 class PositionsClient:
     """Клиент источника позиций.
 
@@ -191,7 +156,6 @@ class PositionsClient:
         self._state = PageState()
         self._requests_made = 0
         self._first_available: dict[str, dt.date | None] = {}
-        self._contracts: dict[str, str] | None = None
 
     async def __aenter__(self) -> PositionsClient:
         if self._client is None:
@@ -216,17 +180,6 @@ class PositionsClient:
         источников.
         """
         return self._requests_made
-
-    async def contracts(self, iss: IssClient) -> dict[str, str]:
-        """Соответствие «тикер акции → код контракта».
-
-        Строится один раз за время жизни клиента, а клиент живёт ровно один
-        прогон: соответствие не меняется в пределах прогона, но стоит двух
-        обращений к ISS, и платить их на каждую сессию незачем.
-        """
-        if self._contracts is None:
-            self._contracts = await build_contract_map(iss)
-        return self._contracts
 
     # --- обмен --------------------------------------------------------------
 

@@ -74,4 +74,8 @@ async def test_состав_бумаг_в_ответе_совпадает_с_х�
 
     response = await worker_client.get("/internal/coverage", params={"asof": ASOF.isoformat()})
 
-    assert response.json()["universe"] == {"assets": 1, "assets_with_futures": 1}
+    assert response.json()["universe"] == {
+        "assets": 1,
+        "assets_with_futures": 1,
+        "asof_date": ASOF.isoformat(),
+    }

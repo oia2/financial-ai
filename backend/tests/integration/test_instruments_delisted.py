@@ -38,6 +38,7 @@ async def test_ушедшая_бумага_выпадает_из_знамена�
     assert (await coverage.build_report(db_session, Settings(), DAY))["universe"] == {  # type: ignore[arg-type]
         "assets": 2,
         "assets_with_futures": 2,
+        "asof_date": DAY.isoformat(),
     }
 
     # На следующей сессии котировки по SGZH нет: бумага ушла с торгов.
@@ -45,7 +46,11 @@ async def test_ушедшая_бумага_выпадает_из_знамена�
     await db_session.commit()  # type: ignore[attr-defined]
 
     report = await coverage.build_report(db_session, Settings(), NEXT)  # type: ignore[arg-type]
-    assert report["universe"] == {"assets": 1, "assets_with_futures": 1}
+    assert report["universe"] == {
+        "assets": 1,
+        "assets_with_futures": 1,
+        "asof_date": NEXT.isoformat(),
+    }
 
     # Прошлое не переписано: за вчерашнюю сессию бумага в составе была.
     past = await coverage.build_report(db_session, Settings(), DAY)  # type: ignore[arg-type]
@@ -70,7 +75,7 @@ async def test_позиции_по_ушедшей_бумаге_не_спраши
     assert [(event.ticker, event.contract_code) for event in closed] == [("SGZH", "SGZH_F")]
 
     client = FakePositionsClient(contracts={"SBER": "SBRF_F", "SGZH": "SGZH_F"})
-    await positions.sync_positions(client, repository, NEXT, client.contract_map)  # type: ignore[arg-type]
+    await positions.sync_positions(client, repository, NEXT)  # type: ignore[arg-type]
 
     # Спрошен только SBER: связи с SGZH на эту дату нет.
     assert [contract for contract, _ in client.calls] == ["SBRF_F"]
@@ -108,6 +113,6 @@ async def test_ушедшая_бумага_с_историей_позиций_н
     await db_session.commit()  # type: ignore[attr-defined]
 
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
-    written = await positions.sync_positions(client, repository, DAY, client.contract_map)  # type: ignore[arg-type]
+    written = await positions.sync_positions(client, repository, DAY)  # type: ignore[arg-type]
 
     assert written == 1

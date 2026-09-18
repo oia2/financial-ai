@@ -125,6 +125,10 @@ async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
     Рядом идут изменения связей: появление фьючерса, смена семейства контрактов
     и исчезновение инструмента. Без них рост или убыль числа собранных бумаг
     выглядели бы пропуском сбора (FR-016).
+
+    И причины пропусков: ход прогона живёт в памяти и исчезает с перезапуском,
+    а причина обязана жить дольше — иначе человек видит дыру и не знает, ждать
+    ему или вмешиваться (FR-002).
     """
     from financial_ai.db.engine import get_session_factory
     from financial_ai.market_data import journal
@@ -133,9 +137,11 @@ async def recent_runs(request: Request, limit: int = 5) -> dict[str, object]:
     async with factory() as session:
         runs = await journal.recent_runs(session, limit=limit)
         events = await journal.recent_link_events(session)
+        skips = await journal.recent_skips(session)
     return {
         "runs": [run.to_dict() for run in runs],
         "events": [event.to_dict() for event in events],
+        "skips": [skip.to_dict() for skip in skips],
     }
 
 

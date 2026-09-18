@@ -53,7 +53,11 @@ async def test_знаменатель_это_бумаги_с_котировко�
 
     report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
 
-    assert report["universe"] == {"assets": 3, "assets_with_futures": 0}
+    assert report["universe"] == {
+        "assets": 3,
+        "assets_with_futures": 0,
+        "asof_date": ASOF.isoformat(),
+    }
     assert repository is not None
 
 
@@ -79,7 +83,11 @@ async def test_бумаги_с_фьючерсом_считаются_по_дей
     report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
 
     # У SGZH фьючерса нет — и это не пропуск, а отсутствие инструмента.
-    assert report["universe"] == {"assets": 3, "assets_with_futures": 2}
+    assert report["universe"] == {
+        "assets": 3,
+        "assets_with_futures": 2,
+        "asof_date": ASOF.isoformat(),
+    }
 
 
 async def test_закрытая_связь_в_состав_не_попадает(db_session: object) -> None:
@@ -134,3 +142,41 @@ async def test_у_группы_есть_исход_каждого_источни
         "brent",
         "index_constituents",
     }
+
+
+async def test_состав_считается_по_последней_собранной_сессии(db_session: object) -> None:
+    """Несобранная сессия не выглядит отсутствием торгов (T054, FR-019a).
+
+    Признак торгуемости выводится из наблюдений, поэтому «не торговалась» и «не
+    собрали» по данным неразличимы. На несобранной дате состав вышел бы
+    нулевым — и раздел сказал бы «бумаг нет», хотя их просто не собрали.
+    """
+    repository = await seed(db_session, ["SBER", "GAZP"])
+    # Следующая сессия календарём известна, а котировок за неё нет.
+    later = ASOF + dt.timedelta(days=1)
+    await repository.add_trading_sessions([later])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
+
+    assert report["universe"]["assets"] == 2
+    # И дата, по которой состав посчитан, названа: она старше даты сводки.
+    assert report["universe"]["asof_date"] == ASOF.isoformat()
+
+
+async def test_следующий_сбор_это_самая_ранняя_несобранная_сессия(db_session: object) -> None:
+    """При отставании раздел не обещает сегодняшнюю дату (T055, FR-024a).
+
+    Сбор берёт самую раннюю несобранную сессию; строка «следующий сбор» обязана
+    называть её, иначе она говорит неправду ровно тогда, когда человек на неё и
+    смотрит.
+    """
+    repository = await seed(db_session, ["SBER"])
+    await repository.add_trading_sessions([ASOF + dt.timedelta(days=1)])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+
+    # Котировки за ASOF есть, прочие источники не собраны — сессия недобрана,
+    # и следующей будет именно она.
+    assert report["next_session"] == ASOF.isoformat()

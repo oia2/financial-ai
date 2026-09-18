@@ -56,15 +56,14 @@ async def sync_positions(
     client: PositionsClient,
     repository: MarketDataRepository,
     session_date: dt.date,
-    contracts: dict[str, str],
     sessions: list[dt.date] | None = None,
 ) -> int:
     """Собрать позиции за одну торговую сессию.
 
     Чем спрашивать — решает действующая связь бумаги: она знает, с какой даты
-    контракт у бумаги есть, и не переключается между семействами молча.
-    ``contracts`` остаётся запасным соответствием на первый прогон, когда связей
-    ещё нет вовсе; дальше оно не используется.
+    контракт у бумаги есть, и не переключается между семействами молча. Второго
+    соответствия, строящегося на лету, больше нет: два кода одного правила
+    однажды разошлись бы, и выяснилось бы это на данных.
 
     Три правила аккуратности выполняются здесь, а не в клиенте, потому что все
     три требуют знания уже собранного:
@@ -78,8 +77,8 @@ async def sync_positions(
     # переключается между сериями молча (FR-017, FR-039).
     links = await repository.active_links_on(session_date)
     if not links:
-        links = {asset_id_for(ticker): code for ticker, code in contracts.items()}
-    if not links:
+        # Пустое соответствие — неуспех с причиной, а не успех с нулём строк
+        # (FR-020): иначе сессия считалась бы собранной.
         raise EmptyPositionsError("действующих связей бумаг и контрактов нет: спрашивать нечего")
 
     known_tickers = await repository.tickers_with_history()

@@ -149,3 +149,25 @@ class FakePositionsClient:
 def positions_client() -> FakePositionsClient:
     """Подделка источника позиций со значениями по SBER."""
     return FakePositionsClient()
+
+
+class NoInstrumentChanges:
+    """Биржа, у которой состав инструментов не меняется.
+
+    Связи приводятся в соответствие раз на прогон, перед сбором позиций, и
+    ходят за тремя ответами ISS. Испытаниям цикла сбора состав инструментов не
+    интересен — им нужно, чтобы он просто не менялся; подмешивается эта
+    примесь, а не повторяются заглушки в каждой подделке.
+    """
+
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        return {}
+
+    async def fetch_futures_series(self) -> list[dict[str, object]]:
+        return []
+
+    async def fetch_futures_open_interest(self) -> dict[str, int]:
+        return {}
+
+    async def fetch_emitter_id(self, secid: str) -> str | None:
+        return None

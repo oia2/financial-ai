@@ -195,6 +195,13 @@ async def sync_links(
     events = list(await sync_aliases(repository, iss, session_date))
     candidates = await build_candidates(iss)
 
+    if not candidates:
+        # Источник не назвал ни одной серии. Это не «все фьючерсы исчезли», а
+        # отсутствие ответа: закрыть по нему все связи значило бы разом стереть
+        # соответствие по всему рынку из-за одного неудачного обращения.
+        logger.warning("список серий пуст: состав инструментов не пересматривается")
+        return events
+
     traded = await repository.assets_traded_on(session_date)
     active = await repository.active_links_on(session_date)
     aliases = await repository.aliases_on(session_date)

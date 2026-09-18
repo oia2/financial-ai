@@ -26,7 +26,11 @@ from financial_ai.market_data.sources.positions_client import (
     PositionSnapshot,
     PositionsSourceError,
 )
-from tests.market_data.conftest import FakePositionsClient, FakeSnapshot
+from tests.market_data.conftest import (
+    FakePositionsClient,
+    FakeSnapshot,
+    NoInstrumentChanges,
+)
 
 pytestmark = pytest.mark.db
 
@@ -76,7 +80,7 @@ def test_absent_position_is_none_not_zero() -> None:
 # --- повторы для задержанного источника --------------------------------------
 
 
-class DelayedIss:
+class DelayedIss(NoInstrumentChanges):
     """Подделка биржи: календарь и котировки, без позиций.
 
     Позиции сюда больше не ходят — у них свой клиент.
@@ -102,22 +106,6 @@ class DelayedIss:
     ) -> list[dict[str, object]]:
         return []
 
-    # Связи инструментов приводятся в соответствие перед сбором позиций. Здесь
-    # состав не меняется, и подделка отвечает пустыми ответами: испытание про
-    # задержанное прибытие, а не про состав.
-
-    async def fetch_equity_isins(self) -> dict[str, str]:
-        return {}
-
-    async def fetch_futures_series(self) -> list[dict[str, object]]:
-        return []
-
-    async def fetch_futures_open_interest(self) -> dict[str, int]:
-        return {}
-
-    async def fetch_emitter_id(self, secid: str) -> str | None:
-        return None
-
 
 class FlakyPositions(FakePositionsClient):
     """Источник позиций, отвечающий не с первой попытки."""
@@ -142,6 +130,13 @@ def settings() -> Settings:
 async def _seed_asset(session: AsyncSession) -> None:
     """Бумага с историей: без неё источнику позиций нечего спрашивать."""
     repository = MarketDataRepository(session)
+    # Чем спрашивать позиции, знает связь: без неё источнику нечего собирать.
+    await repository.open_link(
+        asset_id="EQ_AST_SBER",
+        contract_code="SBRF_F",
+        valid_from=SESSION - dt.timedelta(days=365),
+        chosen_by="underlying_and_emitter",
+    )
     await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSION)
     await session.commit()

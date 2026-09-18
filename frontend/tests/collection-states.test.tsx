@@ -19,7 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { AppShell } from '@/app/App';
 import { AppProviders } from '@/app/providers';
 import { navigate } from '@/app/router';
-import type { CatchupStateDto, LinkEventDto, RunSummaryDto } from '@/entities/market-data';
+import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
 
 import { catchupFixture } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
@@ -28,10 +28,11 @@ function renderWith(
   state: CatchupStateDto,
   runs: RunSummaryDto[] = [],
   events: LinkEventDto[] = [],
+  skips: RunsDto['skips'] = [],
 ) {
   server.use(
     http.get('*/api/market-data/catchup', () => HttpResponse.json(state)),
-    http.get('*/api/market-data/runs', () => HttpResponse.json({ runs, events })),
+    http.get('*/api/market-data/runs', () => HttpResponse.json({ runs, events, skips })),
   );
 
   const client = new QueryClient({
@@ -178,6 +179,28 @@ describe('прогон закончился', () => {
     expect(notice).toHaveClass('error');
     expect(within(notice).getByText(/разрыв 41 сессии при пределе 30/)).toBeInTheDocument();
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
+  });
+
+  it('причина пропуска переживает перезапуск сборщика', async () => {
+    // Ход прогона живёт в памяти и исчезает вместе с процессом; причина
+    // приходит из хранилища, поэтому остаётся на экране (FR-002, SC-002).
+    renderWith(
+      catchupFixture('idle', { sessions: { ...catchupFixture('idle').sessions, requested: 0 } }),
+      [FINISHED_RUN],
+      [],
+      [
+        {
+          session_date: '2026-09-15',
+          reason: 'attempts_exhausted',
+          detail: 'три попытки подряд без данных',
+          decided_at: '2026-09-17T15:02:41Z',
+        },
+      ],
+    );
+
+    expect(await screen.findByText('Пропущенные сессии')).toBeInTheDocument();
+    expect(screen.getByText('исчерпан предел попыток')).toBeInTheDocument();
+    expect(screen.getByText('три попытки подряд без данных')).toBeInTheDocument();
   });
 
   it('изменение состава инструментов названо, а не спрятано в числах', async () => {

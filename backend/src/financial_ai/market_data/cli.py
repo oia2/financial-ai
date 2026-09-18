@@ -28,7 +28,7 @@ import httpx
 from financial_ai.config import get_settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.logging import setup_logging
-from financial_ai.market_data import backfill, gaps, ingest
+from financial_ai.market_data import backfill, gaps, ingest, links
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -526,13 +526,18 @@ async def _verify_positions(session_date: dt.date, ticker: str) -> int:
         IssClient(ingest.build_iss_config(settings)) as iss,
         PositionsClient(settings) as client,
     ):
-        contracts = await client.contracts(iss)
-        contract = contracts.get(share)
-        print(f"соответствий акций и контрактов: {len(contracts)}")
-        if contract is None:
+        candidates = await links.build_candidates(iss)
+        candidate = candidates.get(share)
+        print(f"соответствий акций и контрактов: {len(candidates)}")
+        if candidate is None:
             print(f"ОТКАЗ — для {share} контракта в списке ISS нет")
             return 1
-        print(f"{share}: контракт {contract}")
+        contract = candidate.contract_code
+        print(
+            f"{share}: контракт {contract} "
+            f"(серия для сверки эмитента {candidate.probe_secid}, "
+            f"открытый интерес {candidate.open_interest})"
+        )
 
         known = await client.known_contracts(session_date)
         print(f"инструментов на странице: {len(known)}")

@@ -18,13 +18,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data import links
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import positions
 from financial_ai.market_data.sources import positions_client as module
 from financial_ai.market_data.sources.positions_client import (
     PositionsClient,
     PositionsSourceError,
-    build_contract_map,
     parse_page_state,
     parse_snapshot,
 )
@@ -227,36 +227,31 @@ class FakeIss:
         return self.open_interest
 
 
+# Правило выбора живёт в одном месте — `market_data/links.py`. Здесь оно
+# проверяется на тех же образцах, на которых проверялось прежнее второе его
+# воплощение в клиенте позиций: два кода одного правила однажды разошлись бы.
+
+
 async def test_contract_code_is_taken_from_iss_not_guessed() -> None:
     """Правилом код не выводится: NVTK — это NOTKM_F, а не NVTK_F."""
-    mapping = await build_contract_map(FakeIss())  # type: ignore[arg-type]
+    mapping = await links.build_candidates(FakeIss())  # type: ignore[arg-type]
 
-    assert mapping["NVTK"] == "NOTKM_F"
-    assert "NVTK_F" not in mapping.values()
+    assert mapping["NVTK"].contract_code == "NOTKM_F"
+    assert "NVTK_F" not in {candidate.contract_code for candidate in mapping.values()}
 
 
 async def test_open_interest_resolves_several_contracts() -> None:
     """У SBER два кода; берётся тот, где на самом деле торгуют."""
-    mapping = await build_contract_map(FakeIss())  # type: ignore[arg-type]
+    mapping = await links.build_candidates(FakeIss())  # type: ignore[arg-type]
 
-    assert mapping["SBER"] == "SBRF_F"
+    assert mapping["SBER"].contract_code == "SBRF_F"
 
 
 async def test_series_without_underlying_are_skipped() -> None:
     """Валютные и индексные серии базовым активом акцию не имеют."""
-    mapping = await build_contract_map(FakeIss())  # type: ignore[arg-type]
+    mapping = await links.build_candidates(FakeIss())  # type: ignore[arg-type]
 
     assert set(mapping) == {"SBER", "NVTK"}
-
-
-async def test_contract_map_is_built_once_per_client() -> None:
-    """Соответствие не меняется в прогоне, а стоит двух обращений."""
-    iss = FakeIss()
-    async with PositionsClient(_settings(), client=httpx.AsyncClient()) as client:
-        await client.contracts(iss)  # type: ignore[arg-type]
-        await client.contracts(iss)  # type: ignore[arg-type]
-
-    assert iss.calls == 1
 
 
 # --- обмен: темп, повторы, даты (FR-024a — FR-024d) --------------------------
@@ -434,21 +429,19 @@ async def test_empty_response_is_a_failure_not_a_partial_success(
             client,  # type: ignore[arg-type]
             MarketDataRepository(db_session),
             SESSION,
-            {"SBER": "SBRF_F"},
         )
 
 
 @pytest.mark.db
 async def test_real_partial_coverage_is_still_a_success(db_session: AsyncSession) -> None:
     """Настоящая частичность — норма: значения есть хотя бы по части бумаг."""
-    await _seed_assets(db_session, ["SBER", "GAZP"])
+    await _seed_assets(db_session, ["SBER", "GAZP"], {"SBER": "SBRF_F", "GAZP": "GAZR_F"})
     client = FakePositionsClient(available={("SBRF_F", SESSION): FakeSnapshot()})
 
     written = await positions.sync_positions(
         client,  # type: ignore[arg-type]
         MarketDataRepository(db_session),
         SESSION,
-        {"SBER": "SBRF_F", "GAZP": "GAZR_F"},
     )
 
     assert written == 1
@@ -459,10 +452,8 @@ async def test_collected_pair_is_not_asked_again(db_session: AsyncSession) -> No
     """FR-024c: повторный догон собранного периода не стоит ничего."""
     await _seed_assets(db_session, ["SBER"])
     repository = MarketDataRepository(db_session)
-    contracts = {"SBER": "SBRF_F"}
-
     first = FakePositionsClient()
-    await positions.sync_positions(first, repository, SESSION, contracts)  # type: ignore[arg-type]
+    await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
     await db_session.commit()
 
     second = FakePositionsClient()
@@ -470,7 +461,6 @@ async def test_collected_pair_is_not_asked_again(db_session: AsyncSession) -> No
         second,  # type: ignore[arg-type]
         repository,
         SESSION,
-        contracts,
     )
 
     assert first.calls == [("SBRF_F", SESSION)]
@@ -488,7 +478,6 @@ async def test_share_without_a_contract_is_not_asked(db_session: AsyncSession) -
         client,  # type: ignore[arg-type]
         MarketDataRepository(db_session),
         SESSION,
-        {"SBER": "SBRF_F"},
     )
 
     assert [code for code, _ in client.calls] == ["SBRF_F"]
@@ -506,7 +495,6 @@ async def test_period_before_the_instrument_existed_is_not_asked(
         client,  # type: ignore[arg-type]
         MarketDataRepository(db_session),
         SESSION,
-        {"SBER": "SBRF_F"},
         sessions=[SESSION],
     )
 
@@ -528,7 +516,6 @@ async def test_marker_from_data_saves_the_search_for_later_sessions(
         FakePositionsClient(),  # type: ignore[arg-type]
         repository,
         SESSION,
-        {"SBER": "SBRF_F"},
     )
     await db_session.commit()
 
@@ -538,7 +525,6 @@ async def test_marker_from_data_saves_the_search_for_later_sessions(
         client,  # type: ignore[arg-type]
         repository,
         later,
-        {"SBER": "SBRF_F"},
         sessions=[SESSION, later],
     )
 
@@ -562,7 +548,6 @@ async def test_sessions_older_than_collected_are_still_requested(
         FakePositionsClient(),  # type: ignore[arg-type]
         repository,
         SESSION,
-        {"SBER": "SBRF_F"},
     )
     await db_session.commit()
 
@@ -572,7 +557,6 @@ async def test_sessions_older_than_collected_are_still_requested(
         client,  # type: ignore[arg-type]
         repository,
         earlier,
-        {"SBER": "SBRF_F"},
         sessions=[earlier, SESSION],
     )
 
@@ -592,7 +576,6 @@ async def test_contract_without_any_data_is_not_asked_again(
         client,  # type: ignore[arg-type]
         MarketDataRepository(db_session),
         SESSION,
-        {"SBER": "SBRF_F"},
         sessions=[SESSION],
     )
 
@@ -614,17 +597,35 @@ async def test_empty_rows_are_never_written(db_session: AsyncSession) -> None:
     repository = MarketDataRepository(db_session)
 
     with pytest.raises(positions.EmptyPositionsError):
-        await positions.sync_positions(client, repository, SESSION, {"SBER": "SBRF_F"})  # type: ignore[arg-type]
+        await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
 
     await db_session.rollback()
     assert await repository.positions_for_window([SESSION]) == []
 
 
-async def _seed_assets(session: AsyncSession, tickers: list[str]) -> None:
-    """Бумаги с историей: их и спрашивает источник позиций."""
+async def _seed_assets(
+    session: AsyncSession,
+    tickers: list[str],
+    contracts: dict[str, str] | None = None,
+) -> None:
+    """Бумаги с историей и их связи с контрактами.
+
+    Связь заводится здесь, а не передаётся в источник: соответствие «бумага →
+    семейство контрактов» живёт в хранилище, и второго пути к нему нет.
+    """
     repository = MarketDataRepository(session)
+    known = {"SBER": "SBRF_F"} if contracts is None else contracts
     await repository.add_trading_sessions([SESSION])
     for ticker in tickers:
+        # Связь заводится только тем бумагам, у которых контракт есть: её
+        # отсутствие и означает «фьючерса нет».
+        if ticker in known:
+            await repository.open_link(
+                asset_id=f"EQ_AST_{ticker}",
+                contract_code=known[ticker],
+                valid_from=SESSION - dt.timedelta(days=365),
+                chosen_by="underlying_and_emitter",
+            )
         await repository.upsert_asset(f"EQ_AST_{ticker}", ticker, SESSION)
         await repository.upsert_price_series(f"EQ_PRS_{ticker}", f"EQ_AST_{ticker}", SESSION)
         await repository.upsert_daily_bars(

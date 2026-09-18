@@ -23,6 +23,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import ingest
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import global_series
+from tests.market_data.conftest import NoInstrumentChanges
 
 pytestmark = pytest.mark.db
 
@@ -30,7 +31,7 @@ SHORT = [dt.date(2026, 8, 26), dt.date(2026, 8, 27), dt.date(2026, 8, 28)]
 LONG = SHORT + [dt.date(2026, 8, 31) + dt.timedelta(days=n) for n in range(12)]
 
 
-class CountingIss:
+class CountingIss(NoInstrumentChanges):
     """Подделка биржи, считающая обращения по видам."""
 
     def __init__(self, sessions: list[dt.date]) -> None:

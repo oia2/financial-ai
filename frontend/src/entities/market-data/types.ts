@@ -41,6 +41,14 @@ export interface SourceCoverageDto {
 export interface UniverseDto {
   assets: number;
   assets_with_futures: number;
+  /**
+   * Сессия, по которой посчитан состав.
+   *
+   * Может быть старше даты сводки: состав считается по последней собранной
+   * сессии, иначе несобранный день давал бы «0 бумаг» и выглядел бы
+   * отсутствием торгов (FR-019a).
+   */
+  asof_date: string | null;
 }
 
 export interface GroupCoverageDto {
@@ -214,6 +222,14 @@ export interface LinkEventDto {
 export interface RunsDto {
   runs: RunSummaryDto[];
   events: LinkEventDto[];
+  /**
+   * Причины пропусков из хранилища.
+   *
+   * Ход прогона живёт в памяти сборщика и исчезает с перезапуском, а причина
+   * обязана жить дольше: без неё человек видит дыру и не знает, ждать ему или
+   * вмешиваться (FR-002).
+   */
+  skips: (SessionSkipDto & { decided_at: string })[];
 }
 
 export interface CatchupStartResultDto {

@@ -231,6 +231,12 @@ async def ingest_session(
             result.outcomes.append(outcome)
             await session.commit()
 
+        # Связи инструментов — перед позициями: иначе появление нового фьючерса
+        # заметили бы только через сутки, а позиции спрашивались бы вчерашним
+        # контрактом.
+        await sync_instrument_links(repository, iss, session_date)
+        await session.commit()
+
         # Задержанный источник — отдельно и с повторами. Он единственный ходит
         # не в биржевой интерфейс данных, а формой на сайт биржи, поэтому у
         # него свой клиент и своё соответствие акций контрактам.
@@ -367,6 +373,13 @@ async def catch_up(
             source_ids,
             on_source=on_source,
         )
+
+        # Связи — тоже раз на прогон, и по той же причине, что диапазонные
+        # источники: ответ один на всё окно. Датируются началом окна, потому
+        # что именно им и датировал их прежний посессионный вызов.
+        if source_ids is None or positions.SOURCE_ID in source_ids:
+            await sync_instrument_links(repository, iss, result.requested[0])
+
         await session.commit()
 
         for day in result.requested:
@@ -767,6 +780,25 @@ class _SourceHealth:
             )
 
 
+async def sync_instrument_links(
+    repository: MarketDataRepository,
+    iss: IssClient,
+    session_date: dt.date,
+) -> list[links.LinkEvent]:
+    """Привести связи инструментов в соответствие с составом — раз на прогон.
+
+    ``session_date`` — начало окна прогона, а не каждая его сессия. Источник
+    отвечает про сегодня и на длине дыры не меняется; датировать интервал
+    началом окна — то же самое, что делал прежний посессионный вызов (первая
+    сессия открывала интервал, остальные его лишь продлевали), только ценой
+    трёх обращений вместо трёх на каждую сессию.
+    """
+    events = await links.sync_links(repository, iss, session_date)
+    for event in events:
+        logger.info("состав инструментов: %s", event.describe())
+    return events
+
+
 async def _sync_positions(
     settings: Settings,
     iss: IssClient,
@@ -777,25 +809,13 @@ async def _sync_positions(
 ) -> int:
     """Позиции по фьючерсам за одну сессию.
 
-    Связи приводятся в соответствие с составом инструментов ПЕРЕД сбором:
-    иначе позиции спрашивались бы вчерашним контрактом, а появление нового
-    фьючерса заметили бы только через сутки. Изменения состава возвращаются
-    событиями и попадают в журнал прогона (FR-016, FR-021).
+    Чем спрашивать — знает связь бумаги, приведённая в соответствие с составом
+    инструментов один раз на прогон (:func:`sync_instrument_links`). Здесь её
+    больше не трогают: список серий описывает СЕГОДНЯШНИЙ состав рынка, и
+    спрашивать его заново на каждую сессию догона — три обращения к бирже за
+    ответом, который не изменится, помноженные на длину дыры.
     """
     if client is None:
         raise IssError("клиент источника позиций не настроен")
 
-    events = await links.sync_links(repository, iss, session_date)
-    for event in events:
-        logger.info("состав инструментов: %s", event.describe())
-
-    # Запасное соответствие строится только тогда, когда связей нет вовсе:
-    # два обращения к ISS за тем, чем всё равно не воспользуются, — плата ни
-    # за что.
-    contracts: dict[str, str] = {}
-    if not await repository.active_links_on(session_date):
-        contracts = await client.contracts(iss)
-
-    return await positions.sync_positions(
-        client, repository, session_date, contracts, sessions=sessions
-    )
+    return await positions.sync_positions(client, repository, session_date, sessions=sessions)

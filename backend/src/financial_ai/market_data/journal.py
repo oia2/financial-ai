@@ -105,6 +105,60 @@ class LinkChange:
         }
 
 
+@dataclass(slots=True)
+class SkipRecord:
+    """Пропущенная сессия и причина, по которой она пропущена."""
+
+    session_date: dt.date
+    reason: str
+    detail: str | None
+    decided_at: dt.datetime
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "session_date": self.session_date.isoformat(),
+            "reason": self.reason,
+            "detail": self.detail,
+            "decided_at": self.decided_at.isoformat(),
+        }
+
+
+async def recent_skips(session: AsyncSession, limit: int = 20) -> list[SkipRecord]:
+    """Последние пропуски сессий с причинами.
+
+    Ход прогона живёт в памяти процесса намеренно, а **причина обязана жить
+    дольше**: без неё человек видит дыру и не знает, ждать ему или вмешиваться.
+    Таблица пропусков писалась с самого начала фичи и до этого места не
+    читалась — причина исчезала вместе с перезапуском сборщика, оставляя один
+    счётчик (FR-002, SC-002).
+    """
+    limit = max(1, min(limit, 100))
+
+    rows = (
+        await session.execute(
+            select(SessionSkip).order_by(SessionSkip.decided_at.desc()).limit(limit)
+        )
+    ).scalars()
+
+    seen: set[dt.date] = set()
+    records: list[SkipRecord] = []
+    for row in rows:
+        # На сессию причин может быть несколько — берётся последняя: она и
+        # описывает нынешнее положение дел.
+        if row.session_date in seen:
+            continue
+        seen.add(row.session_date)
+        records.append(
+            SkipRecord(
+                session_date=row.session_date,
+                reason=row.reason,
+                detail=row.detail,
+                decided_at=row.decided_at,
+            )
+        )
+    return records
+
+
 async def recent_link_events(session: AsyncSession, limit: int = 10) -> list[LinkChange]:
     """Последние изменения связей бумаг и контрактов.
 

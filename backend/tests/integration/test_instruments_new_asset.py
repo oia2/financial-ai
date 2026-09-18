@@ -32,7 +32,11 @@ async def test_новая_бумага_входит_в_состав_и_полу�
     await db_session.commit()  # type: ignore[attr-defined]
 
     before = await coverage.build_report(db_session, Settings(), DAY)  # type: ignore[arg-type]
-    assert before["universe"] == {"assets": 2, "assets_with_futures": 2}
+    assert before["universe"] == {
+        "assets": 2,
+        "assets_with_futures": 2,
+        "asof_date": DAY.isoformat(),
+    }
 
     # На следующей сессии на доске появляется третья бумага.
     await seed_assets(repository, NEXT, ["SBER", "GAZP", "LKOH"])
@@ -40,7 +44,11 @@ async def test_новая_бумага_входит_в_состав_и_полу�
     await db_session.commit()  # type: ignore[attr-defined]
 
     after = await coverage.build_report(db_session, Settings(), NEXT)  # type: ignore[arg-type]
-    assert after["universe"] == {"assets": 3, "assets_with_futures": 3}
+    assert after["universe"] == {
+        "assets": 3,
+        "assets_with_futures": 3,
+        "asof_date": NEXT.isoformat(),
+    }
 
     # Появление названо событием: без него рост знаменателя выглядел бы
     # ухудшением полноты.
@@ -62,4 +70,8 @@ async def test_бумага_без_фьючерса_не_считается_пр
     report = await coverage.build_report(db_session, Settings(), DAY)  # type: ignore[arg-type]
 
     # Две бумаги, фьючерс у одной. Отсутствие инструмента — не пропуск сбора.
-    assert report["universe"] == {"assets": 2, "assets_with_futures": 1}
+    assert report["universe"] == {
+        "assets": 2,
+        "assets_with_futures": 1,
+        "asof_date": DAY.isoformat(),
+    }

@@ -75,7 +75,7 @@ async def test_ушедший_контракт_объяснён_событием
     # Сбор по остальным бумагам продолжается: одна ушедшая серия не
     # останавливает источник.
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
-    written = await positions.sync_positions(client, repository, NEXT, client.contract_map)  # type: ignore[arg-type]
+    written = await positions.sync_positions(client, repository, NEXT)  # type: ignore[arg-type]
 
     assert written == 1
     assert [contract for contract, _ in client.calls] == ["SBRF_F"]
@@ -102,7 +102,7 @@ async def test_необъяснённая_потеря_связи_это_неу�
 
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
     with pytest.raises(positions.EmptyPositionsError) as failure:
-        await positions.sync_positions(client, repository, DAY, client.contract_map)  # type: ignore[arg-type]
+        await positions.sync_positions(client, repository, DAY)  # type: ignore[arg-type]
 
     # Причина названа бумагой, а не числом: без имени человеку нечего проверять.
     assert "SGZH" in str(failure.value)
@@ -127,7 +127,7 @@ async def test_первый_прогон_объясняет_осиротевши
     assert [(e.kind, e.ticker) for e in events if e.ticker == "SGZH"] == [(links.CLOSED, "SGZH")]
 
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
-    assert await positions.sync_positions(client, repository, DAY, client.contract_map) == 1  # type: ignore[arg-type]
+    assert await positions.sync_positions(client, repository, DAY) == 1  # type: ignore[arg-type]
 
 
 async def test_бумага_без_истории_позиций_неуспехом_не_является(db_session: object) -> None:
@@ -139,7 +139,7 @@ async def test_бумага_без_истории_позиций_неуспех�
     await db_session.commit()  # type: ignore[attr-defined]
 
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
-    written = await positions.sync_positions(client, repository, DAY, client.contract_map)  # type: ignore[arg-type]
+    written = await positions.sync_positions(client, repository, DAY)  # type: ignore[arg-type]
 
     assert written == 1
     assert [contract for contract, _ in client.calls] == ["SBRF_F"]

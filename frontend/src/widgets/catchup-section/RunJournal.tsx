@@ -8,8 +8,21 @@
  * после перезапуска (FR-005).
  */
 
-import type { LinkEventDto, RunSummaryDto } from '@/entities/market-data';
-import { formatShortStamp } from '@/shared/lib/market-format';
+import type { LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
+import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
+
+/**
+ * Причина пропуска словами.
+ *
+ * Перечень закрытый, и его объявляет сервер: вторая таблица причин в
+ * интерфейсе однажды разошлась бы с первой (FR-002).
+ */
+const SKIP_REASON: Record<string, string> = {
+  withheld_until_close: 'отложена до закрытия сессии',
+  retry_delay: 'выдержка после неудачи',
+  attempts_exhausted: 'исчерпан предел попыток',
+  gap_over_limit: 'разрыв больше предела',
+};
 
 const MODE: Record<string, string> = { daily: 'авто', manual: 'ручной' };
 
@@ -29,12 +42,15 @@ function sessionsLine(run: RunSummaryDto): string {
 export function RunJournal({
   runs,
   events = [],
+  skips = [],
 }: {
   runs: RunSummaryDto[];
   /** Изменения состава инструментов: появление, смена и исчезновение фьючерса. */
   events?: LinkEventDto[];
+  /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
+  skips?: RunsDto['skips'];
 }) {
-  if (runs.length === 0 && events.length === 0) return null;
+  if (runs.length === 0 && events.length === 0 && skips.length === 0) return null;
 
   return (
     <details className="run-journal" data-od-id="run-journal">
@@ -57,6 +73,25 @@ export function RunJournal({
           </li>
         ))}
       </ol>
+
+      {skips.length > 0 && (
+        <>
+          {/*
+            Причина пропуска живёт в хранилище, а не в памяти сборщика: без неё
+            человек видит дыру и не знает, ждать ему или вмешиваться (FR-002).
+          */}
+          <p className="journal-heading">Пропущенные сессии</p>
+          <ol>
+            {skips.map((skip) => (
+              <li key={`${skip.session_date}-${skip.decided_at}`}>
+                <span className="mono">{formatIsoDate(skip.session_date)}</span>
+                <span>{SKIP_REASON[skip.reason] ?? skip.reason}</span>
+                <span className="journal-outcome">{skip.detail ?? ''}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
 
       {events.length > 0 && (
         <>

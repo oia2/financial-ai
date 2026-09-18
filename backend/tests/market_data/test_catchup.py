@@ -19,6 +19,7 @@ from financial_ai.market_data import ingest
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
+from tests.market_data.conftest import NoInstrumentChanges
 
 pytestmark = pytest.mark.db
 
@@ -45,7 +46,7 @@ def _quote(secid: str, day: dt.date) -> dict[str, object]:
     }
 
 
-class FakeIss:
+class FakeIss(NoInstrumentChanges):
     """Подделка биржи. Считает обращения — это проверяемое поведение."""
 
     def __init__(self, fail_quotes_on: set[dt.date] | None = None) -> None:

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import groups, plan
+from financial_ai.market_data import completeness, groups, plan
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.repository import MarketDataRepository
 
@@ -103,6 +103,24 @@ class GroupCoverage:
         return payload
 
 
+async def _last_collected_session(
+    repository: MarketDataRepository,
+    calendar: TradingCalendar,
+    asof_date: dt.date,
+    depth: int = 10,
+) -> dt.date | None:
+    """Последняя сессия не позже даты сводки, за которую собраны котировки.
+
+    Глубина ограничена: если котировок нет и за десять сессий подряд, состав
+    неизвестен, и честнее сказать это, чем уйти перебором в начало истории.
+    """
+    window = await calendar.window(asof_date, depth)
+    for day in reversed(window):
+        if await repository.assets_traded_on(day):
+            return day
+    return None
+
+
 async def _source_outcomes(
     repository: MarketDataRepository,
     group: groups.SourceGroup,
@@ -151,17 +169,29 @@ async def build_report(
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
 
-    # Состав бумаг на дату сводки. Знаменатель — бумаги с котировкой за эту
-    # сессию, а не все, когда-либо встречавшиеся в данных: тот счёт только
-    # растёт и медленно врёт, потому что ушедшая с торгов бумага остаётся в нём
-    # навсегда (spec 008, FR-013, FR-037).
-    traded = await repository.assets_traded_on(asof_date)
-    links = await repository.active_links_on(asof_date)
+    # Состав бумаг. Знаменатель — бумаги с котировкой за сессию, а не все,
+    # когда-либо встречавшиеся в данных: тот счёт только растёт и медленно
+    # врёт, потому что ушедшая с торгов бумага остаётся в нём навсегда
+    # (FR-013, FR-037).
+    #
+    # Считается он по последней УСПЕШНО собранной сессии, а не по дате сводки.
+    # Признак торгуемости выводится из наблюдений, поэтому «не торговалась» и
+    # «не собрали» по данным неразличимы: на несобранной дате состав вышел бы
+    # нулевым, и несобранная сессия выглядела бы отсутствием торгов (FR-019a).
+    universe_date = await _last_collected_session(repository, calendar, asof_date)
+    traded = await repository.assets_traded_on(universe_date) if universe_date else set()
+    links = await repository.active_links_on(universe_date) if universe_date else {}
 
     rows: list[GroupCoverage] = []
+    pending: set[dt.date] = set()
     for group in groups.GROUPS:
         window_size = group.window_sessions(settings)
         window = await calendar.window(asof_date, window_size) if window_size else []
+
+        if window:
+            # Те же недостающие сессии, что найдёт сбор: правило полноты одно
+            # на сводку, поиск пропусков и решение о работе (FR-032).
+            pending.update(await completeness.missing_sessions(repository, group, window))
 
         raw = await repository.group_coverage(
             group.model,
@@ -194,17 +224,24 @@ async def build_report(
     # пользуется планирование, а не выводить из строк сводки (FR-013b).
     catchup_window = await calendar.window(asof_date, settings.catchup_window_sessions)
 
-    # Сессия, которую возьмёт следующий сбор. Берётся из календаря, поэтому
-    # строка на экране не меняет формы, если сегодня торгов не было: там просто
-    # стоит ближайший известный торговый день (spec 008, FR-024a). Будущих дат
-    # календарь не знает: он строится по СОСТОЯВШИМСЯ торгам.
-    next_session = await calendar.latest_session(moscow_today())
+    # Сессия, которую возьмёт следующий сбор. Именно она, а не последняя
+    # сессия календаря: при отставании сбор берёт самую раннюю несобранную, и
+    # обещать сегодняшнюю дату значило бы говорить неправду ровно тогда, когда
+    # человек и смотрит на эту строку (FR-024a).
+    #
+    # Когда несобранного нет, следующей будет текущая сессия после порога —
+    # ближайший известный торговый день. Будущих дат календарь не знает: он
+    # строится по СОСТОЯВШИМСЯ торгам.
+    next_session = min(pending) if pending else await calendar.latest_session(moscow_today())
 
     return {
         "asof_date": asof_date.isoformat(),
         "universe": {
             "assets": len(traded),
             "assets_with_futures": len(traded & set(links)),
+            # Дата, по которой посчитан состав: она может быть старше даты
+            # сводки, и молчать об этом нельзя.
+            "asof_date": universe_date.isoformat() if universe_date else None,
         },
         "next_session": next_session.isoformat() if next_session else None,
         # Порог сбора текущей сессии. Биржевое время отдаёт сервер: оно живёт в

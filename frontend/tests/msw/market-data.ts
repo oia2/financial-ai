@@ -57,7 +57,7 @@ export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageD
       date_till: '2026-09-03',
       sessions: 314,
     },
-    universe: { assets: 243, assets_with_futures: 63 },
+    universe: { assets: 243, assets_with_futures: 63, asof_date: '2026-09-03' },
     groups: [
       historyGroup('quotes', 'котировки', 255, 314, 0.961),
       historyGroup('aggregates', 'агрегаты', 224, 314, 1.0),
