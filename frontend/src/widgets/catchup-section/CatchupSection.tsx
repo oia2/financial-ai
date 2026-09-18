@@ -120,10 +120,6 @@ export function CatchupSection({
   */
   const blockedByGap = state.skips.find((skip) => skip.reason === 'gap_over_limit');
 
-  // Несобранное прошедшего прогона: неудачи, пропуски и то, к чему не
-  // приступили. Последнее — остаток остановленного прогона.
-  const unfinished = state.sessions.failed + state.sessions.skipped + state.sessions.pending;
-
   // Прогонов ещё не было: единственный случай, когда панели нечего показать.
   if (past && state.sessions.requested === 0 && runs.length === 0) {
     return (
@@ -317,12 +313,7 @@ export function CatchupSection({
               */}
               {running
                 ? `дальше ещё ${state.sessions.pending} · ${state.sessions.skipped} пропущены с причинами`
-                : unfinished > 0
-                  ? `не собрано: ${unfinished}` +
-                    (state.sessions.pending > 0
-                      ? ` (из них ${state.sessions.pending} не начинались)`
-                      : '')
-                  : 'все сессии прогона собраны'}
+                : unfinishedNote(state.sessions)}
             </p>
           </div>
         )}
@@ -391,6 +382,24 @@ export function CatchupSection({
       )}
     </section>
   );
+}
+
+/**
+ * Что осталось несобранным у прошедшего прогона.
+ *
+ * Три разных случая, и смешивать их нельзя: сессия могла не собраться, могла
+ * быть пропущена с причиной, а могла вовсе не начинаться — последнее и есть
+ * остаток остановленного прогона. Прежде подпись говорила «все сессии прогона
+ * собраны» про то, к чему не приступали.
+ */
+function unfinishedNote(sessions: CatchupStateDto['sessions']): string {
+  const parts = [
+    sessions.failed > 0 ? `не собрано: ${sessions.failed}` : '',
+    sessions.skipped > 0 ? `пропущено: ${sessions.skipped}` : '',
+    sessions.pending > 0 ? `не начинались: ${sessions.pending}` : '',
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' · ') : 'все сессии прогона собраны';
 }
 
 export function RunNotice({

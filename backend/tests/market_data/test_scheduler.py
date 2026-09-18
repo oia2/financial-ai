@@ -282,11 +282,16 @@ async def test_calendar_is_not_synchronised_on_every_tick(
 async def test_gap_beyond_the_limit_is_not_collected_even_over_many_ticks(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Разрыв сверх предела не собирается ни за один тик, ни за десять.
+    """История сверх предела не собирается ни за один тик, ни за десять.
 
     Нарезать разрыв по три сессии за тик — то же самое, что догонять его
     автоматически, только медленно: через несколько минут он закрыт целиком, а
     человек об этом не просил. Предел на то и предел.
+
+    Последняя закрытая сессия под запрет не подпадает и собирается каждый тик
+    (FR-046): иначе система переставала бы собирать свежие данные, и отставание
+    только росло. Повторно она не пересобирается — после первого тика она уже
+    не в списке недостающих.
     """
     days = [dt.date(2026, 8, 20) + dt.timedelta(days=i) for i in range(10)]
     repository = MarketDataRepository(db_session)
@@ -298,7 +303,9 @@ async def test_gap_beyond_the_limit_is_not_collected_even_over_many_ticks(
 
     attempts: list[dt.date | None] = []
 
-    async def spy_ingest(session: object, settings: object, day: dt.date | None = None) -> object:
+    async def spy_ingest(
+        session: object, settings: object, day: dt.date | None = None, **_: object
+    ) -> object:
         attempts.append(day)
         return ingest.IngestResult(run_id="run", session_date=day)
 
@@ -320,7 +327,8 @@ async def test_gap_beyond_the_limit_is_not_collected_even_over_many_ticks(
     for _ in range(5):
         await scheduler._ingest_once()
 
-    assert attempts == [], "разрыв сверх предела собран автоматически"
+    # Только последняя закрытая, и только пока она недобрана: история — нет.
+    assert set(attempts) <= {days[-1]}, "история сверх предела собрана автоматически"
 
 
 async def test_paused_scheduler_collects_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

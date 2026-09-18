@@ -202,8 +202,9 @@ describe('прогон закончился', () => {
       [FINISHED_RUN],
     );
 
-    expect(await screen.findByText(/не собрано: 72/)).toBeInTheDocument();
-    expect(screen.getByText(/72 не начинались/)).toBeInTheDocument();
+    // Три случая различаются: не собралось, пропущено с причиной и вовсе не
+    // начиналось. Последнее — остаток остановленного прогона.
+    expect(await screen.findByText(/не начинались: 72/)).toBeInTheDocument();
     expect(screen.queryByText('все сессии прогона собраны')).not.toBeInTheDocument();
   });
 

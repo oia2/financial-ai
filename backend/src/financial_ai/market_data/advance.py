@@ -296,6 +296,17 @@ async def advance(
     if not pending:
         return AdvanceResult(last_closed_session=last_closed)
 
+    # Последняя закрытая сессия идёт ПЕРВОЙ. Порядок «от старых к новым» верен
+    # для ручного догона — там важно не оставить разрозненные дыры, — но для
+    # ежедневного цикла он означает, что при отставании свежие данные приходят
+    # последними. А нужны они сегодня: на стенде 2026-09-18 собранное кончалось
+    # 11.09 при календаре до 17.09 (FR-045).
+    pending = sorted(pending, key=lambda day: (day != last_closed, day))
+
+    # Что пропущено из-за предела: остаётся в ответе, даже если последняя
+    # закрытая сессия всё-таки собрана.
+    skipped_history: list[dt.date] = []
+
     limit = settings.startup_recovery_max_sessions
     if len(pending) > limit:
         logger.warning(
@@ -304,7 +315,11 @@ async def advance(
             len(pending),
             limit,
         )
-        for day in pending:
+        # Пропускается ИСТОРИЯ, а не сегодня. Прежде превышение предела
+        # останавливало сбор целиком: система переставала собирать и текущие
+        # данные, и отставание только росло (FR-046).
+        history = [day for day in pending if day != last_closed]
+        for day in history:
             await repository.record_skip(
                 session_date=day,
                 reason="gap_over_limit",
@@ -315,12 +330,15 @@ async def advance(
                 on_skip(day, "gap_over_limit", f"разрыв {len(pending)} сессий при пределе {limit}")
         await session.commit()
 
-        return AdvanceResult(
-            last_closed_session=last_closed,
-            pending=pending,
-            gap_sessions=len(pending),
-            limit_exceeded=True,
-        )
+        skipped_history = history
+        pending = [day for day in pending if day == last_closed]
+        if not pending:
+            return AdvanceResult(
+                last_closed_session=last_closed,
+                pending=history,
+                gap_sessions=len(history),
+                limit_exceeded=True,
+            )
 
     if on_plan is not None:
         on_plan(list(pending))
@@ -349,9 +367,11 @@ async def advance(
         if on_session_done is not None:
             on_session_done(day, result.succeeded)
 
+    unfinished = [day for day in pending if day not in collected] + skipped_history
     return AdvanceResult(
         last_closed_session=last_closed,
         collected=collected,
-        pending=[day for day in pending if day not in collected],
-        gap_sessions=len(pending) - len(collected),
+        pending=unfinished,
+        gap_sessions=len(unfinished),
+        limit_exceeded=bool(skipped_history),
     )

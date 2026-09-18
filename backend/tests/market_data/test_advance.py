@@ -179,30 +179,34 @@ async def test_unclosed_session_is_not_pending(
 async def test_large_gap_is_not_collected_when_limit_is_set(
     db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Заданный числом предел останавливает автоматический сбор целиком.
+    """Заданный числом предел останавливает сбор ИСТОРИИ.
 
-    Не «собрать три из четырёх»: нарезка — тот же неуправляемый догон, только
-    растянутый во времени. Предел перестал быть умолчанием, но рычаг остался:
-    неуправляемый догон однажды ушёл на 2909 обращений к бирже без спроса.
+    Не «собрать три из четырёх»: нарезка истории — тот же неуправляемый догон,
+    только растянутый во времени. Предел перестал быть умолчанием, но рычаг
+    остался: неуправляемый догон однажды ушёл на 2909 обращений к бирже без
+    спроса.
+
+    Последняя закрытая сессия под этот запрет не подпадает (FR-046): прежде
+    превышение предела останавливало сбор целиком, система переставала
+    собирать и свежие данные, и отставание только росло.
     """
     await _seed(db_session, collected=SESSIONS[:1])
 
     called: list[dt.date] = []
 
-    async def never(*args: object, **kwargs: object) -> object:  # pragma: no cover
-        called.append(dt.date.today())
-        raise AssertionError("сбор не должен выполняться при разрыве сверх предела")
+    async def only_latest(_session: object, _settings: object, day: dt.date, **_: object) -> object:
+        called.append(day)
+        return SimpleNamespace(succeeded=True, unfinished_sources=[])
 
-    monkeypatch.setattr(advance.ingest, "ingest_session", never)
+    monkeypatch.setattr(advance.ingest, "ingest_session", only_latest)
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
     monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
 
     result = await advance.advance(db_session, settings, FRIDAY_EVENING)
 
     assert result.limit_exceeded
-    assert result.gap_sessions == 4
-    assert result.collected == []
-    assert called == []
+    assert result.gap_sessions == 3
+    assert called == [SESSIONS[-1]]
 
 
 async def test_default_collects_the_whole_gap(
@@ -234,8 +238,10 @@ async def test_default_collects_the_whole_gap(
     result = await advance.advance(db_session, unlimited, FRIDAY_EVENING)
 
     assert not result.limit_exceeded
-    assert collected == SESSIONS[1:]
-    assert result.collected == SESSIONS[1:]
+    # Последняя закрытая идёт первой, история — за ней (FR-045).
+    assert collected[0] == SESSIONS[-1]
+    assert sorted(collected) == SESSIONS[1:]
+    assert sorted(result.collected) == SESSIONS[1:]
     assert result.pending == []
     assert result.gap_sessions == 0
 
@@ -377,3 +383,66 @@ class _FakeClient:
 
     async def __aexit__(self, *args: object) -> None:
         return None
+
+
+async def test_последняя_сессия_собирается_первой(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Свежие данные не ждут разбора истории (FR-045).
+
+    Порядок «от старых к новым» верен для ручного догона, но для ежедневного
+    цикла означает, что при отставании сегодняшние данные приходят последними.
+    На стенде 2026-09-18 собранное кончалось 11.09 при календаре до 17.09.
+    """
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    visited: list[dt.date] = []
+
+    async def collect(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        visited.append(day)
+        return advance.ingest.IngestResult(run_id="r", session_date=day)
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(db_session, unlimited, FRIDAY_EVENING)
+
+    assert visited, "сбор не увидел работы"
+    assert visited[0] == SESSIONS[-1]
+
+
+async def test_разрыв_сверх_предела_не_отменяет_сегодня(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Пропускается история, а не текущая сессия (FR-046).
+
+    Прежде превышение предела останавливало автоматический сбор целиком:
+    система переставала собирать и свежие данные, и отставание только росло.
+    """
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    visited: list[dt.date] = []
+    skipped: list[dt.date] = []
+
+    async def collect(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        visited.append(day)
+        return advance.ingest.IngestResult(run_id="r", session_date=day)
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    await advance.advance(
+        db_session,
+        settings,
+        FRIDAY_EVENING,
+        on_skip=lambda day, reason, detail: skipped.append(day),
+    )
+
+    assert visited == [SESSIONS[-1]]
+    assert SESSIONS[-1] not in skipped
+    assert skipped, "история должна быть пропущена с причиной"
