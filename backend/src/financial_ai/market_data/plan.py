@@ -70,11 +70,6 @@ def for_mode(mode: str) -> tuple[SourceSpec, ...]:
     return CATCHUP_PLAN if mode == MODE_MANUAL else DAILY_PLAN
 
 
-def session_sources(mode: str) -> tuple[SourceSpec, ...]:
-    """Только те источники, что идут на каждую сессию."""
-    return tuple(spec for spec in for_mode(mode) if spec.scope == SESSION)
-
-
 def title_of(source_id: str) -> str:
     """Имя источника для человека. Неизвестный показывается как есть."""
     for spec in (*DAILY_PLAN, *CATCHUP_PLAN):

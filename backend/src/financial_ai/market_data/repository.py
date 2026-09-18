@@ -942,6 +942,39 @@ class MarketDataRepository:
         rows = await self._session.scalars(select(FuturesPosition.asset_id).distinct())
         return set(rows.all())
 
+    async def earliest_links_after(self, day: dt.date) -> dict[str, str]:
+        """Первые связи бумаг, начинающиеся ПОЗЖЕ этой даты.
+
+        Нужно ручному сбору истории. Список серий отвечает про сегодня, поэтому
+        связь подтверждается с той даты, когда её спросили, и никогда раньше:
+        связи, заведённые ежедневным прогоном, начинаются сегодняшним днём.
+        Без этого чтения догон прошлого остался бы без позиций навсегда
+        (FR-017, исключение; FR-035).
+
+        Бумаги, чья связь уже закрыта к этой дате, сюда не попадают: их
+        инструмента не стало, и воскрешать его нельзя.
+        """
+        first = (
+            select(
+                AssetFuturesLink.asset_id,
+                func.min(AssetFuturesLink.valid_from).label("valid_from"),
+            )
+            .group_by(AssetFuturesLink.asset_id)
+            .subquery()
+        )
+        rows = await self._session.execute(
+            select(AssetFuturesLink.asset_id, AssetFuturesLink.contract_code)
+            .join(
+                first,
+                and_(
+                    AssetFuturesLink.asset_id == first.c.asset_id,
+                    AssetFuturesLink.valid_from == first.c.valid_from,
+                ),
+            )
+            .where(first.c.valid_from > day)
+        )
+        return {row.asset_id: row.contract_code for row in rows.all()}
+
     async def record_closed_link(
         self,
         asset_id: str,

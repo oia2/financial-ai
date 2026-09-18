@@ -245,3 +245,15 @@ Task: "Испытание: соответствие потеряно"
 
 - [X] T057 Показывать «состав не посчитан» вместо «0 из 0 бумаг» и называть дату состава, когда она старше даты сводки, в `frontend/src/widgets/completeness-table/GroupsSection.tsx`: сервер различает неизвестный состав (`universe.asof_date: null`) и настоящий ноль, интерфейс это различие теряет, per FR-019a, FR-010, contracts/coverage-api.md (partial)
 - [X] T058 Оставить одно чтение таблицы пропусков: `MarketDataRepository.recent_skips` не вызывается ниоткуда с тех пор, как появился `journal.recent_skips`, per Constitution II (unrequested)
+
+---
+
+## Phase 9: Convergence
+
+Третья сверка. Находки Phase 8 закрыты. Первая из этих двух — регрессия,
+внесённая T053 и T056 вместе: связи стали открываться раз на прогон, а запасное
+соответствие было удалено, и случай «сначала ежедневный прогон, потом догон
+истории» перестал работать.
+
+- [X] T059 Дать ручному сбору истории собирать позиции за даты раньше самой ранней связи в `backend/src/financial_ai/market_data/links.py` и `sources/positions.py`: `open_link` сравнивает с интервалом без даты окончания и при том же контракте не сдвигает `valid_from` назад, а `sync_positions` роняет весь источник на пустом наборе связей, per FR-035, FR-017 (contradicts)
+- [X] T060 Удалить `plan.session_sources` в `backend/src/financial_ai/market_data/plan.py`: счётчик посессионных источников оказался на фронтенде, и функция не вызывается ниоткуда, per Constitution II (unrequested)
