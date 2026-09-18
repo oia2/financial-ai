@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import datetime as dt
 
-from financial_ai.config import Settings
 from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
 
@@ -69,24 +68,3 @@ async def missing_sessions(
             break
 
     return [day for day in window if day not in (closed or set())]
-
-
-async def incomplete_groups(
-    repository: MarketDataRepository,
-    settings: Settings,
-    groups_: tuple[SourceGroup, ...],
-    windows: dict[str, list[dt.date]],
-) -> dict[str, list[dt.date]]:
-    """Незакрытые сессии по каждой группе, у которой они есть.
-
-    Окно у каждой группы своё и приходит снаружи: позиции нужны модели на 82
-    сессии, остальное на 314, и требовать позиции за давнюю сессию значило бы
-    ходить за данными, которых нет и которые модели не нужны.
-    """
-    result: dict[str, list[dt.date]] = {}
-    for group in groups_:
-        window = windows.get(group.group_id.value, [])
-        missing = await missing_sessions(repository, group, window)
-        if missing:
-            result[group.group_id.value] = missing
-    return result

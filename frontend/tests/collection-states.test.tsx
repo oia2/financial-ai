@@ -14,6 +14,7 @@
 
 import { QueryClient } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { AppShell } from '@/app/App';
@@ -179,6 +180,43 @@ describe('прогон закончился', () => {
     expect(notice).toHaveClass('error');
     expect(within(notice).getByText(/разрыв 41 сессии при пределе 30/)).toBeInTheDocument();
     expect(within(notice).getByText(/закрывается ручным сбором/)).toBeInTheDocument();
+  });
+
+  it('связи со сборщиком нет: панель не выглядит идущей', async () => {
+    // Иначе на экране спорят два блока: уведомление говорит «сборщик
+    // недоступен», а панель рядом отсчитывает сессии, будто сбор продолжается
+    // (contracts/ui-states.md).
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('running'))),
+    );
+    renderWith(catchupFixture('running'));
+
+    // Состояние прочитано, потом сборщик пропал.
+    expect(await screen.findByRole('heading', { name: /Собираем сессию/ })).toBeInTheDocument();
+
+    server.use(
+      http.get('*/api/market-data/catchup', () =>
+        HttpResponse.json(
+          { detail: { code: 'worker_unavailable', message: 'сборщик недоступен' } },
+          { status: 503 },
+        ),
+      ),
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(
+          { detail: { code: 'worker_unavailable', message: 'сборщик недоступен' } },
+          { status: 503 },
+        ),
+      ),
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Обновить сводку рыночных данных' }));
+
+    expect(await screen.findByText('Сборщик данных недоступен')).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Связи со сборщиком нет — последнее известное состояние/),
+    ).toBeInTheDocument();
+    // Команда без связи не отправляется: кнопка обещала бы то, чего не будет.
+    expect(screen.queryByRole('button', { name: 'Остановить прогон' })).not.toBeInTheDocument();
   });
 
   it('причина пропуска переживает перезапуск сборщика', async () => {

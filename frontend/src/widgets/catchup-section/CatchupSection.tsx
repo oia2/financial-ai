@@ -40,6 +40,7 @@ export function CatchupSection({
   emptyStorage,
   nothingToCatchUp,
   notice,
+  stale = false,
   onStart,
   onStop,
   onRepeat,
@@ -58,13 +59,23 @@ export function CatchupSection({
   /** Сервер ответил, что пропущенных сессий нет: запуск не предлагается (FR-038). */
   nothingToCatchUp: boolean;
   notice: React.ReactNode;
+  /**
+   * Связи со сборщиком нет: показанное — последнее известное состояние.
+   *
+   * Панель при этом НЕ должна выглядеть идущей. Иначе на экране спорят два
+   * блока: уведомление говорит «сборщик недоступен», а панель рядом отсчитывает
+   * сессии, будто сбор продолжается (contracts/ui-states.md).
+   */
+  stale?: boolean;
   onStart: () => void;
   onStop: () => void;
   onRepeat: () => void;
 }) {
-  const running = state.status === 'running' || state.status === 'stopping';
+  // Без связи со сборщиком идущим прогон считаться не может: что с ним сейчас,
+  // неизвестно. Показанное становится последним известным состоянием.
+  const running = !stale && (state.status === 'running' || state.status === 'stopping');
   const past = !running;
-  const stopping = state.status === 'stopping' || state.stop_requested;
+  const stopping = !stale && (state.status === 'stopping' || state.stop_requested);
 
   /*
     Разрыв больше предела — не ошибка прогона, а отказ автосбора брать работу:
@@ -139,7 +150,11 @@ export function CatchupSection({
           <h2 id="runTitle">{title}</h2>
         </div>
 
-        {past ? (
+        {stale ? (
+          // Команды без связи со сборщиком не отправляются: нажатие не дошло
+          // бы, а кнопка обещала бы обратное.
+          <span className="quiet">Связи со сборщиком нет — последнее известное состояние</span>
+        ) : past ? (
           <div className="panel-actions">
             {nothingToCatchUp ? (
               <span className="quiet">Догонять нечего</span>

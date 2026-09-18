@@ -167,53 +167,22 @@ export function MarketDataPage() {
           >
             {collectionPaused ? 'Возобновить автосбор' : 'Пауза автосбора'}
           </button>
-
-          {/*
-            Кнопка запуска в заголовке — из артефакта. Во время работы она
-            меняет подпись и становится вторичной: прогон уже идёт, и
-            предлагать «запустить» было бы неверно. На пустом хранилище она
-            недоступна и прямо говорит, чего не хватает (FR-026).
-          */}
-          <button
-            className={running ? 'secondary-button' : 'primary-button'}
-            type="button"
-            disabled={emptyStorage}
-            onClick={control.openDrawer}
-          >
-            {emptyStorage
-              ? 'Нужна первичная загрузка'
-              : running
-                ? 'Параметры догона'
-                : 'Запустить догон'}
-          </button>
         </div>
       </div>
 
-      {coverage.data !== undefined && <EmptyValuesAlert groups={coverage.data.groups} />}
-
-      {control.clamp !== null && <ClampNotice {...control.clamp} />}
-
-      {emptyStorage ? (
-        <EmptyStorage />
-      ) : disconnected ? (
-        <Disconnected />
-      ) : workerDown ? (
-        <WorkerUnavailable />
-      ) : coverage.data === undefined ? (
-        <div className="empty-summary" aria-live="polite">
-          <p>Читаем состояние данных…</p>
-        </div>
-      ) : (
-        <GroupsSection
-          asofDate={coverage.data.asof_date}
-          groups={coverage.data.groups}
-          universe={coverage.data.universe}
-          onOpenDetails={setDetails}
-        />
+      {/*
+        Недоступность сборщика — одно состояние на весь раздел, а не отметка в
+        одном блоке. Уведомление идёт ПЕРЕД панелью, потому что описывает её:
+        иначе панель отсчитывает сессии, будто сбор идёт, а сообщение об
+        обратном лежит ниже (contracts/ui-states.md).
+      */}
+      {(workerDown || disconnected) && !emptyStorage && (
+        <WorkerUnavailable offline={disconnected} />
       )}
 
       {catchup.data !== undefined && (
         <CatchupSection
+          stale={workerDown || disconnected}
           state={catchup.data}
           runs={runs.data?.runs ?? []}
           events={runs.data?.events ?? []}
@@ -232,6 +201,31 @@ export function MarketDataPage() {
           onStart={control.openDrawer}
           onStop={control.requestStop}
           onRepeat={() => control.resume(catchup.data.groups)}
+        />
+      )}
+
+      {coverage.data !== undefined && <EmptyValuesAlert groups={coverage.data.groups} />}
+
+      {control.clamp !== null && <ClampNotice {...control.clamp} />}
+
+      {emptyStorage ? (
+        <EmptyStorage />
+      ) : disconnected || workerDown ? (
+        // Объяснение уже дано выше, у панели: второй раз тем же словом —
+        // повтор, а не помощь.
+        <div className="empty-summary">
+          <p>Сводка не обновлялась с последнего успешного чтения.</p>
+        </div>
+      ) : coverage.data === undefined ? (
+        <div className="empty-summary" aria-live="polite">
+          <p>Читаем состояние данных…</p>
+        </div>
+      ) : (
+        <GroupsSection
+          asofDate={coverage.data.asof_date}
+          groups={coverage.data.groups}
+          universe={coverage.data.universe}
+          onOpenDetails={setDetails}
         />
       )}
 
@@ -280,28 +274,14 @@ function EmptyStorage() {
   );
 }
 
-/**
- * Нет связи с сервером.
- *
- * Отличается от недоступности сборщика: там ответ получен и в нём сказано,
- * что сборщик не отвечает (FR-042).
- */
-function Disconnected() {
+function WorkerUnavailable({ offline }: { offline: boolean }) {
   return (
     <div className="empty-summary">
-      <h2>Нет связи с сервером Financial AI</h2>
-      <p>Сводка не получена. Как только связь восстановится, состояние данных появится здесь.</p>
-    </div>
-  );
-}
-
-function WorkerUnavailable() {
-  return (
-    <div className="empty-summary">
-      <h2>Сборщик данных недоступен</h2>
+      <h2>{offline ? 'Нет связи с сервером Financial AI' : 'Сборщик данных недоступен'}</h2>
       <p>
-        Сервер Financial AI отвечает, а сборщик рыночных данных — нет. Показанное ранее остаётся
-        последним известным состоянием и не означает, что сбор идёт.
+        {offline
+          ? 'Ответ не получен. Всё показанное ниже — последнее известное состояние; оно не означает, что сбор идёт.'
+          : 'Сервер Financial AI отвечает, а сборщик рыночных данных — нет. Всё показанное ниже — последнее известное состояние; оно не означает, что сбор идёт.'}
       </p>
     </div>
   );
