@@ -528,3 +528,6 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T185 Считать сессии источника тем же правилом, что и сессии группы, в backend/src/financial_ai/market_data/{completeness.py,coverage.py} per FR-032 (contradicts)
 - [X] T186 Покрыть испытанием совпадение счёта группы и её источника в backend/tests/market_data/test_review_rules.py
+
+- [X] T187 Различить три ответа о моменте ближайшего сбора в артефакте Open Design и в frontend/src/widgets/collection-calendar/CollectionCalendar.tsx per FR-054 (contradicts)
+- [X] T188 Покрыть испытаниями отставание и неторговый день в frontend/tests/market-data-summary.test.tsx

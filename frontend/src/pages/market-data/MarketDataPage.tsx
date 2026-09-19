@@ -256,6 +256,7 @@ export function MarketDataPage() {
       {coverage.data !== undefined && (
         <CollectionCalendar
           nextSession={coverage.data.next_session}
+          nextClosed={coverage.data.next_session_closed === true}
           threshold={{
             local: localThreshold(coverage.data.ingest_after_close),
             exchange: `${coverage.data.ingest_after_close} МСК`,

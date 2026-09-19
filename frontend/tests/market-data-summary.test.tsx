@@ -170,18 +170,42 @@ describe('сводка полноты', () => {
   it('следующий сбор: момент и взятая сессия — разные строки', async () => {
     // При отставании сессия, которую возьмёт сбор, лежит в прошлом. Рядом со
     // словом «следующий» она читалась бы как ошибка.
+    //
+    // И порога такой сбор не ждёт: он возьмёт недостающую сессию следующим же
+    // прогоном. «Сегодня после 23:30» рядом с апрельской датой обещало, что
+    // её соберут вечером (FR-054).
     server.use(
       http.get('*/api/market-data/coverage', () =>
-        HttpResponse.json(coverageFixture({ next_session: '2026-04-24' })),
+        HttpResponse.json(
+          coverageFixture({ next_session: '2026-04-24', next_session_closed: true }),
+        ),
       ),
     );
 
     renderMarketData();
 
     const schedule = (await screen.findByText('Следующий сбор')).closest('ul') as HTMLElement;
-    expect(schedule.textContent).toMatch(/сегодня после/);
+    expect(schedule.textContent).toMatch(/ближайшим прогоном/);
+    expect(schedule.textContent).not.toMatch(/сегодня после/);
     expect(within(schedule).getByText('Возьмёт сессию')).toBeInTheDocument();
     expect(within(schedule).getByText('24.04.2026')).toBeInTheDocument();
+  });
+
+  it('в неторговый день сбор не обещается на сегодня', async () => {
+    // Порог имеет смысл только в торговый день: в воскресенье «сегодня после
+    // 23:30» обещает сбор сессии, которой не будет.
+    server.use(
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(
+          coverageFixture({ next_session: '2026-09-03', next_session_closed: false }),
+        ),
+      ),
+    );
+
+    renderMarketData();
+
+    const schedule = (await screen.findByText('Следующий сбор')).closest('ul') as HTMLElement;
+    expect(schedule.textContent).toMatch(/в ближайший торговый день после/);
   });
 
   it('клетка календаря открывает сведения о дате', async () => {
