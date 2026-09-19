@@ -480,13 +480,14 @@ async def test_календарь_объявляет_свой_исход_в_пл
     assert ("trading_calendar", advance.ingest.STATUS_OK) in seen
 
 
-async def test_календарь_объявляется_и_когда_его_не_спрашивали(
+async def test_не_спрошенный_календарь_из_плана_убирается(
     db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Обратная форма: суточный гейт — тоже исход, и молчать о нём нельзя.
 
-    Спрошенный сегодня календарь второй раз не спрашивается, и без объявления
-    он снова оставался бы в плане вечно ожидающим.
+    Но и объявлять его строкой «уже спрошен сегодня» незачем: она отвечает на
+    вопрос, которого никто не задавал. План — это то, что прогон делает, а не
+    перечень всего, что бывает (FR-007).
     """
     await _seed(db_session, collected=SESSIONS[:1])
 
@@ -512,7 +513,7 @@ async def test_календарь_объявляется_и_когда_его_н
         on_source=lambda source_id, status, outcome: seen.append((source_id, status)),
     )
 
-    assert ("trading_calendar", advance.ingest.STATUS_SKIPPED) in seen
+    assert ("trading_calendar", advance.ingest.STATUS_OMITTED) in seen
 
 
 async def test_прерванная_сессия_отличается_от_несобранной(

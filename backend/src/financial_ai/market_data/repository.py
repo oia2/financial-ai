@@ -25,7 +25,6 @@ from financial_ai.market_data.models import (
     AssetAlias,
     AssetFuturesLink,
     AssetSector,
-    DividendEvent,
     EquityAggregate,
     EquityDailyBar,
     FuturesPosition,
@@ -98,18 +97,6 @@ class PositionRow:
     # Каким семейством контрактов наблюдение собрано. Часть ключа: повторный
     # сбор той же даты другим контрактом не должен затирать прежнее молча.
     contract_code: str = UNKNOWN_CONTRACT
-
-
-@dataclass(frozen=True, slots=True)
-class DividendRow:
-    """Одно дивидендное событие."""
-
-    asset_id: str
-    record_date: dt.date
-    declared_date: dt.date | None
-    last_buy_date: dt.date | None
-    payment_date: dt.date | None
-    value: Decimal | None
 
 
 class MarketDataRepository:
@@ -550,43 +537,6 @@ class MarketDataRepository:
     async def sectors(self) -> dict[str, str | None]:
         rows = await self._session.execute(select(AssetSector.asset_id, AssetSector.sector))
         return {row[0]: row[1] for row in rows}
-
-    async def upsert_dividends(self, rows: list[DividendRow]) -> int:
-        if not rows:
-            return 0
-        payload = [
-            {
-                "asset_id": r.asset_id,
-                "record_date": r.record_date,
-                "declared_date": r.declared_date,
-                "last_buy_date": r.last_buy_date,
-                "payment_date": r.payment_date,
-                "value": r.value,
-            }
-            for r in rows
-        ]
-        statement = insert(DividendEvent).values(payload)
-        statement = statement.on_conflict_do_update(
-            index_elements=["asset_id", "record_date"],
-            set_={
-                "declared_date": statement.excluded.declared_date,
-                "last_buy_date": statement.excluded.last_buy_date,
-                "payment_date": statement.excluded.payment_date,
-                "value": statement.excluded.value,
-            },
-        )
-        await self._session.execute(statement)
-        return len(payload)
-
-    async def dividends_for_assets(self, asset_ids: list[str]) -> list[DividendEvent]:
-        if not asset_ids:
-            return []
-        rows = await self._session.scalars(
-            select(DividendEvent)
-            .where(DividendEvent.asset_id.in_(asset_ids))
-            .order_by(DividendEvent.asset_id, DividendEvent.record_date)
-        )
-        return list(rows.all())
 
     # --- журнал прогонов ---------------------------------------------------
 

@@ -85,7 +85,7 @@ async def test_incomplete_dataset_declaration_blocks_the_run(settings: Settings)
     а инвариант нарушать нельзя.
     """
     incomplete_required = [{"session_date": "2026-08-27", "sources": ["equity_d1"]}]
-    incomplete_optional = [{"session_date": "2026-08-27", "sources": ["dividends"]}]
+    incomplete_optional = [{"session_date": "2026-08-27", "sources": ["futures_positions"]}]
 
     assert not readiness.dataset_is_complete(incomplete_required, settings)
     assert readiness.dataset_is_complete(incomplete_optional, settings)

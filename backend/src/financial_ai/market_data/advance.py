@@ -327,14 +327,11 @@ async def advance(
     # Исход календаря — не для журнала одного, а и для плана на экране. План
     # заводится ниже, когда работа найдена, поэтому исход запоминается и
     # объявляется после него (FR-056).
-    calendar_state: tuple[str, object | None] = (
-        ingest.STATUS_SKIPPED,
-        ingest.SourceOutcome(
-            trading_calendar.SOURCE_ID,
-            ingest.STATUS_SKIPPED,
-            failure_reason="уже спрошен сегодня",
-        ),
-    )
+    # Не спрошенный сегодня календарь в план этого прогона не попадает вовсе.
+    # Строка «уже спрошен сегодня» отвечала на вопрос, которого никто не
+    # задавал: план — это то, что прогон делает, а не перечень всего, что
+    # бывает (FR-007).
+    calendar_state: tuple[str, object | None] = (ingest.STATUS_OMITTED, None)
 
     if await calendar_is_due(repository, now, settings):
         config = ingest.build_iss_config(settings)

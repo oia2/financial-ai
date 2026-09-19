@@ -26,7 +26,7 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import advance, groups, ingest, journal, plan
+from financial_ai.market_data import advance, groups, ingest, journal, plan, runner
 from financial_ai.market_data.calendar import moscow_now
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
@@ -191,10 +191,12 @@ class MarketDataScheduler:
             else:
                 (self._state.closed if succeeded else self._state.failed).append(day)
                 self._state.outcomes[day] = "collected" if succeeded else "failed"
-            self._state.current = None
+            # Сессия остаётся названной: следующая переназовёт её сама, а
+            # обнуление стирало с экрана всю ленту источников вместе с ответом
+            # на вопрос «на чём прогон стоял» (FR-021, FR-025).
 
         def source_state(source_id: str, status: str, outcome: object) -> None:
-            state = {"running": "running", "ok": "done", "failed": "failed"}.get(status, "skipped")
+            state = runner.RAIL_STATE.get(status, "skipped")
             detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
             self._state.note_source(source_id, state, detail)
 

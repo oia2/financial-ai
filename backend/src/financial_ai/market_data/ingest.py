@@ -53,6 +53,10 @@ STATUS_SKIPPED = "skipped"
 # прогон закрывает сессию по источнику, и прерванный сбор закрывал бы её,
 # спросив три инструмента из ста двадцати (FR-050).
 STATUS_STOPPED = "stopped"
+# Источник, которого этот прогон не спрашивает вовсе: суточный, уже спрошенный
+# сегодня. В план прогона он не попадает — план показывает то, что прогон
+# делает, а не перечень всего, что бывает (FR-007).
+STATUS_OMITTED = "omitted"
 # Исходы, при которых источник закрытым не считается.
 _UNFINISHED = frozenset({STATUS_FAILED, STATUS_STOPPED})
 
@@ -304,6 +308,11 @@ async def ingest_session(
             ),
         ):
             if not await reference_is_due(repository, source_id, session_date):
+                # В план этого прогона источник не попадает: спрашивать его
+                # сегодня больше нечем, и строка «уже спрошен сегодня»
+                # отвечала бы на вопрос, которого никто не задавал (FR-007).
+                if on_source is not None:
+                    on_source(source_id, STATUS_OMITTED, None)
                 continue
             outcome = await run_source(
                 repository, run_id, source_id, session_date, action, on_source=on_source

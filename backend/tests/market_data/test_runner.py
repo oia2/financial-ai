@@ -473,3 +473,89 @@ def test_пройденный_целиком_прогон_продолжать_�
         state.outcomes[day] = "collected"
 
     assert state.unfinished == []
+
+
+# --- лента источников переживает конец прогона (FR-021, FR-025) --------------
+
+
+def test_последняя_сессия_остаётся_названной_после_остановки() -> None:
+    """Иначе с экрана пропадает вся лента источников.
+
+    Человек, остановивший прогон, переставал видеть, на чём тот стоял: какой
+    источник шёл, какие успели. Артефакт подписывает эту ленту «Последняя
+    сессия прогона» и показывает её у законченного прогона наравне с идущим.
+    """
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState, CatchupStatus
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    state.note_source("equity_d1", "done")
+    state.status = CatchupStatus.STOPPED
+
+    snapshot = state.snapshot()
+
+    assert snapshot["current"] is not None
+    current = snapshot["current"]
+    assert isinstance(current, dict)
+    assert current["session_date"] == SESSIONS[0].isoformat()
+    rail = {row["source_id"]: row["state"] for row in current["sources"]}  # type: ignore[index,union-attr]
+    assert rail["equity_d1"] == "done"
+
+
+def test_начало_новой_сессии_переназывает_последнюю() -> None:
+    """Обратная форма: сохранение последней сессии не должно её заморозить."""
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    state.note_source("equity_d1", "done")
+    state.begin_session(SESSIONS[1])
+
+    current = state.snapshot()["current"]
+    assert isinstance(current, dict)
+    assert current["session_date"] == SESSIONS[1].isoformat()
+    rail = {row["source_id"]: row["state"] for row in current["sources"]}  # type: ignore[index,union-attr]
+    assert rail["equity_d1"] == "pending"
+
+
+# --- план показывает только то, что прогон делает (FR-056a) ------------------
+
+
+def test_не_спрошенный_источник_из_плана_убирается() -> None:
+    """Строка «уже спрошен сегодня» отвечала на вопрос, которого никто не задавал."""
+    from financial_ai.market_data import ingest
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    state.note_source("trading_calendar", ingest.STATUS_OMITTED)
+
+    current = state.snapshot()["current"]
+    assert isinstance(current, dict)
+    ids = [row["source_id"] for row in current["sources"]]  # type: ignore[index,union-attr]
+    assert "trading_calendar" not in ids
+    assert len(ids) == len(plan_module.for_mode(plan_module.MODE_DAILY)) - 1
+
+
+def test_спрошенный_источник_в_плане_остаётся() -> None:
+    """Обратная форма: суточный источник, спрошенный на первой сессии, не пропадает.
+
+    Он идёт раз на прогон, и его исход обязан дожить до конца прогона
+    (FR-057), — а отметка «не спрашиваем» приходит на каждой следующей сессии.
+    """
+    from financial_ai.market_data import ingest
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=list(SESSIONS))
+    state.begin_session(SESSIONS[0])
+    state.note_source("equity_sectors", "done")
+    state.begin_session(SESSIONS[1])
+    state.note_source("equity_sectors", ingest.STATUS_OMITTED)
+
+    current = state.snapshot()["current"]
+    assert isinstance(current, dict)
+    rail = {row["source_id"]: row["state"] for row in current["sources"]}  # type: ignore[index,union-attr]
+    assert rail["equity_sectors"] == "done"

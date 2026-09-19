@@ -410,7 +410,10 @@ async def test_automatic_collection_is_visible_as_a_process(
     # После — завершено, с посессионным итогом.
     assert scheduler.state.status.value == "finished"
     assert scheduler.state.closed == days
-    assert scheduler.state.current is None
+    # Последняя сессия остаётся названной: по ней показывается лента
+    # источников законченного прогона. Обнуление стирало с экрана ответ на
+    # вопрос «на чём прогон стоял» (FR-025).
+    assert scheduler.state.current == days[-1]
 
 
 async def _async_noop(*args: object, **kwargs: object) -> None:

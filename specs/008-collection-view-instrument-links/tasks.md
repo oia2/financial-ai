@@ -461,3 +461,9 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T151 Остановить расширение интервала имени у чужого интервала в backend/src/financial_ai/market_data/repository.py per FR-048 (contradicts)
 - [X] T152 Починить проверку здоровья контейнера интерфейса в frontend/Dockerfile (contradicts)
 - [X] T153 Покрыть испытаниями границу интервала имени в backend/tests/market_data/test_review_rules.py
+
+## Phase 34: Остановка видна, а план показывает только своё
+
+- [X] T154 Сохранять последнюю сессию прогона, чтобы лента источников не исчезала с экрана, в backend/src/financial_ai/market_data/{runner.py,scheduler.py} per FR-025 (contradicts)
+- [X] T155 Убрать из плана источники, которых прогон не спрашивает, в артефакте Open Design и в backend/src/financial_ai/market_data/{ingest.py,advance.py,runner.py,scheduler.py} per FR-056a (contradicts)
+- [X] T156 Покрыть испытаниями обе правки в backend/tests/

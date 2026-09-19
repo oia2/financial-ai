@@ -86,6 +86,15 @@ class NothingToCatchUpError(RuntimeError):
 
 # Сколько пропусков отдавать в состоянии прогона. Остальные считаются числом:
 # длинный прогон даёт сотни, и раскрытый список без потолка не листается.
+# Исход источника → состояние в ленте. Пропуск обращения остаётся пропуском,
+# а `omitted` убирает строку целиком: см. `CatchupState.note_source`.
+RAIL_STATE = {
+    "running": "running",
+    "ok": "done",
+    "failed": "failed",
+    ingest.STATUS_OMITTED: ingest.STATUS_OMITTED,
+}
+
 SKIPS_SHOWN = 50
 
 # Сколько событий прогона держать. Журнал отвечает на вопрос «что было
@@ -129,6 +138,12 @@ class CatchupState:
     # Счёт идёт внутри одной сессии: следующая пройдёт тот же план заново.
     sources: dict[str, tuple[str, str | None]] = field(default_factory=dict)
 
+    # Источники, которых этот прогон не спрашивает вовсе. Суточный источник
+    # спрашивается раз в сутки, и в повторном прогоне того же дня строка «уже
+    # спрошен сегодня» отвечает на вопрос, которого никто не задавал: план —
+    # это то, что прогон делает, а не перечень всего, что бывает (FR-007).
+    omitted: set[str] = field(default_factory=set)
+
     # Журнал событий прогона: (момент, что произошло). Отвечает на вопрос «что
     # было последние минуты» — тот, на который лента источников не отвечает:
     # она показывает только НЫНЕШНЕЕ положение дел, а произошедшее стирает.
@@ -162,7 +177,19 @@ class CatchupState:
         return [day for day in self.requested if self.outcomes.get(day) in (None, "partial")]
 
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
-        """Отметить состояние источника и момент последнего ответа."""
+        """Отметить состояние источника и момент последнего ответа.
+
+        Состояние ``omitted`` означает «этот прогон его не спрашивает» и
+        убирает источник из плана. Применяется только к тому, чего прогон ещё
+        ни разу не касался: суточный источник, спрошенный на первой сессии,
+        остаётся в плане до конца прогона со своим исходом (FR-057).
+        """
+        if state == ingest.STATUS_OMITTED:
+            if source_id not in self.sources:
+                self.omitted.add(source_id)
+            return
+
+        self.omitted.discard(source_id)
         previous = self.sources.get(source_id)
         self.sources[source_id] = (state, detail)
         if state != "running":
@@ -221,6 +248,8 @@ class CatchupState:
         """План источников текущей сессии с состоянием каждого."""
         rows: list[dict[str, object]] = []
         for spec in plan_module.for_mode(self.mode):
+            if spec.source_id in self.omitted:
+                continue
             state, detail = self.sources.get(spec.source_id, ("pending", None))
             row: dict[str, object] = {
                 "source_id": spec.source_id,
@@ -443,7 +472,11 @@ class CatchupRunner:
 
         self._state.closed = list(result.closed)
         self._state.failed = list(result.failed)
-        self._state.current = None
+        # Последняя сессия ОСТАЁТСЯ названной. Прежде она обнулялась, и вместе
+        # с ней с экрана пропадала вся лента источников: человек, остановивший
+        # прогон, переставал видеть, на чём тот стоял, — при том что артефакт
+        # подписывает эту ленту «Последняя сессия прогона» и показывает её у
+        # законченного прогона наравне с идущим (FR-021, FR-025).
         self._state.finished_at = dt.datetime.now(dt.UTC)
 
         # Догон закрыл дыры — у ранжирования могла появиться работа. Ставится
@@ -508,7 +541,7 @@ class CatchupRunner:
         источник, и время последнего ответа: долгий источник перестаёт быть
         неотличимым от зависания.
         """
-        state = {"running": "running", "ok": "done", "failed": "failed"}.get(status, "skipped")
+        state = RAIL_STATE.get(status, "skipped")
         detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
         self._state.note_source(source_id, state, detail)
 
