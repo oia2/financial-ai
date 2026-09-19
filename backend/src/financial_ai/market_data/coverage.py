@@ -303,11 +303,21 @@ async def build_report(
     ready = await selectable(repository, missing, settings)
     retriable = await within_attempt_limit(repository, missing, settings)
 
+    def _first_taken(days: list[dt.date]) -> dt.date:
+        """Какую сессию сбор возьмёт первой.
+
+        Тем же правилом, каким берёт сам: свежая сессия идёт отдельным
+        прогоном и первой, история — по возрастанию (FR-045). Строка,
+        оставшаяся на «самой поздней недостающей», называла середину истории.
+        """
+        freshest = max(days)
+        return freshest if freshest == asof_date else min(days)
+
     next_blocked = False
     if ready:
-        next_session = max(ready)
+        next_session = _first_taken(ready)
     elif retriable:
-        next_session = max(retriable)
+        next_session = _first_taken(retriable)
     elif missing:
         next_session = None
         next_blocked = True
@@ -326,6 +336,9 @@ async def build_report(
         "next_session": next_session.isoformat() if next_session else None,
         # Почему даты нет: сбор не возьмёт ничего, пока человек не вмешается.
         "next_session_blocked": next_blocked,
+        # Названная сессия уже закрыта: ждать её закрытия нечего, сбор возьмёт
+        # её ближайшим прогоном. При отставании это обычное дело (FR-054).
+        "next_session_closed": bool(next_session and next_session < asof_date),
         # Порог сбора текущей сессии. Биржевое время отдаёт сервер: оно живёт в
         # настройке сборщика, и второе объявление того же факта в интерфейсе
         # однажды разошлось бы с первым.

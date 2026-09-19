@@ -122,19 +122,23 @@ async def test_repeated_ingest_keeps_values(
     assert bars[0].close == Decimal("314.22")
 
 
-async def test_exchange_correction_is_applied(
-    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
-) -> None:
-    """Переиздание биржей применяется — но не молча: расхождение попадает в журнал."""
-    await ingest.ingest_session(
-        db_session, settings, SESSION, client=FakeIss(), cbr_client=cbr_client
-    )
-    corrected = FakeIss(quotes=[_quote("SBER", "999.99")])
-    await ingest.ingest_session(
-        db_session, settings, SESSION, client=corrected, cbr_client=cbr_client
-    )
+async def test_exchange_correction_is_applied(db_session: AsyncSession, settings: Settings) -> None:
+    """Переиздание биржей применяется: строка обновляется, а не удваивается.
 
+    Проверяется на самом источнике, а не на цикле сбора: цикл источник,
+    закрытый за сессию, второй раз не спрашивает — сессия попадает в план
+    из-за НЕДОСТАЮЩЕГО источника, и обращения к собранным заведомо не приносят
+    данных (FR-058k). Поэтому поправку за уже закрытую сессию сбор сам не
+    подхватит, и записано это прямо в правиле.
+    """
     repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+
+    await equity_d1.sync_equity_daily(FakeIss(), repository, SESSION)  # type: ignore[arg-type]
+    corrected = FakeIss(quotes=[_quote("SBER", "999.99")])
+    await equity_d1.sync_equity_daily(corrected, repository, SESSION)  # type: ignore[arg-type]
+    await db_session.commit()
+
     bars = await repository.daily_bars_for_window([SESSION])
     assert len(bars) == 1
     assert bars[0].close == Decimal("999.99")
@@ -185,11 +189,21 @@ async def test_call_count_does_not_grow_with_universe(
     Перенос парсера «как есть» дал бы по обращению на каждую бумагу. Здесь
     проверяется именно это: удвоение состава доски не удваивает число запросов.
     """
-    few = FakeIss(quotes=[_quote(t, "1") for t in ("SBER", "GAZP")])
+    # Разные сессии: повторный заход в ту же сессию источник не спрашивает
+    # вовсе (FR-058k), и сравнивать было бы нечего.
+    later = SESSION + dt.timedelta(days=3)
+
+    few = FakeIss(
+        calendar_dates=[SESSION, later],
+        quotes=[_quote(t, "1") for t in ("SBER", "GAZP")],
+    )
     await ingest.ingest_session(db_session, settings, SESSION, client=few, cbr_client=cbr_client)
 
-    many = FakeIss(quotes=[_quote(f"T{i:03d}", "1") for i in range(40)])
-    await ingest.ingest_session(db_session, settings, SESSION, client=many, cbr_client=cbr_client)
+    many = FakeIss(
+        calendar_dates=[SESSION, later],
+        quotes=[_quote(f"T{i:03d}", "1") for i in range(40)],
+    )
+    await ingest.ingest_session(db_session, settings, later, client=many, cbr_client=cbr_client)
 
     assert len(few.session_calls) == len(many.session_calls)
     assert len(few.quote_calls) == 1

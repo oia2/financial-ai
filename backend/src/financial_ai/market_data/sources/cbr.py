@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -97,6 +98,7 @@ async def fetch_key_rate(
     date_from: dt.date,
     date_till: dt.date,
     client: httpx.AsyncClient | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[dt.date, Decimal | None]:
     """Ключевая ставка за период."""
     html = await _get(
@@ -108,6 +110,7 @@ async def fetch_key_rate(
         },
         config,
         client,
+        should_stop,
     )
     return parse_key_rate_html(html)
 
@@ -140,6 +143,7 @@ async def fetch_zcyc(
     date_from: dt.date,
     date_till: dt.date,
     client: httpx.AsyncClient | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, dict[dt.date, Decimal | None]]:
     """Параметры кривой бескупонной доходности за период.
 
@@ -155,6 +159,7 @@ async def fetch_zcyc(
         },
         config,
         client,
+        should_stop,
     )
     return parse_zcyc_html(html)
 
@@ -203,7 +208,11 @@ def parse_zcyc_html(html: str) -> dict[str, dict[dt.date, Decimal | None]]:
 
 
 async def _get(
-    url: str, params: dict[str, str], config: CbrConfig, client: httpx.AsyncClient | None
+    url: str,
+    params: dict[str, str],
+    config: CbrConfig,
+    client: httpx.AsyncClient | None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> str:
     """Один запрос к ЦБ с повторами.
 
@@ -231,6 +240,9 @@ async def _get(
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise CbrError(f"ЦБ ответил {response.status_code} на {url}")
                 last_error = f"HTTP {response.status_code}"
+
+            if should_stop is not None and should_stop():
+                raise CbrError(f"повтор отменён остановкой ({last_error})")
 
             if attempt < config.retries:
                 logger.warning(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,10 +53,20 @@ class IssConfig:
 class IssClient:
     """Чтение исторических данных с MOEX ISS."""
 
-    def __init__(self, config: IssConfig, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        config: IssConfig,
+        client: httpx.AsyncClient | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> None:
         self._config = config
         self._client = client
         self._owns_client = client is None
+        # Признак остановки нужен САМОМУ клиенту: шесть попыток с нарастающей
+        # паузой ждут минутами, и остановка, пришедшая в неудачный момент,
+        # ждала их все. Доводится до конца отправленный запрос — не серия из
+        # повторов (FR-058j).
+        self.should_stop = should_stop
 
     async def __aenter__(self) -> IssClient:
         if self._client is None:
@@ -383,6 +394,9 @@ class IssClient:
                         f"MOEX ISS ответил {response.status_code} на {url}: повтор не поможет"
                     )
                 last_error = f"HTTP {response.status_code}"
+
+            if self.should_stop is not None and self.should_stop():
+                raise IssError(f"повтор отменён остановкой ({last_error}): {url}")
 
             if attempt < self._config.retries:
                 logger.warning(

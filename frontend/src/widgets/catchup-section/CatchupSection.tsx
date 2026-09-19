@@ -46,6 +46,7 @@ export function CatchupSection({
   paused,
   nextSession,
   nextBlocked = false,
+  nextClosed = false,
   emptyStorage,
   nothingToCatchUp,
   notice,
@@ -75,6 +76,8 @@ export function CatchupSection({
    * обещание там, где обещания нет (FR-054).
    */
   nextBlocked?: boolean;
+  /** Названная сессия уже закрыта: ждать нечего, возьмём ближайшим прогоном. */
+  nextClosed?: boolean;
   emptyStorage: boolean;
   /** Сервер ответил, что пропущенных сессий нет: запуск не предлагается (FR-038). */
   nothingToCatchUp: boolean;
@@ -241,7 +244,9 @@ export function CatchupSection({
             ? ', пока автосбор на паузе'
             : nextBlocked
               ? ', недостающие сессии исчерпали попытки — нужен ручной сбор'
-              : ', после закрытия сессии'}
+              : nextClosed
+                ? ', ближайшим прогоном: сессия давно закрыта'
+                : ', после закрытия сессии'}
         </p>
       )}
 

@@ -193,6 +193,11 @@ async def ingest_session(
     if owns_positions:
         await pos_client.__aenter__()
 
+    # Повторы клиент ведёт сам — шесть попыток с нарастающей паузой, — и без
+    # этого признака остановка ждала их все (FR-058j).
+    if hasattr(iss, "should_stop"):
+        iss.should_stop = should_stop
+
     try:
         # Шаг 1: календарь. До него неизвестно, была ли сессия вообще.
         #
@@ -249,7 +254,8 @@ async def ingest_session(
 
         # Шаг 3: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
-        if equity_d1.SOURCE_ID in await repository.sources_collected_in_run(run_id, session_date):
+        closed = await repository.sources_closed_for(session_date)
+        if equity_d1.SOURCE_ID in closed:
             quotes_outcome = _already_collected(equity_d1.SOURCE_ID)
             if on_source is not None:
                 on_source(equity_d1.SOURCE_ID, quotes_outcome.status, quotes_outcome)
@@ -269,7 +275,7 @@ async def ingest_session(
         # недобранной сессии, добирает недостающее, а не проходит круг заново:
         # на стенде 2026-09-19 котировки за одну сессию спрашивались трижды,
         # все три раза успешно (FR-058e, FR-022).
-        collected = await repository.sources_collected_in_run(run_id, session_date)
+        collected = closed
 
         # Шаги 4+: остальные источники. Порядок из оркестратора
         # исследовательского репозитория; неудача одного не отменяет прочие.
@@ -287,7 +293,10 @@ async def ingest_session(
                 lambda: reference.sync_index_constituents(iss, repository, session_date),
             ),
             (brent.SOURCE_ID, lambda: brent.sync_brent(iss, repository, session_date)),
-            (cbr.SOURCE_ID, lambda: _sync_cbr(repository, session_date, cbr_client)),
+            (
+                cbr.SOURCE_ID,
+                lambda: _sync_cbr(repository, session_date, cbr_client, should_stop),
+            ),
         ):
             # Остановка проверяется между обращениями: начатое доводится до
             # конца — оно уже отправлено, и бросить ответ значило бы спросить
@@ -531,6 +540,11 @@ async def catch_up(
     if owns_client:
         await iss.__aenter__()
 
+    # Повторы клиент ведёт сам, и без этого признака остановка ждала их все
+    # (FR-058j).
+    if hasattr(iss, "should_stop"):
+        iss.should_stop = should_stop
+
     # Один клиент позиций на весь прогон: в нём живут темп обращений и уже
     # найденные первые доступные даты. Новый клиент на каждую сессию искал бы
     # их заново — это и есть «обращения, заведомо не приносящие данных».
@@ -687,7 +701,7 @@ async def _catch_up_session(
     outcomes: list[SourceOutcome] = []
     # То же правило, что и в ежедневном пути: собранное за эту сессию заново не
     # спрашивается (FR-058e).
-    collected = await repository.sources_collected_in_run(run_id, session_date)
+    collected = await repository.sources_closed_for(session_date)
 
     for source_id, action in (
         (
@@ -852,6 +866,7 @@ async def _sync_cbr(
     repository: MarketDataRepository,
     session_date: dt.date,
     client: httpx.AsyncClient | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """Дневные макроряды ЦБ за сессию.
 
@@ -862,10 +877,10 @@ async def _sync_cbr(
     config = cbr.CbrConfig()
     written = 0
 
-    key_rate = await cbr.fetch_key_rate(config, session_date, session_date, client)
+    key_rate = await cbr.fetch_key_rate(config, session_date, session_date, client, should_stop)
     written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
 
-    zcyc = await cbr.fetch_zcyc(config, session_date, session_date, client)
+    zcyc = await cbr.fetch_zcyc(config, session_date, session_date, client, should_stop)
     for series_id, values in zcyc.items():
         written += await repository.upsert_global_values(series_id, values)
 

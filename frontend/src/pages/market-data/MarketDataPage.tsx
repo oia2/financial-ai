@@ -211,6 +211,7 @@ export function MarketDataPage() {
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
           nextBlocked={coverage.data?.next_session_blocked === true}
+          nextClosed={coverage.data?.next_session_closed === true}
           emptyStorage={emptyStorage}
           nothingToCatchUp={control.nothingToCatchUp}
           notice={

@@ -630,6 +630,27 @@ class MarketDataRepository:
         rows = await self._session.scalars(statement.distinct())
         return set(rows.all())
 
+    async def sources_closed_for(self, session_date: dt.date) -> set[str]:
+        """Источники, ЗАКРЫТЫЕ за эту сессию: последний исход — успех.
+
+        Сессия попадает в план из-за НЕДОСТАЮЩЕГО источника, и спрашивать
+        заодно собранные значит делать обращения, заведомо не приносящие
+        данных: на стенде котировки числились собранными по всем 314 сессиям и
+        всё равно запрашивались заново при каждом заходе в сессию (FR-058k,
+        FR-022).
+
+        Цена правила названа прямо: переиздание бара биржей за уже закрытую
+        сессию сбор сам не подхватит. Раньше подхватывал случайно — только
+        пока сессия оставалась незакрытой по какому-нибудь другому источнику.
+        """
+        rows = await self._session.execute(
+            select(IngestRun.source_id, IngestRun.status)
+            .where(IngestRun.session_date == session_date)
+            .distinct(IngestRun.source_id)
+            .order_by(IngestRun.source_id, IngestRun.started_at.desc(), IngestRun.id.desc())
+        )
+        return {source_id for source_id, status in rows.all() if status == "ok"}
+
     async def sources_collected_in_run(self, run_id: str, session_date: dt.date) -> set[str]:
         """Источники, уже собранные ЭТИМ прогоном за эту сессию.
 

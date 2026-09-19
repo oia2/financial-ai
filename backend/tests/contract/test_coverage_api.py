@@ -307,3 +307,58 @@ async def test_следующим_не_называется_сессия_жду�
 
     assert report["next_session"] == ASOF.isoformat()
     assert report["next_session_blocked"] is False
+
+
+async def test_следующей_называется_та_сессию_которую_возьмут_первой(
+    db_session: object,
+) -> None:
+    """Порядок сбора разделился надвое, и строка обязана следовать ему (FR-054).
+
+    Свежая сессия идёт отдельным прогоном и первой, история — по возрастанию.
+    Строка, оставшаяся на «самой поздней недостающей», называла середину
+    истории: на стенде «Следующий сбор — 15.07.2026», когда взять предстояло
+    самую раннюю.
+    """
+    repository = await seed(db_session, ["SBER"])
+    later = ASOF + dt.timedelta(days=1)
+    await repository.add_trading_sessions([later])
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    # Свежая сессия (later) недостающая — её и возьмут первой.
+    report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
+    assert report["next_session"] == later.isoformat()
+    assert report["next_session_closed"] is False
+
+
+async def test_когда_свежая_собрана_следующей_идёт_самая_ранняя(
+    db_session: object,
+) -> None:
+    """Обратная форма: история разбирается от старых к новым.
+
+    И подпись у такой даты другая: сессия давно закрыта, ждать её закрытия
+    нечего.
+    """
+    repository = await seed(db_session, ["SBER"])
+    later = ASOF + dt.timedelta(days=1)
+    await repository.add_trading_sessions([later])
+    # Свежая сессия закрыта по всем источникам — остаётся история.
+    moment = dt.datetime.now(dt.UTC)
+    from financial_ai.market_data import groups as group_registry
+
+    for group in group_registry.GROUPS:
+        for source_id in group.source_ids:
+            await repository.record_run(
+                run_id=f"свежая-{source_id}",
+                source_id=source_id,
+                status="ok",
+                started_at=moment,
+                finished_at=moment,
+                session_date=later,
+                rows_written=1,
+            )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
+
+    assert report["next_session"] == ASOF.isoformat()
+    assert report["next_session_closed"] is True

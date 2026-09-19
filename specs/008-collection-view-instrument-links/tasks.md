@@ -504,3 +504,14 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T174 Продолжать прогон его же планом: ежедневный — ежедневным, ручной — ручным, в backend/src/financial_ai/market_data/runner.py per FR-058b (contradicts)
 - [X] T175 Покрыть испытанием сохранение режима в backend/tests/
+
+## Phase 41: Остановка доходит до всех клиентов, закрытое не спрашивается
+
+- [X] T176 Прерывать повторы у клиента биржи и клиента ЦБ по команде остановки в backend/src/financial_ai/market_data/iss/client.py и backend/src/financial_ai/market_data/sources/cbr.py per FR-058j (contradicts)
+- [X] T177 Не брать в работу сессии источник, уже закрытый за неё, в backend/src/financial_ai/market_data/ingest.py per FR-058k (contradicts)
+- [X] T178 Покрыть испытаниями обе правки в backend/tests/
+
+## Phase 42: Дата следующего сбора после разделения порядка
+
+- [X] T179 Считать следующую сессию правилом разделённого порядка в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
+- [X] T180 Различить подпись у закрытой сессии в артефакте Open Design и в frontend/src/widgets/catchup-section/CatchupSection.tsx per FR-054 (missing)
