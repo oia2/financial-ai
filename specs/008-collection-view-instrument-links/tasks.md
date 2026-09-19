@@ -475,3 +475,9 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T159 Не повторять задержанный источник после остановки в backend/src/financial_ai/market_data/ingest.py per FR-058d (contradicts)
 - [X] T160 Назвать причину сетевого обрыва у источника позиций в backend/src/financial_ai/market_data/sources/positions_client.py per FR-002 (contradicts)
 - [X] T161 Покрыть испытаниями все четыре правки в backend/tests/
+
+## Phase 36: Не ходить за собранным и называть собранное числом
+
+- [X] T162 Не запрашивать источник, уже собранный за эту сессию, в backend/src/financial_ai/market_data/{ingest.py,repository.py} per FR-058e (contradicts)
+- [X] T163 Называть исход источника числом и при успехе в backend/src/financial_ai/market_data/{ingest.py,plan.py,runner.py,scheduler.py} per FR-058f (missing)
+- [X] T164 Покрыть испытаниями обе правки в backend/tests/

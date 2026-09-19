@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -150,6 +151,9 @@ class CatchupState:
     log: list[tuple[dt.datetime, str]] = field(default_factory=list)
 
     current: dt.date | None = None
+
+    # Идентификатор прогона: по нему продолжение узнаёт собранное им же.
+    run_id: str | None = None
     started_at: dt.datetime | None = None
     finished_at: dt.datetime | None = None
     last_response_at: dt.datetime | None = None
@@ -381,6 +385,7 @@ class CatchupRunner:
             # работу, — а лента источников без названной сессии на экран не
             # выходит вовсе (FR-058c).
             current=planned[0][0],
+            run_id=str(uuid.uuid4()),
             started_at=dt.datetime.now(dt.UTC),
         )
 
@@ -424,6 +429,7 @@ class CatchupRunner:
             omitted=set(stopped.omitted),
             log=list(stopped.log),
             current=stopped.current or pending[0],
+            run_id=stopped.run_id,
             started_at=stopped.started_at or dt.datetime.now(dt.UTC),
         )
         self._state.note_event(f"Прогон продолжен · осталось сессий {len(pending)}")
@@ -522,6 +528,7 @@ class CatchupRunner:
                     on_source=self._on_source,
                     on_skip=self._state.note_skip,
                     should_stop=lambda: self._stop_requested,
+                    run_id=self._state.run_id,
                 )
         except Exception as error:
             self._state.status = CatchupStatus.FAILED
@@ -603,7 +610,7 @@ class CatchupRunner:
         неотличимым от зависания.
         """
         state = RAIL_STATE.get(status, "skipped")
-        detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
+        detail = getattr(outcome, "shown", None) if outcome is not None else None
         self._state.note_source(source_id, state, detail)
 
 

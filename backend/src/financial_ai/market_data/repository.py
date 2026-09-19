@@ -630,6 +630,27 @@ class MarketDataRepository:
         rows = await self._session.scalars(statement.distinct())
         return set(rows.all())
 
+    async def sources_collected_in_run(self, run_id: str, session_date: dt.date) -> set[str]:
+        """Источники, уже собранные ЭТИМ прогоном за эту сессию.
+
+        Прогон, вернувшийся к недобранной сессии, добирает недостающее, а не
+        проходит круг заново: на стенде 2026-09-19 после остановки и
+        продолжения котировки за одну сессию спрашивались трижды, все три раза
+        успешно (FR-058e, FR-022).
+
+        Счёт идёт В ПРЕДЕЛАХ ПРОГОНА, а не по всей истории. Биржа переиздаёт
+        бары, и следующий прогон обязан забрать поправку: правило «уже собрано»
+        поверх всей истории отменило бы её молча.
+        """
+        rows = await self._session.scalars(
+            select(IngestRun.source_id).where(
+                IngestRun.run_id == run_id,
+                IngestRun.session_date == session_date,
+                IngestRun.status == "ok",
+            )
+        )
+        return set(rows.all())
+
     async def sessions_left_unfinished(
         self, sessions: list[dt.date], source_id: str
     ) -> set[dt.date]:

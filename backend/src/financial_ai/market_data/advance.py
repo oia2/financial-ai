@@ -293,7 +293,7 @@ async def advance(
     settings: Settings,
     now: dt.datetime | None = None,
     *,
-    on_plan: Callable[[list[dt.date]], None] | None = None,
+    on_plan: Callable[[list[dt.date], str], None] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
     on_session_done: Callable[[dt.date, bool | str], None] | None = None,
     on_source: Callable[[str, str, object], None] | None = None,
@@ -405,7 +405,9 @@ async def advance(
             )
 
     if on_plan is not None:
-        on_plan(list(pending))
+        # Идентификатор прогона уходит вместе с планом: по нему продолжение
+        # узнаёт собранное этим же прогоном и не переспрашивает его (FR-058e).
+        on_plan(list(pending), run_id)
 
     # Календарь синхронизирован ДО цикла сессий, и без этого объявления он
     # оставался в плане вечно ожидающим — то есть вечно «следующим», сколько бы

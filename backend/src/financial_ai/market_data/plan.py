@@ -75,6 +75,43 @@ def for_mode(mode: str) -> tuple[SourceSpec, ...]:
     return CATCHUP_PLAN if mode == MODE_MANUAL else DAILY_PLAN
 
 
+# Чем назван результат источника. Взято из артефакта Open Design: «243 бумаги»,
+# «9 рядов», «2 индекса». Пусто там, где число ничего не добавляет — у Brent
+# ряд один, у календаря и справочников счёт не о том.
+UNITS: dict[str, tuple[str, str, str]] = {
+    "equity_d1": ("бумага", "бумаги", "бумаг"),
+    "equity_agg": ("бумага", "бумаги", "бумаг"),
+    "global_series": ("ряд", "ряда", "рядов"),
+    "cbr": ("ряд", "ряда", "рядов"),
+    "index_constituents": ("бумага", "бумаги", "бумаг"),
+    "futures_positions": ("фьючерс", "фьючерса", "фьючерсов"),
+}
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """Существительное в форме, согласованной с числом."""
+    tail, hundred = count % 10, count % 100
+    if tail == 1 and hundred != 11:
+        return one
+    if 2 <= tail <= 4 and not 12 <= hundred <= 14:
+        return few
+    return many
+
+
+def describe(source_id: str, rows: int) -> str | None:
+    """Чем закончился источник, словами и числом.
+
+    Подпись собранного источника — единственное, что отличает идущую работу от
+    замершей. Переносилось же только сообщение об ошибке: в обычном прогоне
+    лента стояла без единой подписи, а текст появлялся ровно тогда, когда
+    что-то ломалось (FR-058f).
+    """
+    unit = UNITS.get(source_id)
+    if unit is None or rows <= 0:
+        return None
+    return f"{rows} {plural(rows, *unit)}"
+
+
 def title_of(source_id: str) -> str:
     """Имя источника для человека. Неизвестный показывается как есть."""
     for spec in (*DAILY_PLAN, *CATCHUP_PLAN):

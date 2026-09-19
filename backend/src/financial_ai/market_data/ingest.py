@@ -22,7 +22,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import gaps, links
+from financial_ai.market_data import gaps, links, plan
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_today
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
@@ -69,6 +69,16 @@ class SourceOutcome:
     status: str
     rows_written: int = 0
     failure_reason: str | None = None
+
+    # Чем закончился источник — словами, для экрана. У неудачи это причина, у
+    # успеха — что он принёс: «243 бумаги». Прежде переносилась только
+    # причина, и в обычном прогоне лента стояла без единой подписи (FR-058f).
+    detail: str | None = None
+
+    @property
+    def shown(self) -> str | None:
+        """Подпись источника на экране."""
+        return self.failure_reason or self.detail
 
 
 @dataclass(slots=True)
@@ -235,16 +245,27 @@ async def ingest_session(
 
         # Шаг 3: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
-        quotes_outcome = await run_source(
-            repository,
-            run_id,
-            equity_d1.SOURCE_ID,
-            session_date,
-            lambda: equity_d1.sync_equity_daily(iss, repository, session_date),
-            on_source=on_source,
-        )
+        if equity_d1.SOURCE_ID in await repository.sources_collected_in_run(run_id, session_date):
+            quotes_outcome = _already_collected(equity_d1.SOURCE_ID)
+            if on_source is not None:
+                on_source(equity_d1.SOURCE_ID, quotes_outcome.status, quotes_outcome)
+        else:
+            quotes_outcome = await run_source(
+                repository,
+                run_id,
+                equity_d1.SOURCE_ID,
+                session_date,
+                lambda: equity_d1.sync_equity_daily(iss, repository, session_date),
+                on_source=on_source,
+            )
         result.outcomes.append(quotes_outcome)
         await session.commit()
+
+        # Источники, собранные за эту сессию раньше. Прогон, вернувшийся к
+        # недобранной сессии, добирает недостающее, а не проходит круг заново:
+        # на стенде 2026-09-19 котировки за одну сессию спрашивались трижды,
+        # все три раза успешно (FR-058e, FR-022).
+        collected = await repository.sources_collected_in_run(run_id, session_date)
 
         # Шаги 4+: остальные источники. Порядок из оркестратора
         # исследовательского репозитория; неудача одного не отменяет прочие.
@@ -267,6 +288,13 @@ async def ingest_session(
             # Остановка проверяется между обращениями: начатое доводится до
             # конца — оно уже отправлено, и бросить ответ значило бы спросить
             # то же самое ещё раз, — а новых не будет (FR-044).
+            if source_id in collected:
+                outcome = _already_collected(source_id)
+                result.outcomes.append(outcome)
+                if on_source is not None:
+                    on_source(source_id, outcome.status, outcome)
+                continue
+
             if should_stop is not None and should_stop():
                 logger.info("сбор сессии %s прерван по команде", session_date)
                 # План сессии не доработан, и молчать об этом нельзя: без
@@ -411,6 +439,7 @@ async def catch_up(
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
     on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    run_id: str | None = None,
 ) -> CatchupResult:
     """Догнать пропущенные сессии окна.
 
@@ -484,7 +513,11 @@ async def catch_up(
     # идентификаторе на сессию догон из восьмидесяти двух сессий показывался
     # восемьюдесятью двумя прогонами по одному дню, а список последних прогонов
     # вмещал пять последних дней вместо пяти последних прогонов (FR-052).
-    run_id = str(uuid.uuid4())
+    #
+    # Продолжение передаёт идентификатор остановленного прогона: оно
+    # продолжает ЕГО, а значит и собранное им переспрашивать не должно
+    # (FR-058b, FR-058e).
+    run_id = run_id or str(uuid.uuid4())
 
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
@@ -635,6 +668,9 @@ async def _catch_up_session(
     пропущенные дни.
     """
     outcomes: list[SourceOutcome] = []
+    # То же правило, что и в ежедневном пути: собранное за эту сессию заново не
+    # спрашивается (FR-058e).
+    collected = await repository.sources_collected_in_run(run_id, session_date)
 
     for source_id, action in (
         (
@@ -683,6 +719,12 @@ async def _catch_up_session(
 
         # Выбор групп пришёл от человека: к невыбранным источникам не ходим.
         if source_ids is not None and source_id not in source_ids:
+            continue
+        if source_id in collected:
+            outcome = _already_collected(source_id)
+            outcomes.append(outcome)
+            if on_source is not None:
+                on_source(source_id, outcome.status, outcome)
             continue
         # Источник, исчерпавший повторы на нескольких сессиях подряд, дальше в
         # прогоне не запрашивается: обращения к нему заведомо не приносят данных.
@@ -886,6 +928,15 @@ async def _run_delayed_source(
     return outcome
 
 
+def _already_collected(source_id: str) -> SourceOutcome:
+    """Исход источника, собранного за эту сессию раньше.
+
+    Показывается СОБРАННЫМ, а не пропущенным: за эту сессию он действительно
+    собран, и счёт источников сессии обязан это учесть (FR-058e).
+    """
+    return SourceOutcome(source_id, STATUS_OK, detail="собран ранее")
+
+
 def _not_asked(source_id: str) -> SourceOutcome:
     """Исход источника, до которого прогон не дошёл из-за остановки.
 
@@ -961,7 +1012,13 @@ async def run_source(
         outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=repr(error))
         logger.exception("сбор: источник %s завершился ошибкой", source_id)
     else:
-        outcome = SourceOutcome(source_id, STATUS_OK, rows_written=int(written))
+        rows = int(written)
+        outcome = SourceOutcome(
+            source_id,
+            STATUS_OK,
+            rows_written=rows,
+            detail=plan.describe(source_id, rows),
+        )
 
     await repository.record_run(
         run_id=run_id,

@@ -386,7 +386,7 @@ async def test_automatic_collection_is_visible_as_a_process(
         on_skip=None,
         should_stop=None,
     ) -> object:
-        on_plan(days)
+        on_plan(days, "прогон-испытания")
         seen.append(scheduler.state.status.value)
         for day in days:
             on_session_start(day)
@@ -442,7 +442,7 @@ async def test_automatic_collection_can_be_stopped(monkeypatch: pytest.MonkeyPat
         on_skip=None,
         should_stop=None,
     ) -> object:
-        on_plan(days)
+        on_plan(days, "прогон-испытания")
         for day in days:
             if should_stop():
                 break

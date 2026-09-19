@@ -1394,3 +1394,102 @@ async def test_расширение_имени_без_чужого_интерв�
     await db_session.commit()
 
     assert await repository.aliases_on(dt.date(2026, 9, 5)) == {"T": "EQ_AST_A"}
+
+
+# --- FR-058e: собранное этим прогоном заново не спрашивается ------------------
+
+
+@pytest.mark.db
+async def test_прогон_не_переспрашивает_собранное_им_же(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Сквозной случай: прогон вернулся к недобранной сессии.
+
+    На стенде 2026-09-19 после остановки и продолжения котировки за одну
+    сессию спрашивались трижды, все три раза успешно. Это прямо противоречит
+    правилу «обращения, заведомо не приносящие данных, не выполняются»
+    (FR-058e, FR-022).
+    """
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await db_session.commit()
+
+    iss = CountingIss([SESSION])
+    run_id = "один-прогон"
+
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        run_id=run_id,
+    )
+    after_first = list(iss.quote_calls)
+    assert after_first == [SESSION.isoformat()]
+
+    # Тот же прогон возвращается к той же сессии.
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        run_id=run_id,
+    )
+
+    assert iss.quote_calls == after_first
+
+
+@pytest.mark.db
+async def test_следующий_прогон_поправку_биржи_забирает(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Обратная форма, и она существенна: биржа переиздаёт бары.
+
+    Правило «уже собрано» поверх всей истории отменило бы поправку молча,
+    поэтому счёт идёт в пределах ПРОГОНА (FR-058e).
+    """
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await db_session.commit()
+
+    iss = CountingIss([SESSION])
+    for _ in range(2):
+        await ingest.ingest_session(
+            db_session,
+            settings,
+            SESSION,
+            client=iss,
+            cbr_client=cbr_client,
+            positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        )
+
+    assert iss.quote_calls == [SESSION.isoformat(), SESSION.isoformat()]
+
+
+# --- FR-058f: исход назван числом и при успехе -------------------------------
+
+
+def test_собранный_источник_назван_числом() -> None:
+    """Подпись собранного источника отличает идущую работу от замершей."""
+    from financial_ai.market_data import plan
+
+    assert plan.describe("equity_d1", 243) == "243 бумаги"
+    assert plan.describe("equity_d1", 1) == "1 бумага"
+    assert plan.describe("futures_positions", 11) == "11 фьючерсов"
+    assert plan.describe("global_series", 9) == "9 рядов"
+
+
+def test_там_где_число_ничего_не_добавляет_подписи_нет() -> None:
+    """Обратная форма: у Brent ряд один, у календаря счёт не о том.
+
+    Подпись, которой то есть, то нет без причины, читается как неисправность.
+    """
+    from financial_ai.market_data import plan
+
+    assert plan.describe("brent", 1) is None
+    assert plan.describe("trading_calendar", 300) is None
+    assert plan.describe("equity_d1", 0) is None

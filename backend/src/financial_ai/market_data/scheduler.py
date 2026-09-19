@@ -149,7 +149,7 @@ class MarketDataScheduler:
 
         self._stop_requested = False
 
-        def make_plan(days: list[dt.date]) -> None:
+        def make_plan(days: list[dt.date], run_id: str) -> None:
             # Состояние заводится, только когда работа действительно есть:
             # пустой план — обычный тик, и показывать по нему «идёт сбор»
             # значило бы мигать баннером 1438 раз в сутки.
@@ -178,6 +178,7 @@ class MarketDataScheduler:
                 # экран не выходит вовсе. `days` приходят в порядке сбора
                 # (FR-058c, FR-045).
                 current=days[0],
+                run_id=run_id,
                 started_at=dt.datetime.now(dt.UTC),
             )
 
@@ -203,7 +204,7 @@ class MarketDataScheduler:
 
         def source_state(source_id: str, status: str, outcome: object) -> None:
             state = runner.RAIL_STATE.get(status, "skipped")
-            detail = getattr(outcome, "failure_reason", None) if outcome is not None else None
+            detail = getattr(outcome, "shown", None) if outcome is not None else None
             self._state.note_source(source_id, state, detail)
 
         def skipped(day: dt.date, reason: str, detail: str | None) -> None:
