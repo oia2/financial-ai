@@ -455,3 +455,9 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T148 Держать один идентификатор на всю первичную загрузку в backend/src/financial_ai/market_data/backfill.py per FR-052 (contradicts)
 - [X] T149 Ключевать наблюдения первичной загрузки сущностью в backend/src/financial_ai/market_data/backfill.py per FR-048 (contradicts)
 - [X] T150 Покрыть испытаниями все пять случаев в backend/tests/
+
+## Phase 33: Проверка фичи целиком
+
+- [X] T151 Остановить расширение интервала имени у чужого интервала в backend/src/financial_ai/market_data/repository.py per FR-048 (contradicts)
+- [X] T152 Починить проверку здоровья контейнера интерфейса в frontend/Dockerfile (contradicts)
+- [X] T153 Покрыть испытаниями границу интервала имени в backend/tests/market_data/test_review_rules.py

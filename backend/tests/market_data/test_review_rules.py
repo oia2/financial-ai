@@ -1348,3 +1348,49 @@ def test_ряд_весов_без_переименования_не_меняет
     series = reference.rows_to_weights(rows, SESSION, "IMOEX", {"MULTNEW": "MULTOLD"})
 
     assert list(series) == ["IDX_WEIGHT_IMOEX_SBER"]
+
+
+@pytest.mark.db
+async def test_расширение_имени_останавливается_у_чужого_интервала(
+    db_session: AsyncSession,
+) -> None:
+    """Тикер может смениться владельцем — ради этого имена и ведутся датами.
+
+    Расширять действующий интервал глубже конца предыдущего значило бы
+    утверждать, что имя указывало на новую сущность тогда, когда оно указывало
+    на старую. А технически — нарушить ключ «имя и начало действия» и уронить
+    прогон целиком (FR-048).
+    """
+    repository = MarketDataRepository(db_session)
+    first, handover, window_start = (
+        dt.date(2026, 9, 1),
+        dt.date(2026, 9, 11),
+        dt.date(2026, 9, 1),
+    )
+
+    await repository.upsert_alias("T", "EQ_AST_A", first)
+    await repository.close_alias("T", handover - dt.timedelta(days=1))
+    await repository.upsert_alias("T", "EQ_AST_B", handover)
+    await db_session.commit()
+
+    # Догон окна, начинающегося раньше передачи имени.
+    await repository.upsert_alias("T", "EQ_AST_B", window_start)
+    await db_session.commit()
+
+    assert await repository.aliases_on(dt.date(2026, 9, 5)) == {"T": "EQ_AST_A"}
+    assert await repository.aliases_on(dt.date(2026, 9, 15)) == {"T": "EQ_AST_B"}
+
+
+@pytest.mark.db
+async def test_расширение_имени_без_чужого_интервала_проходит(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: граница не должна отменить само расширение."""
+    repository = MarketDataRepository(db_session)
+    later, earlier = dt.date(2026, 9, 11), dt.date(2026, 9, 1)
+
+    await repository.upsert_alias("T", "EQ_AST_A", later)
+    await repository.upsert_alias("T", "EQ_AST_A", earlier)
+    await db_session.commit()
+
+    assert await repository.aliases_on(dt.date(2026, 9, 5)) == {"T": "EQ_AST_A"}

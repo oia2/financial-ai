@@ -28,7 +28,11 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
+# Адрес именно 127.0.0.1, а не localhost: в образе `localhost` разрешается
+# сначала в ::1, а nginx слушает только IPv4 — проверка получала «connection
+# refused», и контейнер числился нездоровым всё время работы, хотя страницу
+# отдавал. Проверено на стенде 2026-09-19.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+    CMD wget --quiet --tries=1 --spider http://127.0.0.1/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

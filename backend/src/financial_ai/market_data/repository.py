@@ -1169,6 +1169,20 @@ class MarketDataRepository:
         Расширение и есть то, что мы узнали: имя указывает на сущность, и если
         оно действует с 18-го, то за 17-е оно указывает на неё же.
         """
+        # Расширение останавливается у ЧУЖОГО интервала. Тикер может смениться
+        # владельцем — ради этого соответствие и ведётся датами, — и уйти
+        # глубже конца предыдущего значило бы утверждать, что имя указывало на
+        # новую сущность тогда, когда оно указывало на старую. А технически —
+        # нарушить ключ «имя и начало действия» и уронить прогон целиком.
+        floor = await self._session.scalar(
+            select(func.max(AssetAlias.valid_till)).where(
+                AssetAlias.ticker == ticker,
+                AssetAlias.valid_till.is_not(None),
+            )
+        )
+        if floor is not None and valid_from <= floor:
+            valid_from = floor + dt.timedelta(days=1)
+
         extended = await self._session.execute(
             update(AssetAlias)
             .where(
