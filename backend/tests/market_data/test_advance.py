@@ -212,11 +212,15 @@ async def test_large_gap_is_not_collected_when_limit_is_set(
 async def test_default_collects_the_whole_gap(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Без заданного предела разрыв догоняется целиком, в границах окна догона.
+    """Без заданного предела разрыв берётся в работу целиком, в границах окна.
 
     Ровно тот же разрыв в четыре сессии, что останавливается заданным пределом
     в тесте выше. Умолчание `0` означает «без предела»: граница и так задана
     окном догона, глубже него сессия до модели не доходит.
+
+    «Целиком» здесь — про предел, а не про один проход: свежая сессия
+    собирается отдельно и первой, история достаётся следующему проходу и в
+    остатке не теряется (FR-045).
     """
     unlimited = Settings(
         market_data_price_window_sessions=len(SESSIONS),
@@ -235,15 +239,17 @@ async def test_default_collects_the_whole_gap(
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
     monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
 
+    # Первый проход берёт ОДНУ свежую сессию: она не ждёт разбора истории.
     result = await advance.advance(db_session, unlimited, FRIDAY_EVENING)
-
     assert not result.limit_exceeded
-    # Последняя закрытая идёт первой, история — за ней (FR-045).
-    assert collected[0] == SESSIONS[-1]
-    assert sorted(collected) == SESSIONS[1:]
-    assert sorted(result.collected) == SESSIONS[1:]
-    assert result.pending == []
-    assert result.gap_sessions == 0
+    assert collected == [SESSIONS[-1]]
+    # История не потеряна — она в остатке и достаётся следующему проходу.
+    # Что он разбирает её ПО ПОРЯДКУ, проверяется отдельно.
+    assert sorted(result.pending) == SESSIONS[1:-1]
+    assert result.collected == [SESSIONS[-1]]
+    # Отложенная история — не превышение предела: там разрыв отвергается с
+    # объяснением, здесь работа просто разделена надвое.
+    assert result.gap_sessions == len(SESSIONS[1:-1])
 
 
 async def test_hole_inside_the_window_is_collected(
@@ -385,14 +391,14 @@ class _FakeClient:
         return None
 
 
-async def test_последняя_сессия_собирается_первой(
+async def test_свежая_сессия_не_ждёт_разбора_истории(
     db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Свежие данные не ждут разбора истории (FR-045).
 
-    Порядок «от старых к новым» верен для ручного догона, но для ежедневного
-    цикла означает, что при отставании сегодняшние данные приходят последними.
-    На стенде 2026-09-18 собранное кончалось 11.09 при календаре до 17.09.
+    При отставании порядок «от старых к новым» отдаёт сегодняшние данные
+    последними, а нужны они модели сегодня: на стенде 2026-09-18 собранное
+    кончалось 11.09 при календаре до 17.09.
     """
     await _seed(db_session, collected=SESSIONS[:1])
 
@@ -411,8 +417,36 @@ async def test_последняя_сессия_собирается_первой
     )
     await advance.advance(db_session, unlimited, FRIDAY_EVENING)
 
-    # Сбор идёт от свежих к старым: сегодняшние данные не ждут разбора истории.
-    assert visited == sorted(SESSIONS[1:], reverse=True)
+    assert visited == [SESSIONS[-1]]
+
+
+async def test_история_разбирается_по_порядку(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Обратная форма, и ради неё правило и разделили надвое.
+
+    Прогресс, ползущий справа налево по шкале, которую читают слева направо,
+    выглядит неисправностью; после остановки заполнение шло и вовсе с обоих
+    концов сразу (FR-045).
+    """
+    await _seed(db_session, collected=[*SESSIONS[:1], SESSIONS[-1]])
+
+    visited: list[dt.date] = []
+
+    async def collect(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        visited.append(day)
+        return advance.ingest.IngestResult(run_id="r", session_date=day)
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", collect)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(db_session, unlimited, FRIDAY_EVENING)
+
+    assert visited == SESSIONS[1:-1]
 
 
 async def test_разрыв_сверх_предела_не_отменяет_сегодня(

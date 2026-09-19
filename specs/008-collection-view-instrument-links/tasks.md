@@ -488,3 +488,8 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T166 Проверять остановку до цикла сессий в backend/src/financial_ai/market_data/ingest.py per FR-058h (missing)
 - [X] T167 Показывать ход источника по инструментам в backend/src/financial_ai/market_data/{ingest.py,sources/positions.py} per FR-058i (missing)
 - [X] T168 Покрыть испытаниями все три правки в backend/tests/
+
+## Phase 38: Свежая сессия отдельно, история по порядку
+
+- [X] T169 Собирать свежую сессию отдельным прогоном, а историю — по возрастанию дат, в backend/src/financial_ai/market_data/advance.py per FR-045 (contradicts)
+- [X] T170 Покрыть испытаниями оба порядка в backend/tests/market_data/test_advance.py
