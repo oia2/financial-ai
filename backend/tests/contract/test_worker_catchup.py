@@ -552,3 +552,52 @@ async def test_лента_источников_не_мигает_при_прод
     # И в момент продолжения тоже: лента продолжается, а не появляется заново.
     assert runner.status()["current"] is not None
     await _wait_idle(runner)
+
+
+async def test_продолжение_сохраняет_режим_прогона(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """У ежедневного сбора и ручного догона планы разные.
+
+    Продолжение, переводившее прогон в ручной, меняло план под человеком:
+    часть строк исчезала с экрана посреди работы, а лента начиналась с первого
+    источника заново (FR-058b).
+    """
+    import datetime as dt
+
+    from financial_ai.market_data import plan
+    from financial_ai.market_data.runner import CatchupState, CatchupStatus
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+
+    visited: list[dt.date] = []
+
+    async def collect(session, settings, day, **kwargs):  # type: ignore[no-untyped-def]
+        visited.append(day)
+        return ingest.IngestResult(run_id=str(kwargs.get("run_id")), session_date=day)
+
+    monkeypatch.setattr(ingest, "ingest_session", collect)
+
+    # Остановленный ЕЖЕДНЕВНЫЙ прогон: одна сессия пройдена, одна нет.
+    runner._state = CatchupState(
+        status=CatchupStatus.STOPPED,
+        mode=plan.MODE_DAILY,
+        group_ids=[],
+        requested=list(MISSING),
+        order=list(MISSING),
+        outcomes={MISSING[0]: "collected"},
+        run_id="прежний-прогон",
+        started_at=dt.datetime.now(dt.UTC),
+    )
+
+    response = await worker_client.post("/internal/catchup", json={"resume": True})
+    await _wait_idle(runner)
+
+    assert response.json()["resumed"] is True
+    # Режим прежний — значит и план на экране прежний.
+    assert runner.status()["mode"] == plan.MODE_DAILY
+    # И работа шла ежедневным путём, по непройденной сессии.
+    assert visited == MISSING[1:]

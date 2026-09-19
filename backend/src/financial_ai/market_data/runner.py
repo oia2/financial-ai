@@ -424,7 +424,10 @@ class CatchupRunner:
         self._stop_requested = False
         self._state = CatchupState(
             status=CatchupStatus.RUNNING,
-            mode=plan_module.MODE_MANUAL,
+            # Режим — прежний. У ежедневного сбора и ручного догона планы
+            # разные, и перевод в ручной менял план под человеком: часть строк
+            # исчезала с экрана посреди работы (FR-058b).
+            mode=stopped.mode,
             group_ids=list(stopped.group_ids),
             date_from=stopped.date_from,
             date_till=stopped.date_till,
@@ -523,6 +526,11 @@ class CatchupRunner:
         счётчик прогона продолжает считать по всему его плану (FR-058b).
         """
         plan_sessions = sessions if sessions is not None else self._state.requested
+
+        if self._state.mode == plan_module.MODE_DAILY:
+            await self._run_daily(plan_sessions)
+            return
+
         factory = get_session_factory()
         try:
             async with factory() as session:
@@ -589,6 +597,48 @@ class CatchupRunner:
         except Exception:
             # Сбой ранжирования не отменяет собранное: данные уже записаны.
             logger.exception("реконсиляция ранжирования после догона не выполнена")
+
+    async def _run_daily(self, plan_sessions: list[dt.date]) -> None:
+        """Доделать остановленный ЕЖЕДНЕВНЫЙ прогон его же планом.
+
+        Ручной догон собирает семь источников, ежедневный — десять, и гнать
+        продолжение по ручному пути значило бы менять работу вместе с планом на
+        экране (FR-058b).
+        """
+        factory = get_session_factory()
+        try:
+            async with factory() as session:
+                for day in plan_sessions:
+                    if self._stop_requested:
+                        logger.info("продолжение остановлено перед сессией %s", day)
+                        break
+
+                    self._on_session_start(day)
+                    result = await ingest.ingest_session(
+                        session,
+                        self._settings,
+                        day,
+                        on_source=self._on_source,
+                        should_stop=lambda: self._stop_requested,
+                        run_id=self._state.run_id,
+                    )
+                    self._on_session_done(
+                        day, ingest.INTERRUPTED if result.interrupted else result.succeeded
+                    )
+        except Exception as error:
+            self._state.status = CatchupStatus.FAILED
+            self._state.reason = describe_failure(error)
+            self._state.finished_at = dt.datetime.now(dt.UTC)
+            logger.exception("продолжение завершилось ошибкой")
+            return
+
+        self._state.finished_at = dt.datetime.now(dt.UTC)
+        self._state.status = (
+            CatchupStatus.STOPPED if self._stop_requested else CatchupStatus.FINISHED
+        )
+        self._state.note_event(
+            "Прогон остановлен по команде" if self._stop_requested else "Прогон завершён"
+        )
 
     def _on_session_start(self, day: dt.date) -> None:
         self._state.begin_session(day)

@@ -499,3 +499,8 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T171 Прерывать повторы обращения у источника позиций по команде остановки в backend/src/financial_ai/market_data/sources/positions_client.py per FR-058j (contradicts)
 - [X] T172 Считать обращения, а не позиции в списке, в backend/src/financial_ai/market_data/sources/positions.py per FR-058i (contradicts)
 - [X] T173 Покрыть испытаниями обе правки в backend/tests/
+
+## Phase 40: Продолжение сохраняет режим прогона
+
+- [X] T174 Продолжать прогон его же планом: ежедневный — ежедневным, ручной — ручным, в backend/src/financial_ai/market_data/runner.py per FR-058b (contradicts)
+- [X] T175 Покрыть испытанием сохранение режима в backend/tests/
