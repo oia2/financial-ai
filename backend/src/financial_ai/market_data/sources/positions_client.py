@@ -35,6 +35,7 @@ import asyncio
 import datetime as dt
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -149,8 +150,18 @@ class PositionsClient:
     повторять в каждом месте вызова.
     """
 
-    def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: httpx.AsyncClient | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> None:
         self._settings = settings
+        # Признак остановки нужен САМОМУ клиенту: четыре попытки с нарастающей
+        # паузой тянутся до двух минут, и проверка между инструментами оставляла
+        # человека ждать их все. Доводится до конца отправленный запрос — не
+        # серия из четырёх (FR-058j).
+        self.should_stop = should_stop
         self._client = client
         self._owns_client = client is None
         self._state = PageState()
@@ -342,6 +353,8 @@ class PositionsClient:
         last_error = "неизвестная причина"
 
         for attempt in range(1, self._settings.market_data_positions_retries + 1):
+            if attempt > 1 and self.should_stop is not None and self.should_stop():
+                raise PositionsSourceError(f"повтор отменён остановкой ({last_error})")
             try:
                 response = await self._client.post(
                     REQUEST_URL,
@@ -384,6 +397,10 @@ class PositionsClient:
         """
         size = self._settings.market_data_positions_batch_size
         pause = self._settings.market_data_positions_batch_pause_seconds
+        if self.should_stop is not None and self.should_stop():
+            # Пауза перед обращением, которого не будет, — чистое ожидание.
+            self._requests_made += 1
+            return
         if self._requests_made and pause and self._requests_made % size == 0:
             logger.debug("позиции: пауза %.1f с после %d обращений", pause, self._requests_made)
             await asyncio.sleep(pause)

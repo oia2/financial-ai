@@ -1551,3 +1551,84 @@ async def test_ход_считается_по_тем_кого_спрашиваю
     )
 
     assert seen == [(1, 1)]
+
+
+@pytest.mark.db
+async def test_после_паузы_позиции_не_спрашивают_собранное(
+    db_session: AsyncSession,
+) -> None:
+    """Единица обращения здесь — «инструмент и дата», и пауза её не отменяет.
+
+    Собранное до остановки записано; продолжение обязано спросить только
+    остаток, а не пройти круг заново (FR-024c).
+    """
+    repository = MarketDataRepository(db_session)
+    for ticker, contract in (("SBER", "SBRF"), ("GAZP", "GAZR"), ("LKOH", "LKOH")):
+        await _seed(repository, ticker, contract, traded=True)
+    await db_session.commit()
+
+    available = {(code, SESSION): FakeSnapshot() for code in ("SBRF", "GAZR", "LKOH")}
+    first = FakePositionsClient(available=available)
+    seen = {"n": 0}
+
+    def should_stop() -> bool:
+        seen["n"] += 1
+        return seen["n"] > 1
+
+    with pytest.raises(SourceStoppedError):
+        await positions.sync_positions(  # type: ignore[arg-type]
+            first, repository, SESSION, should_stop=should_stop
+        )
+    await db_session.commit()
+
+    asked_first = [code for code, _ in first.calls]
+    assert len(asked_first) == 1
+
+    second = FakePositionsClient(available=available)
+    await positions.sync_positions(second, repository, SESSION)  # type: ignore[arg-type]
+    await db_session.commit()
+
+    asked_second = [code for code, _ in second.calls]
+    assert asked_first[0] not in asked_second
+    assert len(asked_second) == 2
+
+
+@pytest.mark.db
+async def test_счётчик_не_шагает_по_собранным(db_session: AsyncSession) -> None:
+    """Счёт идёт по ОБРАЩЕНИЯМ, а не по позициям в списке.
+
+    Собранные пары пропускаются, и счётчик по списку пробегал круг целиком,
+    не спросив никого: после паузы это читается как «собирает заново», хотя
+    собранное как раз не трогается (FR-058i, FR-024c).
+    """
+    repository = MarketDataRepository(db_session)
+    for ticker, contract in (("SBER", "SBRF"), ("GAZP", "GAZR"), ("LKOH", "LKOH")):
+        await _seed(repository, ticker, contract, traded=True)
+    await repository.upsert_positions(
+        [
+            PositionRow(
+                asset_id="EQ_AST_SBER",
+                session_date=SESSION,
+                contract_code="SBRF",
+                fiz_long=Decimal("1"),
+                fiz_short=None,
+                jur_long=None,
+                jur_short=None,
+            )
+        ]
+    )
+    await db_session.commit()
+
+    available = {(code, SESSION): FakeSnapshot() for code in ("GAZR", "LKOH")}
+    client = FakePositionsClient(available=available)
+    seen: list[tuple[int, int]] = []
+
+    await positions.sync_positions(  # type: ignore[arg-type]
+        client,
+        repository,
+        SESSION,
+        on_progress=lambda done, total: seen.append((done, total)),
+    )
+
+    # Спросить предстоит двоих из трёх — собранного в счёт не берём.
+    assert seen == [(1, 2), (2, 2)]

@@ -1199,6 +1199,12 @@ async def _sync_positions(
     if client is None:
         raise IssError("клиент источника позиций не настроен")
 
+    # Признак остановки уходит и в клиент: повторы обращения он ведёт сам, и
+    # без этого «идущий источник доводится до конца» означало не отправленный
+    # запрос, а серию из четырёх с нарастающей паузой (FR-058j).
+    if hasattr(client, "should_stop"):
+        client.should_stop = should_stop
+
     unit = plan.UNITS[positions.SOURCE_ID]
 
     def progress(done: int, total: int) -> None:

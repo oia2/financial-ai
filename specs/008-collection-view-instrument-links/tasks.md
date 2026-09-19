@@ -493,3 +493,9 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T169 Собирать свежую сессию отдельным прогоном, а историю — по возрастанию дат, в backend/src/financial_ai/market_data/advance.py per FR-045 (contradicts)
 - [X] T170 Покрыть испытаниями оба порядка в backend/tests/market_data/test_advance.py
+
+## Phase 39: Остановка прерывает повторы, счётчик считает обращения
+
+- [X] T171 Прерывать повторы обращения у источника позиций по команде остановки в backend/src/financial_ai/market_data/sources/positions_client.py per FR-058j (contradicts)
+- [X] T172 Считать обращения, а не позиции в списке, в backend/src/financial_ai/market_data/sources/positions.py per FR-058i (contradicts)
+- [X] T173 Покрыть испытаниями обе правки в backend/tests/

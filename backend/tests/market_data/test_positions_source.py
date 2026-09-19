@@ -656,3 +656,64 @@ async def _seed_assets(
             ]
         )
     await session.commit()
+
+
+@pytest.mark.db
+async def test_остановка_прерывает_повторы_обращения() -> None:
+    """Доводится до конца отправленный запрос — не серия из четырёх.
+
+    У источника четыре попытки с нарастающей паузой, и одно обращение
+    тянется до двух минут; проверка остановки стояла только между
+    инструментами, поэтому «идущий источник доводится до конца» означало на
+    деле эти две минуты (FR-058j).
+    """
+    import httpx
+
+    from financial_ai.market_data.sources.positions_client import (
+        PositionsClient,
+        PositionsSourceError,
+    )
+
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503, text="сервис недоступен")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = PositionsClient(Settings(), http, should_stop=lambda: True)
+        with pytest.raises(PositionsSourceError, match="повтор отменён остановкой"):
+            await client.fetch("SBRF_F", SESSION)
+
+    # Одна попытка, а не четыре: повторы отменены остановкой.
+    assert attempts["n"] == 1
+
+
+@pytest.mark.db
+async def test_без_остановки_повторы_идут_как_прежде() -> None:
+    """Обратная форма: отмена повторов не должна отменить сами повторы."""
+    import httpx
+
+    from financial_ai.market_data.sources.positions_client import (
+        PositionsClient,
+        PositionsSourceError,
+    )
+
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503, text="сервис недоступен")
+
+    quick = Settings(
+        market_data_positions_retries=3,
+        market_data_positions_retry_backoff_seconds=0,
+    )
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = PositionsClient(quick, http)
+        with pytest.raises(PositionsSourceError):
+            await client.fetch("SBRF_F", SESSION)
+
+    assert attempts["n"] == 3
