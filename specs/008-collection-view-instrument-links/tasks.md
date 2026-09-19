@@ -439,3 +439,10 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T138 Не сверять связи на каждую сессию ежедневного цикла в backend/src/financial_ai/market_data/ingest.py per FR-049 (contradicts)
 - [X] T139 Различить «соберём по расписанию» и «взять нечего» в артефакте Open Design и перенести в backend/src/financial_ai/market_data/coverage.py и frontend/src/widgets/catchup-section/CatchupSection.tsx per FR-054 (missing)
 - [X] T140 Покрыть испытаниями рост строк имени, число обращений за связями и обе подписи в backend/tests/ и frontend/tests/
+
+## Phase 31: Посессионный путь и два вида ожидания
+
+- [X] T141 Датировать сверку связей днём обращения и в посессионном пути в backend/src/financial_ai/market_data/ingest.py per FR-049 (contradicts)
+- [X] T142 Различить ожидание повтора и исчерпание попыток в backend/src/financial_ai/market_data/{advance.py,coverage.py} per FR-054 (contradicts)
+- [X] T143 Возвращать прерванному прогону исход «прерван» после отметки перезапуска в backend/src/financial_ai/market_data/journal.py per FR-041 (contradicts)
+- [X] T144 Покрыть испытаниями все три случая в backend/tests/

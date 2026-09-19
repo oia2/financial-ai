@@ -255,11 +255,19 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
             # Запись ИДУЩЕГО обращения прогон прерванным не делает: исход
             # заводится до обращения и дополняется после (FR-052), и без этого
             # отбора идущий прогон показывался бы «прерванным перезапуском»
-            # ровно пока он идёт. Оборванную вместе с процессом запись
-            # размечает `mark_interrupted` при следующем запуске.
+            # ровно пока он идёт.
             func.count(IngestRun.id)
             .filter(IngestRun.finished_at.is_(None), IngestRun.status != "running")
             .label("unfinished"),
+            # Оборванную вместе с процессом запись размечает `mark_interrupted`
+            # при следующем запуске — и после разметки исход «прерван» обязан
+            # сохраниться. Прежде он исчезал: запись получала отметку
+            # завершения, признак прерванности держался на её ОТСУТСТВИИ, и
+            # прогон становился обычной неудачей — ровно того исхода, которого
+            # требует FR-041, в журнале не было никогда.
+            func.count(IngestRun.id)
+            .filter(IngestRun.failure_reason == INTERRUPTED_REASON)
+            .label("interrupted"),
         )
         .group_by(IngestRun.run_id)
         .order_by(func.min(IngestRun.started_at).desc())
@@ -305,9 +313,10 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
     summaries: list[RunSummary] = []
     for row in rows:
         failed = len(failed_sessions.get(row.run_id, set()))
+        interrupted = bool(row.unfinished or row.interrupted)
         status = (
             STATUS_INTERRUPTED
-            if row.unfinished
+            if interrupted
             else (STATUS_FAILED if failed and failed == row.sessions else STATUS_FINISHED)
         )
         summaries.append(

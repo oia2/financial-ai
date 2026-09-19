@@ -293,17 +293,22 @@ async def build_report(
     # или ждут выдержки, — дата не называется вовсе. Подставлять вместо неё
     # ближайший торговый день значит обещать сбор, которого не будет; ближайший
     # день остаётся ответом только там, где недостающего нет (FR-054).
-    from financial_ai.market_data.advance import selectable
+    from financial_ai.market_data.advance import selectable, within_attempt_limit
 
-    planned = await selectable(repository, sorted(pending), settings)
+    missing = sorted(pending)
+    # Два разных ожидания, и путать их нельзя. Сессию, ждущую выдержки после
+    # неудачи, сбор возьмёт САМ — просто позже, — и её дата называется.
+    # Исчерпавшую предел попыток не возьмёт никто, пока человек не вмешается
+    # (FR-054).
+    ready = await selectable(repository, missing, settings)
+    retriable = await within_attempt_limit(repository, missing, settings)
+
     next_blocked = False
-    if planned:
-        next_session = max(planned)
-    elif pending:
-        # Недостающее есть, а взять нельзя ни одну сессию. Это НЕ то же самое,
-        # что «недостающего нет»: там сбор пойдёт по расписанию, здесь не
-        # пойдёт вовсе, пока человек не вмешается, — и одна пустая дата на оба
-        # случая читается как обещание там, где обещания нет (FR-054).
+    if ready:
+        next_session = max(ready)
+    elif retriable:
+        next_session = max(retriable)
+    elif missing:
         next_session = None
         next_blocked = True
     else:

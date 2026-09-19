@@ -130,7 +130,13 @@ async def test_журнал_переживает_перезапуск_сборщ
 
 
 async def test_прогон_без_отметки_завершения_помечается_прерванным(db_session: object) -> None:
-    """Перезапуск сборщика не оставляет прогон «идущим» навсегда."""
+    """Перезапуск сборщика не оставляет прогон «идущим» навсегда.
+
+    И исход «прерван» при этом СОХРАНЯЕТСЯ: он требуется FR-041 и отличает
+    оборванный прогон от просто неудачного. Прежде признаком прерванности было
+    ОТСУТСТВИЕ отметки завершения, а разметка эту отметку ставила — и того
+    исхода, которого требует правило, в журнале не бывало никогда.
+    """
     repository = MarketDataRepository(db_session)  # type: ignore[arg-type]
     started = dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)
 
@@ -152,5 +158,7 @@ async def test_прогон_без_отметки_завершения_поме�
 
     assert marked == 1
     after = await journal.recent_runs(db_session, limit=5)  # type: ignore[arg-type]
-    assert after[0].status != journal.STATUS_INTERRUPTED
+    assert after[0].status == journal.STATUS_INTERRUPTED
+    # «Идущим» он при этом больше не выглядит: конец у него есть — момент
+    # перезапуска, который его и оборвал.
     assert after[0].finished_at is not None

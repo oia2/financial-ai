@@ -119,7 +119,7 @@ async def pending_sessions(
     # иначе перевыбирался бы вечно: сессия остаётся неполной, значит остаётся в
     # списке, значит собирается снова — и так каждые пятнадцать минут без конца.
     attempts = await repository.attempts_by_session(missing)
-    within_limit = await _within_attempt_limit(repository, missing, settings)
+    within_limit = await within_attempt_limit(repository, missing, settings)
     for day in missing:
         if day not in within_limit:
             logger.warning(
@@ -192,12 +192,18 @@ def _after_retry_delay(
     return ready
 
 
-async def _within_attempt_limit(
+async def within_attempt_limit(
     repository: MarketDataRepository,
     missing: list[dt.date],
     settings: Settings,
 ) -> list[dt.date]:
-    """Сессии, не исчерпавшие предел попыток."""
+    """Сессии, не исчерпавшие предел попыток.
+
+    Отличается от :func:`selectable` ровно одним: выдержка после неудачи здесь
+    не учитывается. Сессию, ждущую повтора, сбор возьмёт сам — просто позже, —
+    и смешивать её с исчерпавшей попытки нельзя: во втором случае без человека
+    не обойтись, в первом вмешиваться не нужно (FR-054).
+    """
     attempts = await repository.attempts_by_session(missing)
     return [
         day for day in missing if attempts.get(day, 0) < settings.market_data_session_max_attempts
@@ -223,7 +229,7 @@ async def selectable(
     if not missing:
         return []
 
-    within_limit = await _within_attempt_limit(repository, missing, settings)
+    within_limit = await within_attempt_limit(repository, missing, settings)
 
     # Отметка времени берётся по котировкам: `ingest_session` гонит все источники
     # за дату одним заходом и котировки — первыми, поэтому их последняя попытка и

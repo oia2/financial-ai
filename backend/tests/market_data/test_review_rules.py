@@ -1077,3 +1077,165 @@ async def test_связи_сверяются_раз_на_прогон_и_в_еж
     )
 
     assert iss.series_calls == after_first
+
+
+# --- FR-049: посессионный путь тоже датирует днём обращения ------------------
+
+
+@pytest.mark.db
+async def test_добор_пропуска_не_датирует_связь_датой_сессии(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Сквозной случай ревью: календарь до 18-го, добирается пропуск за 14-е.
+
+    Сегодняшний контракт записывался действующим с 14-го. Правило чинили в
+    ручном догоне, а посессионный путь оставили на дате сессии (FR-049).
+    """
+    repository = MarketDataRepository(db_session)
+    today = SESSION + dt.timedelta(days=21)
+    await repository.add_trading_sessions([SESSION, today])
+    await db_session.commit()
+
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=NewContractIss([SESSION, today]),
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+    await db_session.commit()
+
+    history = await repository.link_history("EQ_AST_SBER")
+    assert [link.valid_from for link in history] == [today]
+    assert await repository.active_links_on(SESSION) == {}
+
+
+# --- FR-054: ожидание повтора — не исчерпание попыток ------------------------
+
+
+@pytest.mark.db
+async def test_ожидание_повтора_не_зовёт_человека(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Сквозной случай ревью: одна попытка из трёх, выдержка ещё идёт.
+
+    Сессию, ждущую повтора, сбор возьмёт САМ — просто позже. Раздел же
+    сообщал «нужен ручной сбор», то есть звал вмешаться там, где вмешиваться
+    не нужно (FR-054).
+    """
+    from financial_ai.market_data import coverage
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
+    await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSION)
+    await repository.upsert_daily_bars(
+        [
+            DailyBar(
+                asset_id="EQ_AST_SBER",
+                price_series_id="EQ_PRS_SBER",
+                session_date=SESSION,
+                open=Decimal("1"),
+                high=None,
+                low=None,
+                close=Decimal("1"),
+                volume=None,
+            )
+        ]
+    )
+
+    # Одна попытка из трёх, и она была только что: выдержка ещё идёт.
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="just-tried",
+        source_id="equity_d1",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+        failure_reason="биржа не ответила",
+    )
+    await db_session.commit()
+
+    report = await coverage.build_report(db_session, settings, SESSION)
+
+    assert report["next_session"] == SESSION.isoformat()
+    assert report["next_session_blocked"] is False
+
+
+@pytest.mark.db
+async def test_исчерпание_попыток_человека_всё_же_зовёт(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Обратная форма: различие не должно стереть и второй случай.
+
+    Сессию, исчерпавшую предел попыток, не возьмёт никто, пока человек не
+    вмешается, — и об этом сказать обязаны.
+    """
+    from financial_ai.market_data import coverage
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
+    await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSION)
+    await repository.upsert_daily_bars(
+        [
+            DailyBar(
+                asset_id="EQ_AST_SBER",
+                price_series_id="EQ_PRS_SBER",
+                session_date=SESSION,
+                open=Decimal("1"),
+                high=None,
+                low=None,
+                close=Decimal("1"),
+                volume=None,
+            )
+        ]
+    )
+
+    moment = dt.datetime.now(dt.UTC)
+    for attempt in range(settings.market_data_session_max_attempts + 1):
+        await repository.record_run(
+            run_id=f"spent-{attempt}",
+            source_id="equity_d1",
+            status="failed",
+            started_at=moment - dt.timedelta(hours=attempt + 1),
+            finished_at=moment - dt.timedelta(hours=attempt + 1),
+            session_date=SESSION,
+            failure_reason="биржа не ответила",
+        )
+    await db_session.commit()
+
+    report = await coverage.build_report(db_session, settings, SESSION)
+
+    assert report["next_session"] is None
+    assert report["next_session_blocked"] is True
+
+
+# --- FR-041: обычная неудача прерванностью не становится ---------------------
+
+
+@pytest.mark.db
+async def test_обычная_неудача_прерванным_прогоном_не_считается(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: исход «прерван» отличает оборванный прогон от неудачного."""
+    from financial_ai.market_data import journal
+
+    repository = MarketDataRepository(db_session)
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="run-broken",
+        source_id="equity_d1",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+        failure_reason="биржа не ответила",
+    )
+    await db_session.commit()
+
+    runs = await journal.recent_runs(db_session)
+
+    assert [run.status for run in runs] == [journal.STATUS_FAILED]

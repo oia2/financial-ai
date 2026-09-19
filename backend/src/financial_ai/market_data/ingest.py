@@ -328,15 +328,32 @@ async def ingest_session(
         # всех, кроме первой, сверка заведомо ничего не откроет — запрет
         # датировать задним числом её и отвергнет, — а стоит она трёх обращений
         # к бирже на сессию (FR-049).
+        #
+        # Датируется ДНЁМ ОБРАЩЕНИЯ, а не датой собираемой сессии: добор
+        # пропуска за 14 сентября при календаре до 18-го записывал сегодняшний
+        # контракт действующим с 14-го. Правило чинили в ручном догоне, а
+        # посессионный путь оставили на дате сессии (FR-049).
+        asked_on = await calendar.latest_session(moscow_today()) or session_date
         confirmed = await repository.latest_link_start()
-        if confirmed is not None and session_date < confirmed:
+        # `<=`, а не `<`: связи, подтверждённые ЭТИМ ЖЕ днём, пересматривать
+        # нечем — список серий за день не меняется, а стоит он трёх обращений
+        # к бирже на каждую собираемую сессию (FR-049).
+        if confirmed is not None and asked_on <= confirmed:
             logger.debug(
                 "сессия %s: связи не пересматриваются, они подтверждены по %s",
                 session_date,
                 confirmed,
             )
         else:
-            await sync_instrument_links(repository, iss, session_date, alias_events=alias_events)
+            await sync_instrument_links(
+                repository,
+                iss,
+                asked_on,
+                alias_events=alias_events,
+                # Состав доски — из собираемой сессии: её котировки записаны
+                # шагом выше, и свежее данных у нас нет.
+                traded_on=session_date,
+            )
         await session.commit()
 
         # Задержанный источник — отдельно и с повторами. Он единственный ходит
