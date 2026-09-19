@@ -210,6 +210,7 @@ export function MarketDataPage() {
           journalSkipsTotal={runs.data?.skips_total ?? 0}
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
+          nextBlocked={coverage.data?.next_session_blocked === true}
           emptyStorage={emptyStorage}
           nothingToCatchUp={control.nothingToCatchUp}
           notice={

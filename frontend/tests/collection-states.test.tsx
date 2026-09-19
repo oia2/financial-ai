@@ -13,7 +13,7 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -22,7 +22,7 @@ import { AppProviders } from '@/app/providers';
 import { navigate } from '@/app/router';
 import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
 
-import { catchupFixture } from './msw/market-data';
+import { catchupFixture, coverageFixture } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
 
 function renderWith(
@@ -405,5 +405,55 @@ describe('пауза автосбора', () => {
     expect(await screen.findByText('Автосбор на паузе')).toBeInTheDocument();
     // Прогон продолжается: кнопка остановки на месте, счётчики живы.
     expect(screen.getByRole('button', { name: 'Остановить прогон' })).toBeInTheDocument();
+  });
+});
+
+describe('следующий сбор', () => {
+  function renderWithCoverage(next: string | null, blocked: boolean) {
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('finished'))),
+      http.get('*/api/market-data/coverage', () =>
+        HttpResponse.json(coverageFixture({ next_session: next, next_session_blocked: blocked })),
+      ),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    });
+    window.history.pushState(null, '', '/market-data');
+    navigate('market-data');
+
+    return render(
+      <AppProviders client={client}>
+        <AppShell />
+      </AppProviders>,
+    );
+  }
+
+  it('взять нечего: названа причина, а не расписание', async () => {
+    // Пустая дата значит то «соберём по расписанию», то «не возьмём ничего,
+    // пока не вмешаетесь». Одна подпись на оба читается как обещание там, где
+    // обещания нет (FR-054).
+    renderWithCoverage(null, true);
+
+    const line = await waitFor(() => {
+      const found = document.querySelector('.run-next');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(line.textContent).toContain('не будет');
+    expect(line.textContent).toContain('исчерпали попытки');
+  });
+
+  it('дата известна: обещание остаётся обещанием', async () => {
+    renderWithCoverage('2026-09-17', false);
+
+    const line = await waitFor(() => {
+      const found = document.querySelector('.run-next');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(line.textContent).toContain('17.09.2026');
+    expect(line.textContent).toContain('после закрытия сессии');
   });
 });

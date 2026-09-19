@@ -45,6 +45,7 @@ export function CatchupSection({
   journalSkipsTotal = 0,
   paused,
   nextSession,
+  nextBlocked = false,
   emptyStorage,
   nothingToCatchUp,
   notice,
@@ -67,6 +68,13 @@ export function CatchupSection({
   paused: boolean;
   /** Сессия, которую возьмёт следующий сбор, по торговому календарю. */
   nextSession: string | null;
+  /**
+   * Даты нет потому, что сбор не возьмёт НИЧЕГО: недостающие сессии исчерпали
+   * попытки. Пустая дата без этого признака значит обратное — недостающего
+   * нет, и сбор пойдёт по расписанию. Одна подпись на оба случая читалась как
+   * обещание там, где обещания нет (FR-054).
+   */
+  nextBlocked?: boolean;
   emptyStorage: boolean;
   /** Сервер ответил, что пропущенных сессий нет: запуск не предлагается (FR-038). */
   nothingToCatchUp: boolean;
@@ -228,15 +236,12 @@ export function CatchupSection({
 
       {past && (
         <p className="run-next">
-          Следующий сбор —{' '}
-          <b>
-            {paused
-              ? 'не будет'
-              : nextSession === null
-                ? 'по расписанию'
-                : formatIsoDate(nextSession)}
-          </b>
-          {paused ? ', пока автосбор на паузе' : ', после закрытия сессии'}
+          Следующий сбор — <b>{paused || nextBlocked ? 'не будет' : formatIsoDate(nextSession)}</b>
+          {paused
+            ? ', пока автосбор на паузе'
+            : nextBlocked
+              ? ', недостающие сессии исчерпали попытки — нужен ручной сбор'
+              : ', после закрытия сессии'}
         </p>
       )}
 

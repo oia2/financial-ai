@@ -296,10 +296,16 @@ async def build_report(
     from financial_ai.market_data.advance import selectable
 
     planned = await selectable(repository, sorted(pending), settings)
+    next_blocked = False
     if planned:
         next_session = max(planned)
     elif pending:
+        # Недостающее есть, а взять нельзя ни одну сессию. Это НЕ то же самое,
+        # что «недостающего нет»: там сбор пойдёт по расписанию, здесь не
+        # пойдёт вовсе, пока человек не вмешается, — и одна пустая дата на оба
+        # случая читается как обещание там, где обещания нет (FR-054).
         next_session = None
+        next_blocked = True
     else:
         next_session = await calendar.latest_session(moscow_today())
 
@@ -313,6 +319,8 @@ async def build_report(
             "asof_date": universe_date.isoformat() if universe_date else None,
         },
         "next_session": next_session.isoformat() if next_session else None,
+        # Почему даты нет: сбор не возьмёт ничего, пока человек не вмешается.
+        "next_session_blocked": next_blocked,
         # Порог сбора текущей сессии. Биржевое время отдаёт сервер: оно живёт в
         # настройке сборщика, и второе объявление того же факта в интерфейсе
         # однажды разошлось бы с первым.

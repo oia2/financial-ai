@@ -809,9 +809,18 @@ async def test_переименование_не_рвёт_ряд_внутри_о
 
 
 class NewContractIss(CountingIss):
-    """Биржа, у которой у бумаги появилось семейство контрактов."""
+    """Биржа, у которой у бумаги появилось семейство контрактов.
+
+    Считает обращения за списком серий: цена сверки связей должна зависеть от
+    числа прогонов, а не от числа сессий в прогоне.
+    """
+
+    def __init__(self, sessions: list[dt.date] | None = None) -> None:
+        super().__init__(sessions)
+        self.series_calls = 0
 
     async def fetch_futures_series(self) -> list[dict[str, object]]:
+        self.series_calls += 1
         return [{"underlying_asset": "SBER", "asset_code": "SBRF", "secid": "SBRF-12.26"}]
 
     async def fetch_futures_open_interest(self) -> dict[str, int]:
@@ -965,3 +974,106 @@ async def test_дата_следующего_сбора_не_выдумывае�
     report = await coverage.build_report(db_session, settings, SESSION)
 
     assert report["next_session"] is None
+    # И названа ПРИЧИНА: пустая дата иначе читается как «соберём по
+    # расписанию», то есть как обещание там, где обещания нет.
+    assert report["next_session_blocked"] is True
+
+
+# --- FR-048: имя расширяется назад, а не дополняется строкой ------------------
+
+
+@pytest.mark.db
+async def test_опознание_на_каждую_сессию_не_плодит_интервалов(
+    db_session: AsyncSession,
+) -> None:
+    """Прогон идёт от свежих сессий к старым и опознаёт бумаги на каждую.
+
+    Каждый раз более ранней датой — и десять сессий по две бумаги давали
+    двадцать интервалов, все действующие одновременно. На стенде это 506 бумаг
+    на 314 сессий. Ровно этот рост уже чинила миграция 0012, и правило «писать,
+    только когда имя меняется» его не остановило: имя, действующее с более
+    позднего дня, на более раннем не действует (FR-048).
+    """
+    from sqlalchemy import func, select
+
+    from financial_ai.market_data import links
+    from financial_ai.market_data.models import AssetAlias
+
+    class Iss:
+        async def fetch_equity_isins(self) -> dict[str, str]:
+            return {"SBER": "RU0009029540", "GAZP": "RU0007661625"}
+
+    repository = MarketDataRepository(db_session)
+    for offset in range(10):
+        await links.sync_aliases(repository, Iss(), SESSION - dt.timedelta(days=offset))  # type: ignore[arg-type]
+    await db_session.commit()
+
+    rows = await db_session.scalar(select(func.count()).select_from(AssetAlias))
+
+    assert rows == 2
+
+
+@pytest.mark.db
+async def test_имя_действует_на_самой_ранней_сессии_прогона(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: экономия строк не должна стоить покрытия.
+
+    Расширение назад и есть то, что мы узнали: имя указывает на сущность, и
+    если оно действует с 18-го, то за 17-е оно указывает на неё же.
+    """
+    from financial_ai.market_data import links
+
+    class Iss:
+        async def fetch_equity_isins(self) -> dict[str, str]:
+            return {"SBER": "RU0009029540"}
+
+    repository = MarketDataRepository(db_session)
+    earliest = SESSION - dt.timedelta(days=9)
+    for offset in range(10):
+        await links.sync_aliases(repository, Iss(), SESSION - dt.timedelta(days=offset))  # type: ignore[arg-type]
+    await db_session.commit()
+
+    assert await repository.aliases_on(earliest) == {"SBER": "EQ_AST_SBER"}
+    assert await repository.aliases_on(SESSION) == {"SBER": "EQ_AST_SBER"}
+
+
+# --- FR-049: связи не сверяются на каждую сессию ------------------------------
+
+
+@pytest.mark.db
+async def test_связи_сверяются_раз_на_прогон_и_в_ежедневном_цикле(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Ежедневный цикл идёт от свежих сессий к старым и сверял связи на каждую.
+
+    Для всех сессий, кроме первой, сверка заведомо ничего не откроет — запрет
+    датировать задним числом её и отвергнет, — а стоит она трёх обращений к
+    бирже на сессию (FR-049).
+    """
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([EARLIER, SESSION])
+    await db_session.commit()
+
+    iss = NewContractIss([EARLIER, SESSION])
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+    after_first = iss.series_calls
+    assert after_first == 1
+
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        EARLIER,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+
+    assert iss.series_calls == after_first

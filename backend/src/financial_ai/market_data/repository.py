@@ -1157,7 +1157,31 @@ class MarketDataRepository:
         return rows.first()
 
     async def upsert_alias(self, ticker: str, asset_id: str, valid_from: dt.date) -> None:
-        """Записать имя бумаги на период."""
+        """Записать имя бумаги на период.
+
+        Действующий интервал того же имени той же сущности РАСШИРЯЕТСЯ назад, а
+        не дополняется вторым интервалом. Прогон идёт от свежих сессий к старым
+        и опознаёт бумаги на каждую, то есть каждый раз более ранней датой:
+        десять сессий по две бумаги давали двадцать интервалов, все
+        действующие одновременно, а на стенде это 506 бумаг на 314 сессий.
+        Ровно этот рост уже чинила миграция 0012 (FR-048).
+
+        Расширение и есть то, что мы узнали: имя указывает на сущность, и если
+        оно действует с 18-го, то за 17-е оно указывает на неё же.
+        """
+        extended = await self._session.execute(
+            update(AssetAlias)
+            .where(
+                AssetAlias.ticker == ticker,
+                AssetAlias.asset_id == asset_id,
+                AssetAlias.valid_till.is_(None),
+                AssetAlias.valid_from > valid_from,
+            )
+            .values(valid_from=valid_from)
+        )
+        if getattr(extended, "rowcount", 0):
+            return
+
         statement = (
             insert(AssetAlias)
             .values(ticker=ticker, asset_id=asset_id, valid_from=valid_from)

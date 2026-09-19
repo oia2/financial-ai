@@ -322,7 +322,21 @@ async def ingest_session(
         # Связи инструментов — перед позициями: иначе появление нового фьючерса
         # заметили бы только через сутки, а позиции спрашивались бы вчерашним
         # контрактом.
-        await sync_instrument_links(repository, iss, session_date, alias_events=alias_events)
+        #
+        # Но не на каждую сессию: список серий описывает СЕГОДНЯШНИЙ состав
+        # рынка. Ежедневный цикл идёт от свежих сессий к старым (FR-045), и для
+        # всех, кроме первой, сверка заведомо ничего не откроет — запрет
+        # датировать задним числом её и отвергнет, — а стоит она трёх обращений
+        # к бирже на сессию (FR-049).
+        confirmed = await repository.latest_link_start()
+        if confirmed is not None and session_date < confirmed:
+            logger.debug(
+                "сессия %s: связи не пересматриваются, они подтверждены по %s",
+                session_date,
+                confirmed,
+            )
+        else:
+            await sync_instrument_links(repository, iss, session_date, alias_events=alias_events)
         await session.commit()
 
         # Задержанный источник — отдельно и с повторами. Он единственный ходит

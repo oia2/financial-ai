@@ -432,3 +432,10 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T134 Записывать неспрошенный источник в журнал прогонов в backend/src/financial_ai/market_data/ingest.py per FR-050 (contradicts)
 - [X] T135 Не называть дату следующего сбора, когда брать нечего, в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
 - [X] T136 Покрыть испытаниями каждый из пяти случаев в backend/tests/
+
+## Phase 30: Найденное собственной проверкой
+
+- [X] T137 Расширять действующий интервал имени назад вместо новой строки в backend/src/financial_ai/market_data/repository.py per FR-048 (contradicts)
+- [X] T138 Не сверять связи на каждую сессию ежедневного цикла в backend/src/financial_ai/market_data/ingest.py per FR-049 (contradicts)
+- [X] T139 Различить «соберём по расписанию» и «взять нечего» в артефакте Open Design и перенести в backend/src/financial_ai/market_data/coverage.py и frontend/src/widgets/catchup-section/CatchupSection.tsx per FR-054 (missing)
+- [X] T140 Покрыть испытаниями рост строк имени, число обращений за связями и обе подписи в backend/tests/ и frontend/tests/

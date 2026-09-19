@@ -306,3 +306,4 @@ async def test_следующим_не_называется_сессия_жду�
     report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
 
     assert report["next_session"] == ASOF.isoformat()
+    assert report["next_session_blocked"] is False
