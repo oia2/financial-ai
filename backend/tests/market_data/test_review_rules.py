@@ -1493,3 +1493,61 @@ def test_там_где_число_ничего_не_добавляет_подп�
     assert plan.describe("brent", 1) is None
     assert plan.describe("trading_calendar", 300) is None
     assert plan.describe("equity_d1", 0) is None
+
+
+# --- FR-058i: источник по инструментам показывает свой ход -------------------
+
+
+@pytest.mark.db
+async def test_позиции_показывают_сколько_инструментов_пройдено(
+    db_session: AsyncSession,
+) -> None:
+    """Источник идёт минутами и десятками обращений.
+
+    Всё это время на экране стояло одно слово «идёт»: долгий источник
+    неотличим от зависшего — ровно та беда, ради которой лента и заведена
+    (FR-058i, FR-003).
+    """
+    repository = MarketDataRepository(db_session)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+    await _seed(repository, "GAZP", "GAZR", traded=True)
+    await db_session.commit()
+
+    client = FakePositionsClient(
+        available={("SBRF", SESSION): FakeSnapshot(), ("GAZR", SESSION): FakeSnapshot()}
+    )
+    seen: list[tuple[int, int]] = []
+
+    await positions.sync_positions(  # type: ignore[arg-type]
+        client,
+        repository,
+        SESSION,
+        on_progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert seen == [(1, 2), (2, 2)]
+
+
+@pytest.mark.db
+async def test_ход_считается_по_тем_кого_спрашивают(db_session: AsyncSession) -> None:
+    """Обратная форма: в знаменателе те, кого спрашивают, а не все подряд.
+
+    Ушедшая с торгов бумага в круг не входит (FR-053), и обещать её в счёте
+    значило бы обещать обращение, которого не будет.
+    """
+    repository = MarketDataRepository(db_session)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+    await _seed(repository, "DOMRF", "DOMR", traded=False)
+    await db_session.commit()
+
+    client = FakePositionsClient(available={("SBRF", SESSION): FakeSnapshot()})
+    seen: list[tuple[int, int]] = []
+
+    await positions.sync_positions(  # type: ignore[arg-type]
+        client,
+        repository,
+        SESSION,
+        on_progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert seen == [(1, 1)]

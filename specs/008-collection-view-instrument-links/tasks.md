@@ -481,3 +481,10 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T162 Не запрашивать источник, уже собранный за эту сессию, в backend/src/financial_ai/market_data/{ingest.py,repository.py} per FR-058e (contradicts)
 - [X] T163 Называть исход источника числом и при успехе в backend/src/financial_ai/market_data/{ingest.py,plan.py,runner.py,scheduler.py} per FR-058f (missing)
 - [X] T164 Покрыть испытаниями обе правки в backend/tests/
+
+## Phase 37: Продолжать с места и не молчать во время работы
+
+- [X] T165 Продолжать прогон в порядке его сбора, а не в порядке показа, в backend/src/financial_ai/market_data/{runner.py,scheduler.py} per FR-058g (contradicts)
+- [X] T166 Проверять остановку до цикла сессий в backend/src/financial_ai/market_data/ingest.py per FR-058h (missing)
+- [X] T167 Показывать ход источника по инструментам в backend/src/financial_ai/market_data/{ingest.py,sources/positions.py} per FR-058i (missing)
+- [X] T168 Покрыть испытаниями все три правки в backend/tests/

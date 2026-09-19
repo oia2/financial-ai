@@ -236,6 +236,10 @@ async def ingest_session(
             await session.commit()
             return result
 
+        if should_stop is not None and should_stop():
+            logger.info("сбор сессии %s прерван до опознания бумаг", session_date)
+            return result
+
         # Шаг 2: опознание бумаг. ДО котировок, а не после: ключом наблюдения
         # служит сущность, а не имя, и в сессию переименования наблюдение,
         # записанное раньше сверки, заводило вторую бумагу с оборванной
@@ -410,6 +414,7 @@ async def ingest_session(
                 pos_client,
                 sessions=None,
                 should_stop=should_stop,
+                on_source=on_source,
             ),
             on_source=on_source,
         )
@@ -552,6 +557,10 @@ async def catch_up(
             on_source=on_source,
         )
 
+        if should_stop is not None and should_stop():
+            logger.info("догон остановлен до опознания бумаг")
+            return result
+
         # Опознание бумаг — ДО сессий и НЕЗАВИСИМО от выбора источников.
         # Прежде оно шло довеском к сверке связей, а та выполняется только
         # когда выбраны позиции: ручной сбор одних котировок заводил
@@ -571,6 +580,14 @@ async def catch_up(
         # датой из окна: окно говорит о том, что собирают, а источник — о
         # сегодня. Догон до 10 сентября принимал сегодняшний контракт как
         # действующий с 10-го, хотя прежняя связь шла с 1-го (FR-049).
+        # Проверка перед сверкой связей: на изменившемся составе это десятки
+        # обращений, и нажатие в эти секунды не делало ничего — остановка
+        # выглядела зависшей (FR-058h).
+        if should_stop is not None and should_stop():
+            logger.info("догон остановлен до сверки связей")
+            await session.commit()
+            return result
+
         if source_ids is None or positions.SOURCE_ID in source_ids:
             asked_on = await calendar.latest_session(moscow_today()) or result.requested[-1]
             confirmed = await repository.latest_link_start()
@@ -696,6 +713,7 @@ async def _catch_up_session(
                 positions_client,
                 sessions,
                 should_stop=should_stop,
+                on_source=on_source,
             ),
         ),
     ):
@@ -1168,6 +1186,7 @@ async def _sync_positions(
     client: PositionsClient | None,
     sessions: list[dt.date] | None,
     should_stop: Callable[[], bool] | None = None,
+    on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
 ) -> int:
     """Позиции по фьючерсам за одну сессию.
 
@@ -1180,6 +1199,27 @@ async def _sync_positions(
     if client is None:
         raise IssError("клиент источника позиций не настроен")
 
+    unit = plan.UNITS[positions.SOURCE_ID]
+
+    def progress(done: int, total: int) -> None:
+        # Ход по инструментам виден на экране: источник идёт минутами, и одно
+        # слово «идёт» всё это время неотличимо от зависания (FR-058i).
+        if on_source is not None:
+            on_source(
+                positions.SOURCE_ID,
+                "running",
+                SourceOutcome(
+                    positions.SOURCE_ID,
+                    STATUS_OK,
+                    detail=f"{done} из {total} {plan.plural(total, *unit)}",
+                ),
+            )
+
     return await positions.sync_positions(
-        client, repository, session_date, sessions=sessions, should_stop=should_stop
+        client,
+        repository,
+        session_date,
+        sessions=sessions,
+        should_stop=should_stop,
+        on_progress=progress,
     )

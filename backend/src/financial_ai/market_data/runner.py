@@ -126,6 +126,12 @@ class CatchupState:
     date_till: dt.date | None = None
     clamped: bool = False
     requested: list[dt.date] = field(default_factory=list)
+
+    # Порядок, в котором прогон БЕРЁТ сессии. Порядок показа хронологический
+    # (FR-026), а ежедневный цикл идёт от свежих к старым (FR-045) — и
+    # продолжение, построенное по порядку показа, прыгало на другой конец
+    # плана: остановили на 22 июля, продолжили с 18 июня (FR-058g).
+    order: list[dt.date] = field(default_factory=list)
     closed: list[dt.date] = field(default_factory=list)
     failed: list[dt.date] = field(default_factory=list)
 
@@ -178,7 +184,8 @@ class CatchupState:
         доберёт обычный план по правилам повторов, а тащить её в продолжение
         значило бы перевыбирать её вечно.
         """
-        return [day for day in self.requested if self.outcomes.get(day) in (None, "partial")]
+        plan = self.order or self.requested
+        return [day for day in plan if self.outcomes.get(day) in (None, "partial")]
 
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
         """Отметить состояние источника и момент последнего ответа.
@@ -380,6 +387,7 @@ class CatchupRunner:
             date_till=planned[0][-1],
             clamped=planned[1],
             requested=list(planned[0]),
+            order=list(planned[0]),
             # Сессия называется СРАЗУ, а не когда до неё дошла очередь: до неё
             # прогон синхронизирует календарь и состав инструментов — видимую
             # работу, — а лента источников без названной сессии на экран не
@@ -421,6 +429,7 @@ class CatchupRunner:
             date_from=stopped.date_from,
             date_till=stopped.date_till,
             requested=list(stopped.requested),
+            order=list(stopped.order or stopped.requested),
             closed=list(stopped.closed),
             failed=list(stopped.failed),
             outcomes=dict(stopped.outcomes),

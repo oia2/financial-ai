@@ -559,3 +559,35 @@ def test_спрошенный_источник_в_плане_остаётся() 
     assert isinstance(current, dict)
     rail = {row["source_id"]: row["state"] for row in current["sources"]}  # type: ignore[index,union-attr]
     assert rail["equity_sectors"] == "done"
+
+
+# --- FR-058g: продолжение берётся с места остановки --------------------------
+
+
+def test_продолжение_идёт_в_порядке_сбора_а_не_показа() -> None:
+    """Остановили на свежей сессии — продолжать с неё, а не с другого конца.
+
+    Ежедневный цикл идёт от свежих сессий к старым, а порядок показа
+    хронологический: продолжение, построенное по порядку показа, прыгало на
+    другой конец плана — на шкале это видно как заполнение с обоих концов
+    сразу (FR-058g).
+    """
+    from financial_ai.market_data.runner import CatchupState
+
+    newest_first = sorted(SESSIONS, reverse=True)
+    state = CatchupState(requested=sorted(SESSIONS), order=newest_first)
+    state.outcomes[newest_first[0]] = "collected"
+    state.outcomes[newest_first[1]] = "partial"
+
+    assert state.unfinished[0] == newest_first[1]
+    assert state.unfinished == newest_first[1:]
+
+
+def test_без_порядка_сбора_продолжение_идёт_по_плану() -> None:
+    """Обратная форма: у ручного прогона порядок сбора и показа совпадают."""
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=sorted(SESSIONS))
+    state.outcomes[SESSIONS[0]] = "collected"
+
+    assert state.unfinished == sorted(SESSIONS)[1:]
