@@ -289,10 +289,19 @@ async def build_report(
     # Когда несобранного нет, следующей будет текущая сессия после порога —
     # ближайший известный торговый день. Будущих дат календарь не знает: он
     # строится по СОСТОЯВШИМСЯ торгам.
+    # Когда взять нельзя НИ ОДНУ из недостающих — все исчерпали предел попыток
+    # или ждут выдержки, — дата не называется вовсе. Подставлять вместо неё
+    # ближайший торговый день значит обещать сбор, которого не будет; ближайший
+    # день остаётся ответом только там, где недостающего нет (FR-054).
     from financial_ai.market_data.advance import selectable
 
     planned = await selectable(repository, sorted(pending), settings)
-    next_session = max(planned) if planned else await calendar.latest_session(moscow_today())
+    if planned:
+        next_session = max(planned)
+    elif pending:
+        next_session = None
+    else:
+        next_session = await calendar.latest_session(moscow_today())
 
     return {
         "asof_date": asof_date.isoformat(),

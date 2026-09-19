@@ -26,7 +26,7 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import advance, groups, journal, plan
+from financial_ai.market_data import advance, groups, ingest, journal, plan
 from financial_ai.market_data.calendar import moscow_now
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
@@ -178,9 +178,19 @@ class MarketDataScheduler:
         def session_start(day: dt.date) -> None:
             self._state.begin_session(day)
 
-        def session_done(day: dt.date, succeeded: bool) -> None:
-            (self._state.closed if succeeded else self._state.failed).append(day)
-            self._state.outcomes[day] = "collected" if succeeded else "failed"
+        def session_done(day: dt.date, succeeded: bool | str) -> None:
+            """Исход сессии: собрана, не собрана либо прервана по команде.
+
+            Прерванную доделывает продолжение, несобранную доберёт обычный план
+            по правилам повторов. Прежде автоматический путь помечал прерванную
+            несобранной, и продолжение её не брало (FR-058).
+            """
+            if succeeded == ingest.INTERRUPTED:
+                self._state.failed.append(day)
+                self._state.outcomes[day] = "partial"
+            else:
+                (self._state.closed if succeeded else self._state.failed).append(day)
+                self._state.outcomes[day] = "collected" if succeeded else "failed"
             self._state.current = None
 
         def source_state(source_id: str, status: str, outcome: object) -> None:

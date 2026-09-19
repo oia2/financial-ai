@@ -198,6 +198,7 @@ async def sync_links(
     *,
     verify_emitter: bool = True,
     alias_events: list[LinkEvent] | None = None,
+    traded_on: dt.date | None = None,
 ) -> list[LinkEvent]:
     """Привести связи в соответствие с составом инструментов на эту сессию.
 
@@ -226,9 +227,15 @@ async def sync_links(
         logger.warning("список серий пуст: состав инструментов не пересматривается")
         return events
 
-    traded = await repository.assets_traded_on(session_date)
+    # Состав доски — из самых свежих СОБРАННЫХ котировок, а не из даты
+    # подтверждения. «Какие бумаги торгуются» и «с какого дня связь
+    # подтверждена» — разные вопросы: догон исторического окна спрашивает
+    # источник сегодня, а котировок за сегодня у него может ещё не быть
+    # (FR-049).
+    board = traded_on or session_date
+    traded = await repository.assets_traded_on(board)
     active = await repository.active_links_on(session_date)
-    aliases = await repository.aliases_on(session_date)
+    aliases = await repository.aliases_on(board)
 
     emitters: dict[str, str | None] = {}
 

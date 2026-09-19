@@ -423,3 +423,12 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T128 Считать дату следующего сбора тем же правилом, каким сбор выбирает сессию, в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
 - [X] T129 Объявлять сессию собранной только при доработанном плане источников в backend/src/financial_ai/market_data/{ingest.py,runner.py} per FR-058 (contradicts)
 - [X] T130 Покрыть испытаниями каждый из сквозных случаев в backend/tests/
+
+## Phase 29: Догон многодневного окна и остановка в автосборе
+
+- [X] T131 Датировать действие имени началом окна прогона в backend/src/financial_ai/market_data/ingest.py per FR-048 (contradicts)
+- [X] T132 Датировать сверку связей днём обращения, а состав доски брать из свежих котировок, в backend/src/financial_ai/market_data/{ingest.py,links.py,repository.py} per FR-049 (contradicts)
+- [X] T133 Различать прерванную сессию в автоматическом сборе в backend/src/financial_ai/market_data/{scheduler.py,advance.py,ingest.py} per FR-058 (contradicts)
+- [X] T134 Записывать неспрошенный источник в журнал прогонов в backend/src/financial_ai/market_data/ingest.py per FR-050 (contradicts)
+- [X] T135 Не называть дату следующего сбора, когда брать нечего, в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
+- [X] T136 Покрыть испытаниями каждый из пяти случаев в backend/tests/

@@ -289,7 +289,7 @@ async def advance(
     *,
     on_plan: Callable[[list[dt.date]], None] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
-    on_session_done: Callable[[dt.date, bool], None] | None = None,
+    on_session_done: Callable[[dt.date, bool | str], None] | None = None,
     on_source: Callable[[str, str, object], None] | None = None,
     on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
@@ -432,7 +432,11 @@ async def advance(
             logger.warning("сессия %s не собрана полностью: %s", day, result.unfinished_sources)
 
         if on_session_done is not None:
-            on_session_done(day, result.succeeded)
+            # Прерванная сессия — третий исход, а не разновидность несобранной:
+            # её план не доработан по команде, и доделать его обязано
+            # продолжение. Автоматический путь помечал её несобранной, и
+            # продолжение её не брало: ручной чинили, этот — нет (FR-058).
+            on_session_done(day, ingest.INTERRUPTED if result.interrupted else result.succeeded)
 
     unfinished = [day for day in pending if day not in collected] + skipped_history
     return AdvanceResult(

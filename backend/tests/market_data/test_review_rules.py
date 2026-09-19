@@ -743,3 +743,225 @@ async def test_журнал_по_прежнему_считает_собранн�
 
     assert [run.collected for run in runs] == [1]
     assert [run.status for run in runs] == [journal.STATUS_FINISHED]
+
+
+# --- FR-048: имя действует на всё окно прогона -------------------------------
+
+
+class RenamingIss(CountingIss):
+    """Биржа, у которой бумага уже переименована: ISIN тот же, тикер новый."""
+
+    def __init__(self, sessions: list[dt.date], ticker: str, isin: str) -> None:
+        super().__init__(sessions)
+        self.ticker = ticker
+        self.isin = isin
+
+    async def fetch_session_rows(
+        self, session_date: str, columns: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        if "OPEN" not in columns:
+            return []
+        self.quote_calls.append(session_date)
+        return [_quote(self.ticker, dt.date.fromisoformat(session_date))]
+
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        return {self.ticker: self.isin}
+
+
+@pytest.mark.db
+async def test_переименование_не_рвёт_ряд_внутри_одного_прогона(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Сквозной случай ревью: догон двух дней после переименования.
+
+    Опознание, датированное последним днём окна, рвало ряд внутри ОДНОГО
+    прогона: котировки за первый день ложились в одну сущность, за второй — в
+    другую. Имя — не связь: два имени одной сущности не могут значить разные
+    бумаги в разные дни одного окна (FR-048).
+    """
+    from financial_ai.market_data import groups
+
+    isin = "RU000MULT001"
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([EARLIER, SESSION])
+    await repository.upsert_asset("EQ_AST_MULTOLD", "MULTOLD", EARLIER)
+    await repository.update_isins({"EQ_AST_MULTOLD": isin})
+    await db_session.commit()
+
+    await ingest.catch_up(
+        db_session,
+        settings,
+        SESSION,
+        sessions=[EARLIER, SESSION],
+        client=RenamingIss([EARLIER, SESSION], "MULTNEW", isin),
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        source_ids=groups.source_ids_for((groups.BY_ID[groups.GroupId.QUOTES],)),
+    )
+    await db_session.commit()
+
+    bars = await repository.daily_bars_for_window([EARLIER, SESSION])
+    assert len(bars) == 2
+    assert {bar.asset_id for bar in bars} == {"EQ_AST_MULTOLD"}
+
+
+# --- FR-049: связь датируется днём обращения ---------------------------------
+
+
+class NewContractIss(CountingIss):
+    """Биржа, у которой у бумаги появилось семейство контрактов."""
+
+    async def fetch_futures_series(self) -> list[dict[str, object]]:
+        return [{"underlying_asset": "SBER", "asset_code": "SBRF", "secid": "SBRF-12.26"}]
+
+    async def fetch_futures_open_interest(self) -> dict[str, int]:
+        return {"SBRF": 1000}
+
+    async def fetch_emitter_id(self, secid: str) -> str | None:
+        return "1"
+
+
+@pytest.mark.db
+async def test_связь_датируется_днём_обращения_а_не_концом_окна(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Сквозной случай ревью: догон исторического окна, контракт появился сегодня.
+
+    Перевёрнутого интервала не возникало — дата окна позже прежней связи, — а
+    история всё равно искажалась: сегодняшний контракт объявлялся действующим
+    с последнего дня окна. Окно говорит о том, что собирают; источник говорит
+    о сегодня (FR-049).
+    """
+    repository = MarketDataRepository(db_session)
+    window = [EARLIER, SESSION]
+    today = SESSION + dt.timedelta(days=21)
+    await repository.add_trading_sessions([*window, today])
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
+    await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSION)
+    await repository.upsert_daily_bars(
+        [
+            DailyBar(
+                asset_id="EQ_AST_SBER",
+                price_series_id="EQ_PRS_SBER",
+                session_date=day,
+                open=Decimal("1"),
+                high=None,
+                low=None,
+                close=Decimal("1"),
+                volume=None,
+            )
+            for day in (*window, today)
+        ]
+    )
+    await db_session.commit()
+
+    await ingest.catch_up(
+        db_session,
+        settings,
+        SESSION,
+        sessions=window,
+        client=NewContractIss(window),
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+    await db_session.commit()
+
+    history = await repository.link_history("EQ_AST_SBER")
+    assert [link.valid_from for link in history] == [today]
+    # И окну связь не приписана: источник о нём ничего не говорил.
+    assert await repository.active_links_on(SESSION) == {}
+
+
+# --- FR-050: неспрошенный источник попадает в журнал -------------------------
+
+
+@pytest.mark.db
+async def test_неспрошенный_источник_остаётся_в_журнале(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Состояние исчезает вместе с процессом, журнал — нет.
+
+    Пока исход «не спрошен» жил только в памяти, остановленный прогон и в
+    журнале выглядел завершённым (FR-050).
+    """
+    from financial_ai.market_data import journal
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await db_session.commit()
+
+    calls = {"n": 0}
+
+    def should_stop() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    result = await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=CountingIss([SESSION]),
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        should_stop=should_stop,
+    )
+    await db_session.commit()
+
+    assert result.interrupted
+    runs = await _runs_of(db_session, result.run_id)
+    assert any(row.status == ingest.STATUS_STOPPED for row in runs)
+
+    summaries = await journal.recent_runs(db_session)
+    assert [run.collected for run in summaries] == [0]
+
+
+# --- FR-054: недоступная дата не называется ----------------------------------
+
+
+@pytest.mark.db
+async def test_дата_следующего_сбора_не_выдумывается(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Сквозной случай ревью: все сессии исчерпали попытки.
+
+    Реальный план пуст, а сводка подставляла последнюю календарную сессию —
+    то есть обещала сбор, которого не будет (FR-054).
+    """
+    from financial_ai.market_data import coverage
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
+    await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", SESSION)
+    await repository.upsert_daily_bars(
+        [
+            DailyBar(
+                asset_id="EQ_AST_SBER",
+                price_series_id="EQ_PRS_SBER",
+                session_date=SESSION,
+                open=Decimal("1"),
+                high=None,
+                low=None,
+                close=Decimal("1"),
+                volume=None,
+            )
+        ]
+    )
+
+    # Попытки исчерпаны: сбор такую сессию не возьмёт.
+    moment = dt.datetime.now(dt.UTC)
+    for attempt in range(settings.market_data_session_max_attempts + 1):
+        await repository.record_run(
+            run_id=f"spent-{attempt}",
+            source_id="equity_agg",
+            status="failed",
+            started_at=moment - dt.timedelta(hours=attempt + 1),
+            finished_at=moment - dt.timedelta(hours=attempt + 1),
+            session_date=SESSION,
+            failure_reason="биржа не ответила",
+        )
+    await db_session.commit()
+
+    report = await coverage.build_report(db_session, settings, SESSION)
+
+    assert report["next_session"] is None

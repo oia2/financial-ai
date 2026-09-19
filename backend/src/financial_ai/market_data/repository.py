@@ -157,6 +157,19 @@ class MarketDataRepository:
             select(EquityDailyBar.session_date).order_by(EquityDailyBar.session_date).limit(1)
         )
 
+    async def latest_observed_session(self) -> dt.date | None:
+        """Самая поздняя сессия, за которую ЕСТЬ котировки.
+
+        По ней берётся состав доски для сверки связей: «какие бумаги
+        торгуются» и «с какого дня связь подтверждена» — разные вопросы, и
+        ответ на первый не обязан датировать второй (FR-049).
+        """
+        return await self._session.scalar(
+            select(EquityDailyBar.session_date)
+            .order_by(EquityDailyBar.session_date.desc())
+            .limit(1)
+        )
+
     async def next_trading_session(self, after: dt.date) -> dt.date | None:
         """Следующая торговая сессия — та, в которую исполнится сделка."""
         return await self._session.scalar(

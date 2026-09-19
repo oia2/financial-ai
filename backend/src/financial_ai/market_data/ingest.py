@@ -76,6 +76,15 @@ class IngestResult:
     outcomes: list[SourceOutcome] = field(default_factory=list)
 
     @property
+    def interrupted(self) -> bool:
+        """План сессии не доработан по команде остановки.
+
+        Отдельно от «не собрана»: прерванную сессию доделывает продолжение, а
+        несобранную доберёт обычный план по правилам повторов (FR-058).
+        """
+        return any(outcome.status == STATUS_STOPPED for outcome in self.outcomes)
+
+    @property
     def succeeded(self) -> bool:
         # Прерванный источник считается незакрытым наравне с упавшим: сессия,
         # в которой спросили три бумаги из ста двадцати, собранной не является
@@ -259,7 +268,10 @@ async def ingest_session(
                 # План сессии не доработан, и молчать об этом нельзя: без
                 # отметки сессия с собранными котировками и неспрошенными
                 # агрегатами объявлялась собранной (FR-058).
-                result.outcomes.append(_not_asked(source_id))
+                outcome = _not_asked(source_id)
+                result.outcomes.append(outcome)
+                await _record(repository, run_id, outcome, session_date)
+                await session.commit()
                 return result
 
             outcome = await run_source(
@@ -270,7 +282,10 @@ async def ingest_session(
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван по команде", session_date)
-            result.outcomes.append(_not_asked(reference.SECTORS_SOURCE_ID))
+            outcome = _not_asked(reference.SECTORS_SOURCE_ID)
+            result.outcomes.append(outcome)
+            await _record(repository, run_id, outcome, session_date)
+            await session.commit()
             return result
 
         # Справочники текущего состояния — по суточному гейту, а не на каждую
@@ -298,7 +313,10 @@ async def ingest_session(
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван по команде", session_date)
-            result.outcomes.append(_not_asked(positions.SOURCE_ID))
+            outcome = _not_asked(positions.SOURCE_ID)
+            result.outcomes.append(outcome)
+            await _record(repository, run_id, outcome, session_date)
+            await session.commit()
             return result
 
         # Связи инструментов — перед позициями: иначе появление нового фьючерса
@@ -429,6 +447,7 @@ async def catch_up(
     run_id = str(uuid.uuid4())
 
     repository = MarketDataRepository(session)
+    calendar = TradingCalendar(repository)
     owns_client = client is None
     iss = client or IssClient(build_iss_config(settings))
     if owns_client:
@@ -465,25 +484,32 @@ async def catch_up(
         # когда выбраны позиции: ручной сбор одних котировок заводил
         # переименованной бумаге вторую сущность, не спросив ISIN ни разу
         # (FR-048).
-        alias_events = await _sync_aliases(repository, iss, result.requested[-1])
+        #
+        # Датируется НАЧАЛОМ окна: действие имени обязано покрывать каждую
+        # сессию, наблюдения за которую прогон собирается записать. Имя — не
+        # связь: связь со временем меняется по существу, а имя лишь указывает
+        # на сущность, и два имени одной сущности не могут значить разные
+        # бумаги в разные дни одного окна. Датированное концом окна, опознание
+        # рвало ряд внутри ОДНОГО прогона (FR-048).
+        alias_events = await _sync_aliases(repository, iss, result.requested[0])
 
         # Связи — тоже раз на прогон, и по той же причине, что диапазонные
-        # источники: ответ один на всё окно. Но только если источнику есть что
-        # сказать про это окно: список серий описывает СЕГОДНЯШНИЙ состав
-        # рынка, и догон, кончающийся раньше уже подтверждённых связей, их не
-        # пересматривает — иначе смена семейства закрывала бы прежний интервал
-        # раньше его собственного начала (FR-049).
+        # источники: ответ один на всё окно. Но датируются ДНЁМ ОБРАЩЕНИЯ, а не
+        # датой из окна: окно говорит о том, что собирают, а источник — о
+        # сегодня. Догон до 10 сентября принимал сегодняшний контракт как
+        # действующий с 10-го, хотя прежняя связь шла с 1-го (FR-049).
         if source_ids is None or positions.SOURCE_ID in source_ids:
+            asked_on = await calendar.latest_session(moscow_today()) or result.requested[-1]
             confirmed = await repository.latest_link_start()
-            if confirmed is not None and result.requested[-1] < confirmed:
-                logger.info(
-                    "догон до %s: связи не пересматриваются, они подтверждены по %s",
-                    result.requested[-1],
-                    confirmed,
-                )
+            if confirmed is not None and asked_on < confirmed:
+                logger.info("догон: связи не пересматриваются, они подтверждены по %s", confirmed)
             else:
                 await sync_instrument_links(
-                    repository, iss, result.requested[-1], alias_events=alias_events
+                    repository,
+                    iss,
+                    asked_on,
+                    alias_events=alias_events,
+                    traded_on=await repository.latest_observed_session(),
                 )
 
         await session.commit()
@@ -606,7 +632,13 @@ async def _catch_up_session(
             # План сессии не доработан. Без этой отметки сессия с собранными
             # котировками и неспрошенными агрегатами объявлялась собранной, и
             # продолжение её больше не брало (FR-058).
-            outcomes.append(_not_asked(source_id))
+            #
+            # Отметка идёт и в ЖУРНАЛ: состояние исчезает вместе с процессом, а
+            # журнал — нет, и пока исход «не спрошен» жил только в памяти,
+            # остановленный прогон и в журнале выглядел завершённым (FR-050).
+            outcome = _not_asked(source_id)
+            outcomes.append(outcome)
+            await _record(repository, run_id, outcome, session_date, trigger=TRIGGER_CATCHUP)
             break
 
         # Выбор групп пришёл от человека: к невыбранным источникам не ходим.
@@ -910,6 +942,7 @@ async def _record(
     run_id: str,
     outcome: SourceOutcome,
     session_date: dt.date | None,
+    trigger: str = TRIGGER_DAILY,
 ) -> None:
     now = dt.datetime.now(dt.UTC)
     await repository.record_run(
@@ -921,6 +954,7 @@ async def _record(
         session_date=session_date,
         rows_written=outcome.rows_written,
         failure_reason=outcome.failure_reason,
+        trigger=trigger,
     )
 
 
@@ -1006,6 +1040,7 @@ async def sync_instrument_links(
     iss: IssClient,
     session_date: dt.date,
     alias_events: list[links.LinkEvent] | None = None,
+    traded_on: dt.date | None = None,
 ) -> list[links.LinkEvent]:
     """Привести связи инструментов в соответствие с составом — раз на прогон.
 
@@ -1015,7 +1050,9 @@ async def sync_instrument_links(
     смене семейства прежний интервал закрывался бы датой раньше собственного
     начала (FR-049, FR-034).
     """
-    events = await links.sync_links(repository, iss, session_date, alias_events=alias_events)
+    events = await links.sync_links(
+        repository, iss, session_date, alias_events=alias_events, traded_on=traded_on
+    )
     for event in events:
         logger.info("состав инструментов: %s", event.describe())
     return events

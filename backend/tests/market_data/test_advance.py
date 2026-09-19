@@ -513,3 +513,73 @@ async def test_календарь_объявляется_и_когда_его_н
     )
 
     assert ("trading_calendar", advance.ingest.STATUS_SKIPPED) in seen
+
+
+async def test_прерванная_сессия_отличается_от_несобранной(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Сквозной случай ревью: автоматический путь чинили не до конца (FR-058).
+
+    Прерванную сессию доделывает продолжение, несобранную доберёт обычный план
+    по правилам повторов. Планировщик помечал прерванную несобранной, и
+    продолжение её не брало.
+    """
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    async def cut_short(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        result = advance.ingest.IngestResult(run_id="r", session_date=day)
+        result.outcomes.append(advance.ingest.SourceOutcome("equity_d1", advance.ingest.STATUS_OK))
+        result.outcomes.append(
+            advance.ingest.SourceOutcome("equity_agg", advance.ingest.STATUS_STOPPED)
+        )
+        return result
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", cut_short)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    seen: list[object] = []
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(
+        db_session,
+        unlimited,
+        FRIDAY_EVENING,
+        on_session_done=lambda day, outcome: seen.append(outcome),
+        should_stop=lambda: len(seen) >= 1,
+    )
+
+    assert seen == [advance.ingest.INTERRUPTED]
+
+
+async def test_несобранная_сессия_прерванной_не_объявляется(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Обратная форма: упавший источник — не остановка, и правила повторов у них разные."""
+    await _seed(db_session, collected=SESSIONS[:1])
+
+    async def broken(session: object, cfg: object, day: dt.date, **kwargs: object) -> object:
+        result = advance.ingest.IngestResult(run_id="r", session_date=day)
+        result.outcomes.append(
+            advance.ingest.SourceOutcome("equity_d1", advance.ingest.STATUS_FAILED)
+        )
+        return result
+
+    monkeypatch.setattr(advance.ingest, "ingest_session", broken)
+    monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
+    monkeypatch.setattr(advance, "IssClient", _FakeClient, raising=False)
+
+    seen: list[object] = []
+    unlimited = settings.model_copy(
+        update={"market_data_startup_recovery_max_sessions": len(SESSIONS)}
+    )
+    await advance.advance(
+        db_session,
+        unlimited,
+        FRIDAY_EVENING,
+        on_session_done=lambda day, outcome: seen.append(outcome),
+        should_stop=lambda: len(seen) >= 1,
+    )
+
+    assert seen == [False]
