@@ -98,6 +98,13 @@ async def backfill_equity(
     progress = BackfillProgress(completed=completed, total=len(tickers))
     started = dt.datetime.now(dt.UTC)
 
+    # ОДИН идентификатор на всю загрузку, а не на каждую бумагу. Журнал
+    # группирует исходы по прогону: пятьсот шесть бумаг давали пятьсот шесть
+    # прогонов по одному источнику, и список последних прогонов вмещал пять
+    # бумаг вместо одной загрузки (FR-052).
+    run_id = str(uuid.uuid4())
+    written_total = 0
+
     for position, ticker in enumerate(tickers, start=1):
         if ticker in completed:
             continue
@@ -113,11 +120,12 @@ async def backfill_equity(
             continue
 
         written = await _store_history(repository, ticker, rows)
+        written_total += written
         # Первичная загрузка записывает свой исход наравне с остальным сбором.
         # Не ради отчётности: по этой таблице отвечают на вопрос «собиралось ли
         # что-нибудь после такого-то момента», и молчаливая запись мимо неё
         # означала бы «ничего не собирали» при переписанной истории.
-        await _record_backfill(repository, ticker, written, started)
+        await _record_backfill(repository, run_id, written_total, started)
         await session.commit()
 
         completed.add(ticker)
@@ -133,11 +141,17 @@ async def backfill_equity(
 
 
 async def _record_backfill(
-    repository: MarketDataRepository, ticker: str, written: int, started: dt.datetime
+    repository: MarketDataRepository, run_id: str, written: int, started: dt.datetime
 ) -> None:
-    """Записать исход первичной загрузки одной бумаги."""
+    """Обновить исход первичной загрузки.
+
+    Исход один на всю загрузку, и с каждой бумагой он дополняется: число
+    наблюдений растёт, отметка завершения сдвигается. Бумага — не прогон, и
+    заводить идентификатор на каждую значило бы показывать в журнале бумаги
+    вместо загрузок (FR-052).
+    """
     await repository.record_run(
-        run_id=str(uuid.uuid4()),
+        run_id=run_id,
         source_id=equity_d1.SOURCE_ID,
         status="ok",
         started_at=started,
@@ -161,14 +175,19 @@ async def _store_history(
     if not by_date:
         return 0
 
-    asset_id = equity_d1.asset_id_for(ticker)
-    series_id = equity_d1.price_series_id_for(ticker)
     last_date = max(by_date)
-    await repository.upsert_asset(asset_id, ticker, last_date)
+    # Ключ — СУЩНОСТЬ, а не имя: переименованная бумага иначе заводит вторую,
+    # и история, ради которой загрузка и делается, начинается с нуля (FR-048).
+    aliases = await repository.aliases_on(last_date)
+    asset_id = aliases.get(ticker, equity_d1.asset_id_for(ticker))
+    series_id = asset_id.replace(equity_d1.ASSET_PREFIX, equity_d1.SERIES_PREFIX, 1)
+    await repository.upsert_asset(
+        asset_id, asset_id.removeprefix(equity_d1.ASSET_PREFIX), last_date
+    )
     await repository.upsert_price_series(series_id, asset_id, last_date)
 
     bars = []
     for day, row in sorted(by_date.items()):
-        bars.extend(equity_d1.rows_to_bars([{**row, "SECID": ticker}], day))
+        bars.extend(equity_d1.rows_to_bars([{**row, "SECID": ticker}], day, aliases))
 
     return await repository.upsert_daily_bars(bars)

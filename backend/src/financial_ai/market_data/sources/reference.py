@@ -29,7 +29,7 @@ from decimal import Decimal
 
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
-from financial_ai.market_data.sources.equity_d1 import asset_id_for, to_decimal
+from financial_ai.market_data.sources.equity_d1 import ASSET_PREFIX, asset_id_for, to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
 
 logger = logging.getLogger(__name__)
@@ -101,8 +101,12 @@ async def sync_sectors(
             "отраслевые индексы не принесли ни одной бумаги: раздел аналитики изменился"
         )
 
+    # Ключ — СУЩНОСТЬ, а не имя. У переименованной бумаги отрасль уходила на
+    # сущность, которой нет, а настоящая оставалась без неё: справочник пишет
+    # строку по любому ключу и молчит (FR-048).
+    aliases = await repository.aliases_on(session_date)
     sectors: dict[str, str | None] = {
-        asset_id_for(ticker): titles.get(index_id) or index_id
+        aliases.get(ticker, asset_id_for(ticker)): titles.get(index_id) or index_id
         for ticker, (_, _, index_id) in best.items()
     }
 
@@ -124,7 +128,12 @@ async def sync_index_constituents(
 ) -> int:
     """Собрать дневной состав индекса и веса бумаг."""
     rows = await client.fetch_index_analytics(index_id, session_date.isoformat())
-    weights = rows_to_weights(rows, session_date, index_id)
+    # Имя ряда несёт имя бумаги, а бумагу переименовывают: без канонического
+    # имени переименование начинает второй ряд весов, а прежний обрывается
+    # (FR-048).
+    aliases = await repository.aliases_on(session_date)
+    names = {ticker: asset_id.removeprefix(ASSET_PREFIX) for ticker, asset_id in aliases.items()}
+    weights = rows_to_weights(rows, session_date, index_id, names)
 
     if rows and not weights:
         raise ReferenceEmptyError(
@@ -146,7 +155,10 @@ async def sync_index_constituents(
 
 
 def rows_to_weights(
-    rows: list[dict[str, object]], session_date: dt.date, index_id: str
+    rows: list[dict[str, object]],
+    session_date: dt.date,
+    index_id: str,
+    names: dict[str, str] | None = None,
 ) -> dict[str, dict[dt.date, Decimal | None]]:
     """Веса бумаг в индексе как отдельные ряды.
 
@@ -158,6 +170,7 @@ def rows_to_weights(
     наблюдением и не дали бы догону собрать сессию заново — именно это и
     произошло с 62 584 строками прежнего источника.
     """
+    canonical = names or {}
     out: dict[str, dict[dt.date, Decimal | None]] = {}
     for ticker, weight, trade_date in _weights_from_analytics(rows):
         if weight is None:
@@ -168,7 +181,10 @@ def rows_to_weights(
         day = parse_date(trade_date) or session_date
         if day != session_date:
             continue
-        series_id = f"{INDEX_WEIGHT_PREFIX}{index_id}_{ticker}"
+        # Имя ряда составляется из КАНОНИЧЕСКОГО имени бумаги: иначе
+        # переименование начинает второй ряд весов, а прежний обрывается
+        # (FR-048).
+        series_id = f"{INDEX_WEIGHT_PREFIX}{index_id}_{canonical.get(ticker, ticker)}"
         out.setdefault(series_id, {})[day] = weight
     return out
 

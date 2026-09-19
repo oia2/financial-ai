@@ -446,3 +446,12 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T142 Различить ожидание повтора и исчерпание попыток в backend/src/financial_ai/market_data/{advance.py,coverage.py} per FR-054 (contradicts)
 - [X] T143 Возвращать прерванному прогону исход «прерван» после отметки перезапуска в backend/src/financial_ai/market_data/journal.py per FR-041 (contradicts)
 - [X] T144 Покрыть испытаниями все три случая в backend/tests/
+
+## Phase 32: Справочники и первичная загрузка против переименования
+
+- [X] T145 Ключевать отраслевую принадлежность сущностью, а не именем, в backend/src/financial_ai/market_data/sources/reference.py per FR-048 (contradicts)
+- [X] T146 Ключевать размеры лотов и якорь ISIN сущностью в backend/src/financial_ai/market_data/sources/securities.py per FR-048 (contradicts)
+- [X] T147 Составлять имя ряда весов индекса из канонического имени бумаги в backend/src/financial_ai/market_data/sources/reference.py per FR-048 (contradicts)
+- [X] T148 Держать один идентификатор на всю первичную загрузку в backend/src/financial_ai/market_data/backfill.py per FR-052 (contradicts)
+- [X] T149 Ключевать наблюдения первичной загрузки сущностью в backend/src/financial_ai/market_data/backfill.py per FR-048 (contradicts)
+- [X] T150 Покрыть испытаниями все пять случаев в backend/tests/

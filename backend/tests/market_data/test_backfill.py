@@ -151,3 +151,60 @@ async def test_calendar_is_filled_first(db_session: AsyncSession, settings: Sett
 
     repository = MarketDataRepository(db_session)
     assert await repository.is_trading_session(DAYS[0]) is True
+
+
+# --- один прогон на всю загрузку (FR-052) ------------------------------------
+
+
+async def test_загрузка_это_один_прогон_а_не_прогон_на_бумагу(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Журнал группирует исходы по прогону, и бумага прогоном не является.
+
+    Пятьсот шесть бумаг давали пятьсот шесть прогонов по одному источнику, и
+    список последних прогонов вмещал пять бумаг вместо одной загрузки
+    (FR-052).
+    """
+    from sqlalchemy import func, select
+
+    from financial_ai.market_data.models import IngestRun
+
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"])
+    await db_session.commit()
+
+    runs = await db_session.scalar(
+        select(func.count(func.distinct(IngestRun.run_id))).where(IngestRun.trigger == "backfill")
+    )
+    assert runs == 1
+
+
+async def test_исход_загрузки_копит_число_наблюдений(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Обратная форма: один прогон не должен стоить видимости объёма работы."""
+    from sqlalchemy import select
+
+    from financial_ai.market_data.models import IngestRun
+
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"])
+    await db_session.commit()
+
+    written = await db_session.scalar(
+        select(IngestRun.rows_written).where(IngestRun.trigger == "backfill")
+    )
+    assert written == 6
+
+
+async def test_загрузка_переименованной_бумаги_продолжает_ряд(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Иначе загрузка заводит вторую бумагу, и история начинается с нуля (FR-048)."""
+    repository = MarketDataRepository(db_session)
+    await repository.upsert_asset("EQ_AST_MULTOLD", "MULTOLD", DAYS[-1])
+    await repository.upsert_alias("MULTNEW", "EQ_AST_MULTOLD", DAYS[0])
+    await db_session.commit()
+
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["MULTNEW"])
+
+    bars = await repository.daily_bars_for_window(DAYS)
+    assert {bar.asset_id for bar in bars} == {"EQ_AST_MULTOLD"}

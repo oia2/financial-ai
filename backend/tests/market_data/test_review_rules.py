@@ -1239,3 +1239,112 @@ async def test_обычная_неудача_прерванным_прогоно
     runs = await journal.recent_runs(db_session)
 
     assert [run.status for run in runs] == [journal.STATUS_FAILED]
+
+
+# --- FR-048: справочники ключуются сущностью, а не именем --------------------
+
+
+class ReferenceIss:
+    """Биржа, знающая бумагу под НОВЫМ именем после переименования."""
+
+    def __init__(self, ticker: str) -> None:
+        self.ticker = ticker
+
+    async def fetch_index_titles(self) -> dict[str, str]:
+        return {"MOEXFN": "Финансы"}
+
+    async def fetch_index_analytics(
+        self, index_id: str, session_date: str | None = None
+    ) -> list[dict[str, object]]:
+        # Отрасль — тот индекс, где вес бумаги наибольший: бумага входит
+        # ровно в один, иначе выбор решал бы порядок перечня.
+        if index_id != "MOEXFN":
+            return []
+        return [{"ticker": self.ticker, "weight": "10", "tradedate": SESSION.isoformat()}]
+
+    async def fetch_equity_lot_sizes(self) -> dict[str, int]:
+        return {self.ticker: 100}
+
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        return {self.ticker: "RU000MULT001"}
+
+
+async def _renamed(repository: MarketDataRepository) -> None:
+    """Бумага, переименованная из MULTOLD в MULTNEW: сущность прежняя."""
+    await repository.upsert_asset("EQ_AST_MULTOLD", "MULTOLD", SESSION)
+    await repository.update_lot_sizes({"EQ_AST_MULTOLD": 10})
+    await repository.upsert_alias("MULTNEW", "EQ_AST_MULTOLD", SESSION)
+
+
+@pytest.mark.db
+async def test_отрасль_ложится_на_настоящую_сущность(db_session: AsyncSession) -> None:
+    """Справочник пишет строку по любому ключу и молчит.
+
+    У переименованной бумаги отрасль уходила на сущность, которой нет, а
+    настоящая оставалась без неё (FR-048).
+    """
+    repository = MarketDataRepository(db_session)
+    await _renamed(repository)
+    await db_session.commit()
+
+    await reference.sync_sectors(ReferenceIss("MULTNEW"), repository, SESSION)  # type: ignore[arg-type]
+    await db_session.commit()
+
+    assert await repository.sectors() == {"EQ_AST_MULTOLD": "Финансы"}
+
+
+@pytest.mark.db
+async def test_размер_лота_переименованной_бумаги_обновляется(
+    db_session: AsyncSession,
+) -> None:
+    """Обновление по несуществующему ключу не затрагивает строк и молчит.
+
+    Размер лота переименованной бумаги переставал обновляться вовсе, и
+    заметить это было нечем (FR-048).
+    """
+    from sqlalchemy import select
+
+    from financial_ai.market_data.models import MarketAsset
+
+    repository = MarketDataRepository(db_session)
+    await _renamed(repository)
+    await db_session.commit()
+
+    await securities.sync_lot_sizes(ReferenceIss("MULTNEW"), repository)  # type: ignore[arg-type]
+    await db_session.commit()
+
+    lots = (await db_session.execute(select(MarketAsset.asset_id, MarketAsset.lot_size))).all()
+    assert list(lots) == [("EQ_AST_MULTOLD", 100)]
+
+
+@pytest.mark.db
+async def test_бумага_без_переименования_ключуется_как_прежде(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: разрешение псевдонимов не должно трогать обычную бумагу."""
+    repository = MarketDataRepository(db_session)
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", SESSION)
+    await db_session.commit()
+
+    await reference.sync_sectors(ReferenceIss("SBER"), repository, SESSION)  # type: ignore[arg-type]
+    await db_session.commit()
+
+    assert await repository.sectors() == {"EQ_AST_SBER": "Финансы"}
+
+
+def test_ряд_весов_составляется_из_канонического_имени() -> None:
+    """Иначе переименование начинает второй ряд весов, а прежний обрывается."""
+    rows = [{"ticker": "MULTNEW", "weight": "10", "tradedate": SESSION.isoformat()}]
+
+    series = reference.rows_to_weights(rows, SESSION, "IMOEX", {"MULTNEW": "MULTOLD"})
+
+    assert list(series) == ["IDX_WEIGHT_IMOEX_MULTOLD"]
+
+
+def test_ряд_весов_без_переименования_не_меняется() -> None:
+    """Обратная форма: имя ряда обычной бумаги остаётся прежним."""
+    rows = [{"ticker": "SBER", "weight": "10", "tradedate": SESSION.isoformat()}]
+
+    series = reference.rows_to_weights(rows, SESSION, "IMOEX", {"MULTNEW": "MULTOLD"})
+
+    assert list(series) == ["IDX_WEIGHT_IMOEX_SBER"]

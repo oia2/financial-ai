@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 
+from financial_ai.market_data.calendar import moscow_today
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
@@ -42,7 +43,11 @@ async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) ->
         logger.warning("размеры лотов: биржа вернула пустой перечень")
         return 0
 
-    by_asset = {asset_id_for(ticker): lot for ticker, lot in lots.items()}
+    # Ключ — СУЩНОСТЬ, а не имя. Обновление по несуществующему ключу не
+    # затрагивает ни одной строки и молчит: у переименованной бумаги размер
+    # лота переставал обновляться вовсе, и заметить это было нечем (FR-048).
+    aliases = await repository.aliases_on(moscow_today())
+    by_asset = {aliases.get(ticker, asset_id_for(ticker)): lot for ticker, lot in lots.items()}
     updated = await repository.update_lot_sizes(by_asset)
 
     # Тем же ответом приходит ISIN: якорь сущности, по которому переименование
@@ -50,7 +55,11 @@ async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) ->
     isins = await client.fetch_equity_isins()
     known = await repository.tickers_with_history()
     linked = await repository.update_isins(
-        {asset_id_for(ticker): isin for ticker, isin in isins.items() if ticker in known}
+        {
+            aliases.get(ticker, asset_id_for(ticker)): isin
+            for ticker, isin in isins.items()
+            if ticker in known or ticker in aliases
+        }
     )
 
     logger.info(
