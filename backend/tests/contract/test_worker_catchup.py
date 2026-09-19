@@ -365,15 +365,16 @@ COLLECTED = [SESSIONS[0], SESSIONS[1], SESSIONS[4]]
 MISSING = [SESSIONS[2], SESSIONS[3]]
 
 
-async def test_продолжение_берёт_непройденные_сессии_остановленного_прогона(
+async def test_продолжение_продолжает_прогон_не_обнуляя_счёт(
     db_session: AsyncSession,
     worker_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """«Продолжить» обязано продолжать, а не начинать новый прогон.
+    """Остановка — пауза, а не отмена (FR-058b).
 
-    Прежде продолжение считало пропуски заново по всему окну: счётчик сессий
-    менялся скачком, и остановка переставала отличаться от отмены.
+    Счётчик сессий продолжает свой счёт: было «1 из 2» — после продолжения
+    «1 из 2», а не «0 из 1». Прежде продолжение заводило новое состояние, и
+    всё, что человек видел до остановки, начиналось с нуля.
     """
     import asyncio
 
@@ -398,9 +399,18 @@ async def test_продолжение_берёт_непройденные_сес
 
     body = response.json()
     assert body["resumed"] is True
-    assert body["date_from"] == left[0].isoformat()
-    assert body["date_till"] == left[-1].isoformat()
-    assert body["requested_sessions"] == len(left)
+    # План прогона остался прежним: продолжение считает по нему, а собирает
+    # только непройденное.
+    assert body["requested_sessions"] == len(MISSING)
+    assert body["date_from"] == MISSING[0].isoformat()
+    assert body["date_till"] == MISSING[-1].isoformat()
+
+    # Счёт идёт по ВСЕМУ прогону: собранное до остановки в нём осталось, и
+    # продолжение досчитало остаток, а не начало свой счёт с нуля.
+    sessions = runner.status()["sessions"]
+    assert isinstance(sessions, dict)
+    assert sessions["requested"] == len(MISSING)
+    assert sessions["collected"] == len(MISSING)
 
 
 async def test_обычный_запуск_продолжением_не_становится(
@@ -507,3 +517,38 @@ async def test_собранная_сессия_продолжению_не_до�
     await _wait_idle(runner)
 
     assert list(runner.state.unfinished) == []
+
+
+async def test_лента_источников_не_мигает_при_продолжении(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сессия названа с первой секунды прогона, а не когда до неё дошла очередь.
+
+    До неё прогон синхронизирует календарь и состав инструментов — видимую
+    работу, — а лента источников без названной сессии на экран не выходит
+    вовсе (FR-058c).
+    """
+    import asyncio
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp(delay=0.05))
+
+    started = await worker_client.post("/internal/catchup", json={})
+    assert started.status_code == 200
+    # Сессия названа СРАЗУ, ещё до того как подделка сбора дошла до первой.
+    assert runner.status()["current"] is not None
+
+    await asyncio.sleep(0.02)
+    await worker_client.delete("/internal/catchup")
+    await _wait_idle(runner)
+    assert runner.status()["current"] is not None
+
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp(delay=0.05))
+    await worker_client.post("/internal/catchup", json={"resume": True})
+
+    # И в момент продолжения тоже: лента продолжается, а не появляется заново.
+    assert runner.status()["current"] is not None
+    await _wait_idle(runner)

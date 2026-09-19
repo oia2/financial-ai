@@ -857,6 +857,11 @@ async def _run_delayed_source(
         )
         if outcome.status == STATUS_OK:
             return outcome
+        if outcome.status == STATUS_STOPPED:
+            # Повторы заведены на случай «данные ещё не опубликованы».
+            # Остановка к этому случаю не относится, а умножала ожидание
+            # человека на число попыток (FR-058d).
+            return outcome
         logger.info(
             "задержанный источник %s: попытка %d из %d не дала данных",
             source_id,

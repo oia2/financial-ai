@@ -172,6 +172,12 @@ class MarketDataScheduler:
                 requested=sorted(days),
                 date_from=min(days),
                 date_till=max(days),
+                # Сессия называется СРАЗУ, а не когда до неё дошла очередь: до
+                # неё прогон синхронизирует календарь и состав инструментов —
+                # видимую работу, — а лента источников без названной сессии на
+                # экран не выходит вовсе. `days` приходят в порядке сбора
+                # (FR-058c, FR-045).
+                current=days[0],
                 started_at=dt.datetime.now(dt.UTC),
             )
 

@@ -467,3 +467,11 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T154 Сохранять последнюю сессию прогона, чтобы лента источников не исчезала с экрана, в backend/src/financial_ai/market_data/{runner.py,scheduler.py} per FR-025 (contradicts)
 - [X] T155 Убрать из плана источники, которых прогон не спрашивает, в артефакте Open Design и в backend/src/financial_ai/market_data/{ingest.py,advance.py,runner.py,scheduler.py} per FR-056a (contradicts)
 - [X] T156 Покрыть испытаниями обе правки в backend/tests/
+
+## Phase 35: Остановка как пауза
+
+- [X] T157 Продолжать остановленный прогон в его же состоянии, не обнуляя счётчики, в backend/src/financial_ai/market_data/runner.py и backend/src/financial_ai/worker/routes/catchup.py per FR-058b (contradicts)
+- [X] T158 Называть сессию с момента составления плана, чтобы лента не исчезала, в backend/src/financial_ai/market_data/{runner.py,scheduler.py} per FR-058c (contradicts)
+- [X] T159 Не повторять задержанный источник после остановки в backend/src/financial_ai/market_data/ingest.py per FR-058d (contradicts)
+- [X] T160 Назвать причину сетевого обрыва у источника позиций в backend/src/financial_ai/market_data/sources/positions_client.py per FR-002 (contradicts)
+- [X] T161 Покрыть испытаниями все четыре правки в backend/tests/

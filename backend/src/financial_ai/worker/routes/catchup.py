@@ -57,8 +57,8 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
     )
 
 
-def _unfinished(request: Request) -> list[dt.date]:
-    """Непройденные сессии последнего ОСТАНОВЛЕННОГО прогона — чьим бы он ни был.
+def _stopped_run(request: Request) -> Any | None:
+    """Последний ОСТАНОВЛЕННЫЙ прогон — чьим бы он ни был.
 
     Остановить можно и ручной прогон, и автоматический, а человек продолжает
     то, что видел на экране, а не тот из двух механизмов, о котором он знать не
@@ -74,12 +74,11 @@ def _unfinished(request: Request) -> list[dt.date]:
         if state is not None and state.status is CatchupStatus.STOPPED and state.started_at
     ]
     if not stopped:
-        return []
+        return None
 
     # Последний по времени начала: их не бывает двух идущих, но остановленных
     # в памяти может лежать два — ручной и автоматический.
-    latest = max(stopped, key=lambda state: state.started_at)
-    return latest.unfinished
+    return max(stopped, key=lambda state: state.started_at)
 
 
 @router.post("/catchup")
@@ -90,24 +89,20 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
     if payload.date_from and payload.date_till and payload.date_from > payload.date_till:
         return _error(422, "invalid_range", "date_from позже date_till")
 
-    date_from, date_till = payload.date_from, payload.date_till
-    resumed = False
-
-    if payload.resume:
-        # Продолжение берёт диапазон НЕПРОЙДЕННЫХ сессий остановленного
-        # прогона. Считать пропуски заново по всему окну значило бы начинать
-        # новый прогон под именем продолжения: счётчик сессий менялся скачком,
-        # и остановка переставала отличаться от отмены (FR-058).
-        #
-        # Сами сессии при этом пересчитываются как обычно: собранное между
-        # остановкой и продолжением в план возвращаться не должно.
-        pending = _unfinished(request)
-        if pending:
-            date_from, date_till = min(pending), max(pending)
-            resumed = True
+    # Продолжение продолжает ОСТАНОВЛЕННЫЙ прогон в его же состоянии:
+    # остановка — пауза, а не отмена. Счётчик сессий продолжает свой счёт,
+    # пройденные остаются пройденными, лента источников не мигает (FR-058b).
+    stopped = _stopped_run(request) if payload.resume else None
 
     try:
-        state = await runner.start(payload.groups, date_from, date_till)
+        if stopped is not None and stopped.unfinished:
+            state = await runner.resume(stopped)
+            resumed = True
+        else:
+            # Продолжать нечего: сборщик между остановкой и продолжением
+            # перезапускался. Запускается обычный догон, и об этом говорится.
+            state = await runner.start(payload.groups, payload.date_from, payload.date_till)
+            resumed = False
     except CatchupAlreadyRunningError as error:
         return _error(409, "catchup_already_running", str(error))
     except UnknownGroupError as error:

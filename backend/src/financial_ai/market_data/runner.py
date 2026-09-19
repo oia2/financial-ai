@@ -376,10 +376,61 @@ class CatchupRunner:
             date_till=planned[0][-1],
             clamped=planned[1],
             requested=list(planned[0]),
+            # Сессия называется СРАЗУ, а не когда до неё дошла очередь: до неё
+            # прогон синхронизирует календарь и состав инструментов — видимую
+            # работу, — а лента источников без названной сессии на экран не
+            # выходит вовсе (FR-058c).
+            current=planned[0][0],
             started_at=dt.datetime.now(dt.UTC),
         )
 
         self._task = asyncio.create_task(self._run(selected), name="market-data-catchup")
+        return self._state.snapshot()
+
+    async def resume(self, stopped: CatchupState) -> dict[str, object]:
+        """Продолжить остановленный прогон В ЕГО ЖЕ состоянии.
+
+        Остановка — пауза, а не отмена: счётчик сессий продолжает свой счёт,
+        пройденные остаются пройденными, журнал событий не обнуляется, лента
+        источников не мигает. Прежде продолжение заводило новое состояние, и
+        всё, что человек видел до остановки, начиналось с нуля (FR-058b).
+
+        Состояние КОПИРУЕТСЯ, а не перенимается: остановить можно и
+        автоматический прогон, а его состоянием владеет планировщик, и писать
+        в него вдвоём нельзя.
+        """
+        if self.is_active:
+            raise CatchupAlreadyRunningError("догон уже выполняется")
+
+        pending = stopped.unfinished
+        if not pending:
+            raise NothingToCatchUpError("непройденных сессий в прогоне нет")
+
+        selected = groups.resolve(stopped.group_ids or None)
+
+        self._stop_requested = False
+        self._state = CatchupState(
+            status=CatchupStatus.RUNNING,
+            mode=plan_module.MODE_MANUAL,
+            group_ids=list(stopped.group_ids),
+            date_from=stopped.date_from,
+            date_till=stopped.date_till,
+            requested=list(stopped.requested),
+            closed=list(stopped.closed),
+            failed=list(stopped.failed),
+            outcomes=dict(stopped.outcomes),
+            skips=list(stopped.skips),
+            sources=dict(stopped.sources),
+            omitted=set(stopped.omitted),
+            log=list(stopped.log),
+            current=stopped.current or pending[0],
+            started_at=stopped.started_at or dt.datetime.now(dt.UTC),
+        )
+        self._state.note_event(f"Прогон продолжен · осталось сессий {len(pending)}")
+
+        self._task = asyncio.create_task(
+            self._run(selected, sessions=pending), name="market-data-catchup"
+        )
         return self._state.snapshot()
 
     def stop(self) -> dict[str, object]:
@@ -446,16 +497,25 @@ class CatchupRunner:
         )
         return sessions, clamped
 
-    async def _run(self, selected: tuple[groups.SourceGroup, ...]) -> None:
-        """Тело фоновой задачи."""
+    async def _run(
+        self,
+        selected: tuple[groups.SourceGroup, ...],
+        sessions: list[dt.date] | None = None,
+    ) -> None:
+        """Тело фоновой задачи.
+
+        ``sessions`` задаётся продолжением: собирать надо непройденное, а
+        счётчик прогона продолжает считать по всему его плану (FR-058b).
+        """
+        plan_sessions = sessions if sessions is not None else self._state.requested
         factory = get_session_factory()
         try:
             async with factory() as session:
                 result = await ingest.catch_up(
                     session,
                     self._settings,
-                    self._state.requested[-1],
-                    sessions=self._state.requested,
+                    plan_sessions[-1],
+                    sessions=plan_sessions,
                     source_ids=groups.source_ids_for(selected),
                     on_session_start=self._on_session_start,
                     on_session_done=self._on_session_done,
@@ -470,8 +530,9 @@ class CatchupRunner:
             logger.exception("догон завершился ошибкой")
             return
 
-        self._state.closed = list(result.closed)
-        self._state.failed = list(result.failed)
+        # Списки собранного и несобранного ведёт `_on_session_done` по ходу
+        # прогона. Переписывать их итогом нельзя: у продолжения в итоге только
+        # его собственные сессии, а счёт идёт по всему прогону (FR-058b).
         # Последняя сессия ОСТАЁТСЯ названной. Прежде она обнулялась, и вместе
         # с ней с экрана пропадала вся лента источников: человек, остановивший
         # прогон, переставал видеть, на чём тот стоял, — при том что артефакт

@@ -350,7 +350,10 @@ class PositionsClient:
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
             except httpx.HTTPError as error:
-                last_error = f"сетевая ошибка: {error}"
+                # У обрыва соединения текст пустой: без имени класса в
+                # сообщении остаётся «сетевая ошибка: » — причина, по которой
+                # нечего искать. То же правило, что у клиента ЦБ (FR-002).
+                last_error = f"сетевая ошибка: {error or type(error).__name__}"
             else:
                 if response.status_code == httpx.codes.OK:
                     return response.content.decode("utf-8", errors="ignore")
