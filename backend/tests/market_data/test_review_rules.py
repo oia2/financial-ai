@@ -1717,3 +1717,54 @@ async def test_закрытый_источник_объявляется_собр
     assert ("equity_d1", ingest.STATUS_OK) in seen
     # И ни одного обращения к нему: он закрыт за эту сессию.
     assert iss.quote_calls == [SESSION.isoformat()]
+
+
+# --- FR-032: счёт группы и счёт её источника — одно число --------------------
+
+
+@pytest.mark.db
+async def test_счёт_группы_и_её_источника_совпадают(db_session: AsyncSession) -> None:
+    """Два числа об одном и том же расходятся всегда.
+
+    Группа считала по наблюдениям и журналу, а строка источника под ней —
+    только по журналу: сводка показывала 71 сессию у группы и 70 у её
+    единственного источника (FR-032).
+    """
+    from financial_ai.market_data import completeness, coverage, groups
+
+    repository = MarketDataRepository(db_session)
+    window = [EARLIER, SESSION]
+    await repository.add_trading_sessions(window)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+
+    # Одна сессия закрыта наблюдением, другая — успешным прогоном без данных.
+    await repository.upsert_positions(
+        [
+            PositionRow(
+                asset_id="EQ_AST_SBER",
+                session_date=EARLIER,
+                contract_code="SBRF",
+                fiz_long=Decimal("1"),
+                fiz_short=None,
+                jur_long=None,
+                jur_short=None,
+            )
+        ]
+    )
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="пустой-но-успешный",
+        source_id=positions.SOURCE_ID,
+        status="ok",
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+    )
+    await db_session.commit()
+
+    group = groups.BY_ID[groups.GroupId.POSITIONS]
+    by_group = len(window) - len(await completeness.missing_sessions(repository, group, window))
+    rows = await coverage._source_outcomes(repository, group, window)
+
+    assert by_group == 2
+    assert [row["sessions_covered"] for row in rows] == [by_group]

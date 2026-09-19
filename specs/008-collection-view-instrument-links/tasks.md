@@ -520,3 +520,11 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T181 Объявлять суточный пропуск и закрытые источники до первого обращения в backend/src/financial_ai/market_data/ingest.py per FR-058l (contradicts)
 - [X] T182 Покрыть испытаниями оба объявления в backend/tests/market_data/test_review_rules.py
+
+## Phase 44: Подпись под шкалой по артефакту
+
+- [X] T183 Перенести подпись идущего прогона из артефакта: формы слова, без нулей, без текущей сессии в счёте, в frontend/src/widgets/catchup-section/CatchupSection.tsx и frontend/src/shared/lib/market-format.ts per FR-021 (partial)
+- [X] T184 Покрыть испытаниями все три случая подписи в frontend/tests/collection-states.test.tsx
+
+- [X] T185 Считать сессии источника тем же правилом, что и сессии группы, в backend/src/financial_ai/market_data/{completeness.py,coverage.py} per FR-032 (contradicts)
+- [X] T186 Покрыть испытанием совпадение счёта группы и её источника в backend/tests/market_data/test_review_rules.py

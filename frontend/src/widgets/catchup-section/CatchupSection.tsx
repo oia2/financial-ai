@@ -21,6 +21,7 @@ import {
   formatDuration,
   formatIsoDate,
   formatShortStamp,
+  plural,
 } from '@/shared/lib/market-format';
 
 import { EventLog } from './EventLog';
@@ -321,9 +322,7 @@ export function CatchupSection({
                 собраны» значило бы объявить собранным то, к чему даже не
                 приступали.
               */}
-              {running
-                ? `дальше ещё ${state.sessions.pending} · ${state.sessions.skipped} пропущены с причинами`
-                : unfinishedNote(state.sessions)}
+              {running ? runningNote(state) : unfinishedNote(state.sessions)}
             </p>
           </div>
         )}
@@ -392,6 +391,34 @@ export function CatchupSection({
       )}
     </section>
   );
+}
+
+/**
+ * Подпись под шкалой у ИДУЩЕГО прогона.
+ *
+ * Перенесено из артефакта Open Design. Два правила, без которых фраза врёт:
+ *
+ *  - **текущая сессия в «дальше ещё» не входит.** Рядом с её датой это
+ *    читалось как «и ещё столько же сверх неё»;
+ *  - **нулей в подписи нет.** «0 пропущены с причинами» — сообщение о том,
+ *    чего не было, и оно занимает место наравне с настоящими.
+ */
+function runningNote(state: CatchupStateDto): string {
+  const ahead = Math.max(state.sessions.pending - (state.current === null ? 0 : 1), 0);
+  const parts = [
+    ahead > 0
+      ? `дальше ещё ${ahead} ${plural(ahead, 'сессия', 'сессии', 'сессий')}`
+      : 'это последняя сессия прогона',
+    state.sessions.skipped > 0
+      ? `${state.sessions.skipped} ${plural(
+          state.sessions.skipped,
+          'пропущена',
+          'пропущены',
+          'пропущено',
+        )} с причинами`
+      : '',
+  ];
+  return parts.filter(Boolean).join(' · ');
 }
 
 /**

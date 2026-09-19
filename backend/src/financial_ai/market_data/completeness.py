@@ -64,30 +64,49 @@ async def missing_sessions(
     # (FR-047).
     closed: set[dt.date] | None = None
     for source_id in group.source_ids:
-        observed = await repository.sessions_with_observations(
-            group.model,
-            group.session_column,
-            group.value_columns,
-            window,
-            key_column=group.key_column,
-            keys=group.keys_of(source_id),
-        )
-        # Пустой ответ биржи — законный исход, и наблюдений после него не
-        # будет: такие сессии закрывает журнал прогонов. Он не отбрасывается, а
-        # дополняет наблюдения.
-        by_source = observed | await repository.sessions_with_successful_run(window, source_id)
-
-        # **Прерванный исход перевешивает наблюдения.** Остановка успевает
-        # записать собранное, и строка закрывала бы сессию вопреки отдельному
-        # исходу: остановка после первого инструмента из ста двадцати оставляла
-        # одну строку, и день числился собранным навсегда (FR-050).
-        by_source -= await repository.sessions_left_unfinished(window, source_id)
-
+        by_source = await closed_sessions(repository, group, source_id, window)
         closed = by_source if closed is None else (closed & by_source)
         if not closed:
             break
 
     return [day for day in window if day not in (closed or set())]
+
+
+async def closed_sessions(
+    repository: MarketDataRepository,
+    group: SourceGroup,
+    source_id: str,
+    window: list[dt.date],
+) -> set[dt.date]:
+    """Сессии окна, закрытые ОДНИМ источником группы.
+
+    Одно правило на счёт группы и на счёт источника под ней. Пока их было два
+    — группа считала по наблюдениям и журналу, а строка источника только по
+    журналу, — сводка показывала 71 сессию у группы и 70 у её единственного
+    источника. Два числа об одном и том же расходятся всегда, вопрос только
+    когда это заметят (FR-032).
+    """
+    if group.session_column is None or not window:
+        return set()
+
+    observed = await repository.sessions_with_observations(
+        group.model,
+        group.session_column,
+        group.value_columns,
+        window,
+        key_column=group.key_column,
+        keys=group.keys_of(source_id),
+    )
+    # Пустой ответ биржи — законный исход, и наблюдений после него не будет:
+    # такие сессии закрывает журнал прогонов. Он не отбрасывается, а дополняет
+    # наблюдения.
+    closed = observed | await repository.sessions_with_successful_run(window, source_id)
+
+    # **Прерванный исход перевешивает наблюдения.** Остановка успевает
+    # записать собранное, и строка закрывала бы сессию вопреки отдельному
+    # исходу: остановка после первого инструмента из ста двадцати оставляла
+    # одну строку, и день числился собранным навсегда (FR-050).
+    return closed - await repository.sessions_left_unfinished(window, source_id)
 
 
 async def incomplete_sessions(

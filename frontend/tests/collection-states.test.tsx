@@ -457,3 +457,48 @@ describe('следующий сбор', () => {
     expect(line.textContent).toContain('после закрытия сессии');
   });
 });
+
+describe('подпись под шкалой', () => {
+  function renderRunning(overrides: Partial<CatchupStateDto['sessions']>) {
+    const base = catchupFixture('running');
+    renderWith({ ...base, sessions: { ...base.sessions, ...overrides } });
+  }
+
+  it('нулей в подписи нет', async () => {
+    // «0 пропущены с причинами» — сообщение о том, чего не было, и оно
+    // занимает место наравне с настоящими.
+    renderRunning({ pending: 5, skipped: 0 });
+
+    const note = await waitFor(() => {
+      const found = document.querySelector('.small-note');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(note.textContent).not.toContain('0 пропущены');
+    expect(note.textContent).not.toContain('с причинами');
+  });
+
+  it('текущая сессия в «дальше ещё» не входит', async () => {
+    // Рядом с её датой это читалось как «и ещё столько же сверх неё».
+    renderRunning({ pending: 5, skipped: 2 });
+
+    const note = await waitFor(() => {
+      const found = document.querySelector('.small-note');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(note.textContent).toContain('дальше ещё 4 сессии');
+    expect(note.textContent).toContain('2 пропущены с причинами');
+  });
+
+  it('последняя сессия названа последней, а не нулём', async () => {
+    renderRunning({ pending: 1, skipped: 0 });
+
+    const note = await waitFor(() => {
+      const found = document.querySelector('.small-note');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(note.textContent).toContain('это последняя сессия прогона');
+  });
+});

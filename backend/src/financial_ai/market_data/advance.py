@@ -335,7 +335,10 @@ async def advance(
 
     if await calendar_is_due(repository, now, settings):
         config = ingest.build_iss_config(settings)
-        async with IssClient(config) as iss:
+        # Признак остановки — и здесь: шесть попыток с нарастающей паузой у
+        # календаря ждут ровно столько же, сколько у любого другого источника
+        # (FR-058j).
+        async with IssClient(config, should_stop=should_stop) as iss:
             # Исход записывается тем же способом, что у остальных источников:
             # по этой записи и решается, пора ли спрашивать снова. Без неё
             # отметка «сегодня уже спрашивали» не существовала бы в тихом

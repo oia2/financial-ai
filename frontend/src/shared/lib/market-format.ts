@@ -83,3 +83,17 @@ export function formatAgo(value: string | null): string {
   if (seconds < 90) return `${seconds} с назад`;
   return `${Math.round(seconds / 60)} мин назад`;
 }
+
+/**
+ * Существительное в форме, согласованной с числом.
+ *
+ * Перенесено из артефакта Open Design `market-data.html`: подписи прогона
+ * читаются как фраза, и «дальше ещё 3 сессия» её рушит.
+ */
+export function plural(count: number, one: string, few: string, many: string): string {
+  const tail = count % 10;
+  const hundred = count % 100;
+  if (tail === 1 && hundred !== 11) return one;
+  if (tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14)) return few;
+  return many;
+}

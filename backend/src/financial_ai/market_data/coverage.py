@@ -166,8 +166,10 @@ async def _source_outcomes(
         broken = failures.get(source_id, [])
 
         if window:
-            covered = await repository.sessions_with_successful_run(window, source_id)
-            count = len(covered)
+            # Тем же правилом, что и счёт группы: два числа об одном и том же
+            # расходятся всегда — сводка показывала 71 сессию у группы и 70 у
+            # её источника (FR-032).
+            count = len(await completeness.closed_sessions(repository, group, source_id, window))
             # Три состояния, а не два. «Не всё покрыто» и «источник падал» —
             # разные вещи: первое бывает на любом недособранном окне и ничего
             # не требует, второе требует вмешательства. Пока состояний было
