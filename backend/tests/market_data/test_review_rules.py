@@ -1768,3 +1768,67 @@ async def test_счёт_группы_и_её_источника_совпадаю
 
     assert by_group == 2
     assert [row["sessions_covered"] for row in rows] == [by_group]
+
+
+@pytest.mark.db
+async def test_диапазонный_источник_не_объявляется_от_имени_сессии(
+    db_session: AsyncSession,
+) -> None:
+    """Он идёт раз на прогон и свой исход уже назвал.
+
+    Сказать про него «собран ранее» от имени сессии значило бы затереть
+    «100 рядов» словами ни о чём — и строка получала две пометки сразу:
+    «собран ранее» и «на весь период» (FR-058l).
+    """
+    from financial_ai.market_data import ingest as ingest_module
+    from financial_ai.market_data import plan
+
+    period_sources = {
+        spec.source_id for spec in plan.for_mode(plan.MODE_MANUAL) if spec.scope != plan.SESSION
+    }
+
+    assert period_sources
+    assert not (period_sources & ingest_module._CATCHUP_SESSION_SOURCES)
+
+    daily_only = {
+        spec.source_id for spec in plan.for_mode(plan.MODE_DAILY) if spec.scope != plan.SESSION
+    }
+    assert not (daily_only & ingest_module._DAILY_SESSION_SOURCES)
+
+
+@pytest.mark.db
+async def test_сводка_считает_закрытое_один_раз_на_группу(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Счёт нужен дважды — группе и строке источника, — а считаться должен раз.
+
+    Сводку опрашивают раз в три секунды, и двойной счёт стоил втрое больше
+    запросов: на стенде 2026-09-19 воркер выбрал весь пул соединений за две
+    минуты (FR-032).
+    """
+    from financial_ai.market_data import completeness, coverage, groups
+
+    repository = MarketDataRepository(db_session)
+    window = [EARLIER, SESSION]
+    await repository.add_trading_sessions(window)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+    await db_session.commit()
+
+    group = groups.BY_ID[groups.GroupId.GLOBAL]
+    calls = {"n": 0}
+    original = completeness.closed_sessions
+
+    async def counted(*args: object, **kwargs: object) -> set[dt.date]:
+        calls["n"] += 1
+        return await original(*args, **kwargs)  # type: ignore[arg-type]
+
+    completeness.closed_sessions = counted  # type: ignore[assignment]
+    try:
+        closed = await completeness.closed_by_source(repository, group, window)
+        await completeness.missing_sessions(repository, group, window, closed)
+        await coverage._source_outcomes(repository, group, window, closed)
+    finally:
+        completeness.closed_sessions = original  # type: ignore[assignment]
+
+    # По одному расчёту на источник группы, а не по два.
+    assert calls["n"] == len(group.source_ids)

@@ -32,10 +32,29 @@ from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
 
 
+async def closed_by_source(
+    repository: MarketDataRepository,
+    group: SourceGroup,
+    window: list[dt.date],
+) -> dict[str, set[dt.date]]:
+    """Закрытые сессии по каждому источнику группы — за один проход.
+
+    Счёт нужен дважды: сводке группы и строке источника под ней. Считать его
+    дважды — втрое больше запросов на каждую отрисовку сводки, а её опрашивают
+    раз в три секунды: на стенде 2026-09-19 воркер выбрал весь пул соединений
+    за две минуты (FR-032).
+    """
+    return {
+        source_id: await closed_sessions(repository, group, source_id, window)
+        for source_id in group.source_ids
+    }
+
+
 async def missing_sessions(
     repository: MarketDataRepository,
     group: SourceGroup,
     window: list[dt.date],
+    closed_sources: dict[str, set[dt.date]] | None = None,
 ) -> list[dt.date]:
     """Сессии окна, за которые группа не закрыта.
 
@@ -62,9 +81,11 @@ async def missing_sessions(
     # таблица на четыре источника, и строка ЦБ за сессию закрывала её сразу
     # всем — достаточно было одного ряда, чтобы день считался собранным
     # (FR-047).
+    by_source_all = closed_sources or await closed_by_source(repository, group, window)
+
     closed: set[dt.date] | None = None
     for source_id in group.source_ids:
-        by_source = await closed_sessions(repository, group, source_id, window)
+        by_source = by_source_all.get(source_id, set())
         closed = by_source if closed is None else (closed & by_source)
         if not closed:
             break

@@ -131,6 +131,7 @@ async def _source_outcomes(
     repository: MarketDataRepository,
     group: groups.SourceGroup,
     window: list[dt.date],
+    closed_sources: dict[str, set[dt.date]] | None = None,
 ) -> list[dict[str, object]]:
     """Исход каждого источника группы за окно.
 
@@ -166,10 +167,13 @@ async def _source_outcomes(
         broken = failures.get(source_id, [])
 
         if window:
-            # Тем же правилом, что и счёт группы: два числа об одном и том же
-            # расходятся всегда — сводка показывала 71 сессию у группы и 70 у
-            # её источника (FR-032).
-            count = len(await completeness.closed_sessions(repository, group, source_id, window))
+            # Тем же правилом, что и счёт группы, и ТЕМ ЖЕ расчётом: два числа
+            # об одном и том же расходятся всегда, а посчитанные дважды стоят
+            # втрое больше запросов на каждую отрисовку (FR-032).
+            closed = (closed_sources or {}).get(source_id)
+            if closed is None:
+                closed = await completeness.closed_sessions(repository, group, source_id, window)
+            count = len(closed)
             # Три состояния, а не два. «Не всё покрыто» и «источник падал» —
             # разные вещи: первое бывает на любом недособранном окне и ничего
             # не требует, второе требует вмешательства. Пока состояний было
@@ -234,10 +238,13 @@ async def build_report(
         window = await calendar.window(asof_date, window_size) if window_size else []
 
         missing: list[dt.date] = []
+        closed_sources: dict[str, set[dt.date]] = {}
         if window:
             # Те же недостающие сессии, что найдёт сбор: правило полноты одно
-            # на сводку, поиск пропусков и решение о работе (FR-032).
-            missing = await completeness.missing_sessions(repository, group, window)
+            # на сводку, поиск пропусков и решение о работе (FR-032). Считается
+            # ОДИН раз на группу и отдаётся обоим потребителям.
+            closed_sources = await completeness.closed_by_source(repository, group, window)
+            missing = await completeness.missing_sessions(repository, group, window, closed_sources)
             pending.update(missing)
 
         raw = await repository.group_coverage(
@@ -247,7 +254,7 @@ async def build_report(
             window or None,
         )
 
-        sources = await _source_outcomes(repository, group, window)
+        sources = await _source_outcomes(repository, group, window, closed_sources)
 
         rows.append(
             GroupCoverage(

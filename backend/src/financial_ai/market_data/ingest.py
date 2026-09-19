@@ -265,7 +265,10 @@ async def ingest_session(
             for source_id in (reference.SECTORS_SOURCE_ID, securities.SOURCE_ID):
                 if not await reference_is_due(repository, source_id, session_date):
                     on_source(source_id, STATUS_OMITTED, None)
-            for source_id in sorted(closed):
+            # Только те, кого эта сессия и собирает. Диапазонный источник
+            # идёт раз на прогон и свой исход уже объявил: сказать про него
+            # «собран ранее» значило бы затереть «100 рядов» словами ни о чём.
+            for source_id in sorted(closed & _DAILY_SESSION_SOURCES):
                 outcome = _already_collected(source_id)
                 on_source(source_id, outcome.status, outcome)
 
@@ -710,9 +713,11 @@ async def _catch_up_session(
     # спрашивается (FR-058e).
     collected = await repository.sources_closed_for(session_date)
 
-    # Известное объявляется сразу — см. ежедневный путь (FR-058l).
+    # Известное объявляется сразу — см. ежедневный путь (FR-058l). Только по
+    # тем, кого собирает сама сессия: диапазонный источник идёт раз на прогон
+    # и свой исход уже объявил.
     if on_source is not None:
-        for source_id in sorted(collected):
+        for source_id in sorted(collected & _CATCHUP_SESSION_SOURCES):
             done = _already_collected(source_id)
             on_source(source_id, done.status, done)
 
@@ -969,6 +974,17 @@ async def _run_delayed_source(
                 ),
             )
     return outcome
+
+
+# Источники, которые собирает САМА сессия. Диапазонные и суточные идут раз на
+# прогон, и объявлять про них что-либо от имени сессии нельзя: их исход уже
+# назван, и «собран ранее» затёрло бы его (FR-058l).
+_DAILY_SESSION_SOURCES = frozenset(
+    spec.source_id for spec in plan.for_mode(plan.MODE_DAILY) if spec.scope == plan.SESSION
+)
+_CATCHUP_SESSION_SOURCES = frozenset(
+    spec.source_id for spec in plan.for_mode(plan.MODE_MANUAL) if spec.scope == plan.SESSION
+)
 
 
 def _already_collected(source_id: str) -> SourceOutcome:

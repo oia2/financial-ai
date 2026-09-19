@@ -531,3 +531,9 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T187 Различить три ответа о моменте ближайшего сбора в артефакте Open Design и в frontend/src/widgets/collection-calendar/CollectionCalendar.tsx per FR-054 (contradicts)
 - [X] T188 Покрыть испытаниями отставание и неторговый день в frontend/tests/market-data-summary.test.tsx
+
+- [X] T189 Объявлять известное только по источникам самой сессии, не затирая исход диапазонных, в backend/src/financial_ai/market_data/ingest.py per FR-058l (contradicts)
+- [X] T190 Покрыть испытанием границу между сессионными и прогонными источниками в backend/tests/market_data/test_review_rules.py
+
+- [X] T191 Считать закрытые сессии один раз на группу и отдавать обоим потребителям в backend/src/financial_ai/market_data/{completeness.py,coverage.py} per FR-032 (contradicts)
+- [X] T192 Покрыть испытанием единственность расчёта в backend/tests/market_data/test_review_rules.py
