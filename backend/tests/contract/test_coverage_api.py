@@ -276,3 +276,33 @@ async def test_числа_строки_группы_и_её_источников
     source = quotes["sources"][0]
 
     assert quotes["sessions_covered"] == source["sessions_covered"]
+
+
+async def test_следующим_не_называется_сессия_ждущая_выдержки(db_session: object) -> None:
+    """Сквозной случай ревью: экран обещал одно, сбор брал другое (FR-054).
+
+    Совпасть порядком мало. Сбор пропускает сессию, которую только что
+    пытались собрать: без выдержки тик раз в минуту превращает устойчивую
+    ошибку в шестьдесят обращений в час. Строка же называла ближайшую
+    недостающую независимо от того, возьмут её или нет.
+    """
+    repository = await seed(db_session, ["SBER"])
+    later = ASOF + dt.timedelta(days=1)
+    await repository.add_trading_sessions([later])
+
+    # По поздней сессии попытка была только что — сбор её отложит.
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="recent-attempt",
+        source_id="equity_d1",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=later,
+        failure_reason="биржа не ответила",
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), later)  # type: ignore[arg-type]
+
+    assert report["next_session"] == ASOF.isoformat()

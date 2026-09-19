@@ -35,6 +35,12 @@ STATUS_FINISHED = "finished"
 STATUS_FAILED = "failed"
 STATUS_INTERRUPTED = "interrupted"
 
+# Причина, которой отмечаются записи прогона, не пережившего перезапуск. По ней
+# журнал и узнаёт прерванный прогон: после отметки у записи есть и завершение,
+# и статус неудачи, а различие «оборван» против «не удался» должно сохраниться
+# (FR-041, FR-052).
+INTERRUPTED_REASON = "прогон прерван"
+
 
 @dataclass(slots=True)
 class RunFailure:
@@ -246,7 +252,14 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
             func.max(IngestRun.finished_at).label("finished_at"),
             func.min(IngestRun.trigger).label("trigger"),
             func.count(func.distinct(IngestRun.session_date)).label("sessions"),
-            func.count(IngestRun.id).filter(IngestRun.finished_at.is_(None)).label("unfinished"),
+            # Запись ИДУЩЕГО обращения прогон прерванным не делает: исход
+            # заводится до обращения и дополняется после (FR-052), и без этого
+            # отбора идущий прогон показывался бы «прерванным перезапуском»
+            # ровно пока он идёт. Оборванную вместе с процессом запись
+            # размечает `mark_interrupted` при следующем запуске.
+            func.count(IngestRun.id)
+            .filter(IngestRun.finished_at.is_(None), IngestRun.status != "running")
+            .label("unfinished"),
         )
         .group_by(IngestRun.run_id)
         .order_by(func.min(IngestRun.started_at).desc())
@@ -265,10 +278,14 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
                 IngestRun.source_id,
                 IngestRun.session_date,
                 IngestRun.failure_reason,
-            ).where(IngestRun.run_id.in_(run_ids), IngestRun.status == "failed")
+            ).where(IngestRun.run_id.in_(run_ids), IngestRun.status.in_(("failed", "stopped")))
         )
     ).all()
 
+    # Прерванный источник считается наравне с упавшим: сессия по нему не
+    # собрана. Прежде учитывались только неудачи, и остановленный прогон
+    # показывался завершённым с собранной сессией — при том что спрошены были
+    # три бумаги из ста двадцати (FR-050).
     failed_sessions: dict[str, set[dt.date]] = {}
     failures: dict[str, list[RunFailure]] = {}
     for run_id, source_id, session_date, reason in failures_rows:
@@ -321,7 +338,11 @@ async def mark_interrupted(session: AsyncSession, process_started_at: dt.datetim
     result = await session.execute(
         update(IngestRun)
         .where(IngestRun.finished_at.is_(None), IngestRun.started_at < process_started_at)
-        .values(finished_at=process_started_at, status="failed", failure_reason="прогон прерван")
+        .values(
+            finished_at=process_started_at,
+            status="failed",
+            failure_reason=INTERRUPTED_REASON,
+        )
     )
     count = int(getattr(result, "rowcount", 0) or 0)
     if count:

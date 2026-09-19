@@ -76,6 +76,13 @@ async def missing_sessions(
         # будет: такие сессии закрывает журнал прогонов. Он не отбрасывается, а
         # дополняет наблюдения.
         by_source = observed | await repository.sessions_with_successful_run(window, source_id)
+
+        # **Прерванный исход перевешивает наблюдения.** Остановка успевает
+        # записать собранное, и строка закрывала бы сессию вопреки отдельному
+        # исходу: остановка после первого инструмента из ста двадцати оставляла
+        # одну строку, и день числился собранным навсегда (FR-050).
+        by_source -= await repository.sessions_left_unfinished(window, source_id)
+
         closed = by_source if closed is None else (closed & by_source)
         if not closed:
             break

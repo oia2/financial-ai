@@ -430,16 +430,38 @@ def test_посессионный_источник_границу_сессии_�
 # --- непройденные сессии (FR-058) --------------------------------------------
 
 
-def test_непройденными_считаются_сессии_без_исхода() -> None:
-    """Продолжению нужно ровно это: что осталось доделать."""
+def test_непройденной_считается_и_недоработанная_сессия() -> None:
+    """Продолжению нужно ровно это: что осталось доделать.
+
+    Не только нетронутые сессии: остановка после котировок, но до агрегатов,
+    оставляла сессию с исходом «собрана» — и продолжение брало следующую, а
+    недобранные агрегаты не добирало никогда (FR-058).
+    """
     from financial_ai.market_data.runner import CatchupState
 
     state = CatchupState(requested=list(SESSIONS))
     state.outcomes[SESSIONS[0]] = "collected"
+    state.outcomes[SESSIONS[1]] = "partial"
+
+    assert state.unfinished == [SESSIONS[1], *SESSIONS[2:]]
+
+
+def test_пропуск_и_неудача_продолжению_не_достаются() -> None:
+    """Обратная форма, и обе половины её существенны.
+
+    У пропуска есть причина, и спорить с ней молча продолжение не должно.
+    Несобранную сессию доберёт обычный план по правилам повторов — выдержке и
+    пределу попыток, — а тащить её в продолжение значило бы перевыбирать её
+    вечно, минуя оба правила.
+    """
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(requested=list(SESSIONS[:3]))
+    state.outcomes[SESSIONS[0]] = "collected"
     state.outcomes[SESSIONS[1]] = "failed"
     state.outcomes[SESSIONS[2]] = "skipped"
 
-    assert state.unfinished == SESSIONS[3:]
+    assert state.unfinished == []
 
 
 def test_пройденный_целиком_прогон_продолжать_нечем() -> None:

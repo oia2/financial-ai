@@ -92,6 +92,12 @@ TRIGGER_DAILY = "daily"
 TRIGGER_CATCHUP = "catchup"
 
 
+# Исход сессии, чей план не доработан по команде остановки. Третье значение
+# рядом с «собрана» и «не собрана»: прерванную сессию доделывает продолжение, а
+# несобранную — обычный план по правилам повторов (FR-058).
+INTERRUPTED = "interrupted"
+
+
 @dataclass(slots=True)
 class CatchupResult:
     """Исход догона пропущенных сессий."""
@@ -99,6 +105,9 @@ class CatchupResult:
     requested: list[dt.date] = field(default_factory=list)
     closed: list[dt.date] = field(default_factory=list)
     failed: list[dt.date] = field(default_factory=list)
+
+    # Сессии, чей план прерван командой: их доделывает продолжение.
+    interrupted: list[dt.date] = field(default_factory=list)
 
     # Хранилище пусто: это не дыра, а отсутствие истории. Догон намеренно не
     # выполнялся — нужна первичная загрузка.
@@ -247,6 +256,10 @@ async def ingest_session(
             # то же самое ещё раз, — а новых не будет (FR-044).
             if should_stop is not None and should_stop():
                 logger.info("сбор сессии %s прерван по команде", session_date)
+                # План сессии не доработан, и молчать об этом нельзя: без
+                # отметки сессия с собранными котировками и неспрошенными
+                # агрегатами объявлялась собранной (FR-058).
+                result.outcomes.append(_not_asked(source_id))
                 return result
 
             outcome = await run_source(
@@ -257,6 +270,7 @@ async def ingest_session(
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван по команде", session_date)
+            result.outcomes.append(_not_asked(reference.SECTORS_SOURCE_ID))
             return result
 
         # Справочники текущего состояния — по суточному гейту, а не на каждую
@@ -284,6 +298,7 @@ async def ingest_session(
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван по команде", session_date)
+            result.outcomes.append(_not_asked(positions.SOURCE_ID))
             return result
 
         # Связи инструментов — перед позициями: иначе появление нового фьючерса
@@ -334,7 +349,7 @@ async def catch_up(
     sessions: list[dt.date] | None = None,
     source_ids: frozenset[str] | None = None,
     on_session_start: Callable[[dt.date], None] | None = None,
-    on_session_done: Callable[[dt.date, bool], None] | None = None,
+    on_session_done: Callable[[dt.date, bool | str], None] | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
     on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
@@ -445,17 +460,31 @@ async def catch_up(
             on_source=on_source,
         )
 
+        # Опознание бумаг — ДО сессий и НЕЗАВИСИМО от выбора источников.
+        # Прежде оно шло довеском к сверке связей, а та выполняется только
+        # когда выбраны позиции: ручной сбор одних котировок заводил
+        # переименованной бумаге вторую сущность, не спросив ISIN ни разу
+        # (FR-048).
+        alias_events = await _sync_aliases(repository, iss, result.requested[-1])
+
         # Связи — тоже раз на прогон, и по той же причине, что диапазонные
-        # источники: ответ один на всё окно. Датируются КОНЦОМ окна: список
-        # серий отвечает про сегодня, и началом окна датировать его нельзя —
-        # это утверждало бы связь за дни, о которых источник не говорил, а при
-        # смене семейства закрывало бы прежний интервал раньше его собственного
-        # начала (FR-049).
+        # источники: ответ один на всё окно. Но только если источнику есть что
+        # сказать про это окно: список серий описывает СЕГОДНЯШНИЙ состав
+        # рынка, и догон, кончающийся раньше уже подтверждённых связей, их не
+        # пересматривает — иначе смена семейства закрывала бы прежний интервал
+        # раньше его собственного начала (FR-049).
         if source_ids is None or positions.SOURCE_ID in source_ids:
-            alias_events = await _sync_aliases(repository, iss, result.requested[-1])
-            await sync_instrument_links(
-                repository, iss, result.requested[-1], alias_events=alias_events
-            )
+            confirmed = await repository.latest_link_start()
+            if confirmed is not None and result.requested[-1] < confirmed:
+                logger.info(
+                    "догон до %s: связи не пересматриваются, они подтверждены по %s",
+                    result.requested[-1],
+                    confirmed,
+                )
+            else:
+                await sync_instrument_links(
+                    repository, iss, result.requested[-1], alias_events=alias_events
+                )
 
         await session.commit()
 
@@ -483,21 +512,31 @@ async def catch_up(
             )
             await session.commit()
 
-            # Сессия считается закрытой по котировкам: на них держится
+            # Три исхода сессии, а не два, и различие здесь существенное.
+            #
+            # **Прерванная** — та, чей план не доработан по команде человека.
+            # Прежде судили по одним котировкам, и остановка после них, но до
+            # агрегатов, оставляла сессию с исходом «собрана»: продолжение
+            # брало следующую, а недобранные агрегаты не добирало никогда
+            # (FR-058).
+            #
+            # **Незакрытая** — та, где упали котировки: на них держится
             # пространство строк. Недоступность задержанной модальности за
-            # старую дату — нормальное явление, а не незакрытая сессия.
-            quotes = next(
-                (o for o in outcomes if o.source_id == equity_d1.SOURCE_ID),
-                None,
-            )
+            # старую дату незакрытостью не является — это нормальное явление,
+            # и объявлять её работой значило бы перевыбирать такой день вечно.
+            interrupted = any(outcome.status == STATUS_STOPPED for outcome in outcomes)
+            quotes = next((o for o in outcomes if o.source_id == equity_d1.SOURCE_ID), None)
             closed = quotes is None or quotes.status not in _UNFINISHED
-            if closed:
+
+            if interrupted:
+                result.interrupted.append(day)
+            elif closed:
                 result.closed.append(day)
             else:
                 result.failed.append(day)
 
             if on_session_done is not None:
-                on_session_done(day, closed)
+                on_session_done(day, INTERRUPTED if interrupted else closed)
     finally:
         if owns_positions:
             await pos_client.__aexit__(None, None, None)
@@ -564,6 +603,10 @@ async def _catch_up_session(
         # остаются в плане: полнота считается по каждому из них (FR-044).
         if should_stop is not None and should_stop():
             logger.info("догон остановлен внутри сессии %s", session_date)
+            # План сессии не доработан. Без этой отметки сессия с собранными
+            # котировками и неспрошенными агрегатами объявлялась собранной, и
+            # продолжение её больше не брало (FR-058).
+            outcomes.append(_not_asked(source_id))
             break
 
         # Выбор групп пришёл от человека: к невыбранным источникам не ходим.
@@ -766,6 +809,16 @@ async def _run_delayed_source(
     return outcome
 
 
+def _not_asked(source_id: str) -> SourceOutcome:
+    """Исход источника, до которого прогон не дошёл из-за остановки.
+
+    Не «ок» и не «не удался»: его не спрашивали. Но и молчания быть не может —
+    без записи сессия выглядела бы собранной по тем источникам, что успели
+    пройти (FR-050, FR-058).
+    """
+    return SourceOutcome(source_id, STATUS_STOPPED, failure_reason="не спрошен")
+
+
 async def run_source(
     repository: MarketDataRepository,
     run_id: str,
@@ -788,11 +841,30 @@ async def run_source(
     ``on_source`` зовётся дважды: перед обращением и после него. Без этого
     человек видит «идёт сбор» и не видит, чем система занята прямо сейчас, —
     долгий источник неотличим от зависания.
+
+    **Исход заводится ДО обращения**, без отметки завершения, и дополняется
+    после. Отметка о прерванном прогоне ставится записям без отметки завершения
+    (FR-041), а обращение, оборванное вместе с процессом, не оставляло записи
+    вовсе: ровно тот случай, ради которого отметка существует, ею и не
+    покрывался (FR-052).
     """
     if on_source is not None:
         on_source(source_id, "running", None)
 
     started = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id=run_id,
+        source_id=source_id,
+        status="running",
+        started_at=started,
+        finished_at=None,
+        session_date=session_date,
+        trigger=trigger,
+        period_from=period[0] if period else None,
+        period_till=period[1] if period else None,
+    )
+    await repository.commit()
+
     try:
         written = await action()  # type: ignore[operator]
     except SourceStoppedError as stop:

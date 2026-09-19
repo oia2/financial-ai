@@ -667,6 +667,33 @@ class MarketDataRepository:
         rows = await self._session.scalars(statement.distinct())
         return set(rows.all())
 
+    async def sessions_left_unfinished(
+        self, sessions: list[dt.date], source_id: str
+    ) -> set[dt.date]:
+        """Сессии окна, у которых ПОСЛЕДНИЙ исход источника — «прервано».
+
+        Прерванный сбор успевает записать собранное, и наблюдение закрывало бы
+        сессию (FR-047) вопреки отдельному исходу: остановка после первого
+        инструмента из двух оставляла строку, и строка объявляла день собранным
+        (FR-050).
+
+        Берётся именно ПОСЛЕДНИЙ исход: сессия, остановленная однажды и
+        добранная следующим прогоном, незакрытой не остаётся.
+        """
+        if not sessions:
+            return set()
+
+        rows = await self._session.execute(
+            select(IngestRun.session_date, IngestRun.status)
+            .where(
+                IngestRun.session_date.in_(sessions),
+                IngestRun.source_id == source_id,
+            )
+            .distinct(IngestRun.session_date)
+            .order_by(IngestRun.session_date, IngestRun.started_at.desc(), IngestRun.id.desc())
+        )
+        return {day for day, status in rows.all() if status == "stopped" and day is not None}
+
     async def group_coverage(
         self,
         model: type,
@@ -946,6 +973,21 @@ class MarketDataRepository:
         if active is not None and active.contract_code == contract_code:
             return False
 
+        if active is not None and valid_from <= active.valid_from:
+            # Утверждение задним числом. Список серий описывает СЕГОДНЯШНИЙ
+            # состав рынка, и сверка, датированная не позже уже подтверждённой
+            # связи, историю не переписывает: иначе прежний интервал
+            # закрывался бы датой раньше собственного начала, а такой интервал
+            # не означает ничего (FR-049).
+            logger.warning(
+                "связь %s → %s не открыта: %s не позже начала действующей связи %s",
+                asset_id,
+                contract_code,
+                valid_from,
+                active.valid_from,
+            )
+            return False
+
         if active is not None:
             # Прежний интервал закрывается предыдущим днём: два действующих
             # интервала у одной бумаги означали бы, что мы не знаем, чем
@@ -1048,10 +1090,34 @@ class MarketDataRepository:
             .where(
                 AssetFuturesLink.asset_id == asset_id,
                 AssetFuturesLink.valid_till.is_(None),
+                # Интервал не закрывается раньше собственного начала: конец
+                # раньше начала не означает ничего, и инвариант держится здесь,
+                # а не на аккуратности вызывающего (FR-049).
+                AssetFuturesLink.valid_from <= valid_till,
             )
             .values(valid_till=valid_till)
         )
         return bool(getattr(result, "rowcount", 0))
+
+    async def commit(self) -> None:
+        """Закрепить накопленное.
+
+        Нужна отметке о начале обращения: пока она не закреплена, запись
+        «источник пошёл за данными» живёт в памяти сессии и исчезает вместе с
+        процессом — то есть в том единственном случае, ради которого её и
+        заводят (FR-052). Все вызывающие закрепляют работу после каждого
+        источника, поэтому незакреплённого здесь ничего не копится.
+        """
+        await self._session.commit()
+
+    async def latest_link_start(self) -> dt.date | None:
+        """Самая поздняя дата, которой связи уже подтверждены.
+
+        По ней решается, есть ли источнику что сказать про окно прогона: список
+        серий описывает СЕГОДНЯШНИЙ состав рынка, и догон, кончающийся раньше
+        этой даты, связи пересматривать не должен (FR-049).
+        """
+        return await self._session.scalar(select(func.max(AssetFuturesLink.valid_from)))
 
     async def aliases_on(self, day: dt.date) -> dict[str, str]:
         """Имена бумаг, действующие на дату: «тикер → сущность».

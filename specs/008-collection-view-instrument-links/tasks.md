@@ -412,3 +412,14 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 - [X] T120 Продолжать остановленный прогон его непройденными сессиями в backend/src/financial_ai/worker/routes/catchup.py, backend/src/financial_ai/market_data/runner.py и frontend/src/features/catchup-launch/useCatchupControl.ts per FR-058 (contradicts)
 - [X] T121 Перечитывать состояние сразу после команды в frontend/src/features/catchup-launch/useCatchupControl.ts per FR-059 (contradicts)
 - [X] T122 Покрыть испытаниями FR-057…FR-059 в backend/tests/market_data/ и frontend/tests/
+
+## Phase 28: Сквозные случаи внешнего ревью
+
+- [X] T123 Не закрывать сессию наблюдениями, если последний исход источника — «прервано», в backend/src/financial_ai/market_data/{completeness.py,repository.py} per FR-050 (contradicts)
+- [X] T124 Запретить сверку связей задним числом и закрытие интервала раньше его начала в backend/src/financial_ai/market_data/{ingest.py,repository.py} per FR-049 (contradicts)
+- [X] T125 Опознавать бумаги по ISIN независимо от выбора источников в backend/src/financial_ai/market_data/ingest.py per FR-048 (contradicts)
+- [X] T126 Считать остановленный источник несобранной сессией в журнале прогонов в backend/src/financial_ai/market_data/journal.py per FR-050 (contradicts)
+- [X] T127 Заводить исход источника до обращения, а не после в backend/src/financial_ai/market_data/{ingest.py,repository.py} per FR-052 (partial)
+- [X] T128 Считать дату следующего сбора тем же правилом, каким сбор выбирает сессию, в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
+- [X] T129 Объявлять сессию собранной только при доработанном плане источников в backend/src/financial_ai/market_data/{ingest.py,runner.py} per FR-058 (contradicts)
+- [X] T130 Покрыть испытаниями каждый из сквозных случаев в backend/tests/

@@ -438,3 +438,308 @@ async def test_план_ежедневного_прогона_совпадает
     # Календарь объявляет свой исход в `advance`, а не внутри сессии: он один
     # на прогон, а не один на сессию.
     assert planned - {"trading_calendar"} == set(seen) - {"trading_calendar"}
+
+
+# --- FR-050: прерванный исход перевешивает наблюдения ------------------------
+
+
+@pytest.mark.db
+async def test_остановка_после_первой_бумаги_сессию_не_закрывает(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Сквозной случай ревью: остановка после первого из двух инструментов.
+
+    Собранная строка остаётся — остановка не отменяет запись, — и раньше она
+    закрывала сессию по правилу «есть непустое наблюдение». Отдельного исхода
+    «прервано» самого по себе не хватало (FR-050).
+    """
+    from financial_ai.market_data import completeness, groups
+
+    repository = MarketDataRepository(db_session)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+    await _seed(repository, "GAZP", "GAZR", traded=True)
+    await db_session.commit()
+
+    client = FakePositionsClient(
+        available={("SBRF", SESSION): FakeSnapshot(), ("GAZR", SESSION): FakeSnapshot()}
+    )
+    seen = {"n": 0}
+
+    def should_stop() -> bool:
+        seen["n"] += 1
+        return seen["n"] > 1
+
+    await ingest.run_source(
+        repository,
+        "run-stop",
+        positions.SOURCE_ID,
+        SESSION,
+        lambda: positions.sync_positions(  # type: ignore[arg-type]
+            client, repository, SESSION, should_stop=should_stop
+        ),
+    )
+    await db_session.commit()
+
+    # Строка собрана — и всё же сессия остаётся работой.
+    assert len(await repository.positions_for_window([SESSION])) == 1
+    missing = await completeness.missing_sessions(
+        repository, groups.BY_ID[groups.GroupId.POSITIONS], [SESSION]
+    )
+    assert missing == [SESSION]
+
+
+@pytest.mark.db
+async def test_добранная_сессия_работой_быть_перестаёт(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Обратная форма: правило смотрит на ПОСЛЕДНИЙ исход источника."""
+    from financial_ai.market_data import completeness, groups
+
+    repository = MarketDataRepository(db_session)
+    await _seed(repository, "SBER", "SBRF", traded=True)
+    await db_session.commit()
+
+    client = FakePositionsClient(available={("SBRF", SESSION): FakeSnapshot()})
+    await ingest.run_source(
+        repository,
+        "run-stop",
+        positions.SOURCE_ID,
+        SESSION,
+        lambda: positions.sync_positions(client, repository, SESSION),  # type: ignore[arg-type]
+    )
+    await db_session.commit()
+
+    missing = await completeness.missing_sessions(
+        repository, groups.BY_ID[groups.GroupId.POSITIONS], [SESSION]
+    )
+    assert missing == []
+
+
+# --- FR-049: сверка связей не датируется задним числом -----------------------
+
+
+@pytest.mark.db
+async def test_интервал_не_закрывается_раньше_своего_начала(
+    db_session: AsyncSession,
+) -> None:
+    """Сквозной случай ревью: связь с 16-го, догон кончается 10-м.
+
+    Смена семейства закрывала бы прежний интервал 9-м числом — раньше его
+    собственного начала. Такой интервал не означает ничего (FR-049).
+    """
+    repository = MarketDataRepository(db_session)
+    late = SESSION + dt.timedelta(days=19)
+    early = SESSION + dt.timedelta(days=13)
+
+    await repository.open_link("EQ_AST_SBER", "SBRF", late, "underlying_and_emitter")
+    await db_session.commit()
+
+    changed = await repository.open_link("EQ_AST_SBER", "SBER_NEW", early, "underlying_only")
+    await db_session.commit()
+
+    assert changed is False
+    links = await repository.link_history("EQ_AST_SBER")
+    assert [(link.contract_code, link.valid_from, link.valid_till) for link in links] == [
+        ("SBRF", late, None)
+    ]
+
+
+@pytest.mark.db
+async def test_смена_контракта_вперёд_по_времени_проходит(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: запрет касается только утверждений задним числом."""
+    repository = MarketDataRepository(db_session)
+    later = SESSION + dt.timedelta(days=7)
+
+    await repository.open_link("EQ_AST_SBER", "SBRF", SESSION, "underlying_and_emitter")
+    await db_session.commit()
+
+    changed = await repository.open_link("EQ_AST_SBER", "SBER_NEW", later, "underlying_only")
+    await db_session.commit()
+
+    assert changed is True
+    assert await repository.active_links_on(later) == {"EQ_AST_SBER": "SBER_NEW"}
+
+
+@pytest.mark.db
+async def test_закрытие_раньше_начала_не_проходит(db_session: AsyncSession) -> None:
+    """Инвариант держится в хранилище, а не на аккуратности вызывающего."""
+    repository = MarketDataRepository(db_session)
+    late = SESSION + dt.timedelta(days=19)
+
+    await repository.open_link("EQ_AST_SBER", "SBRF", late, "underlying_and_emitter")
+    await db_session.commit()
+
+    closed = await repository.close_link("EQ_AST_SBER", SESSION)
+    await db_session.commit()
+
+    assert closed is False
+    assert await repository.active_links_on(late) == {"EQ_AST_SBER": "SBRF"}
+
+
+# --- FR-052: исход заводится до обращения ------------------------------------
+
+
+@pytest.mark.db
+async def test_начатое_обращение_оставляет_след(db_session: AsyncSession) -> None:
+    """Обращение, оборванное вместе с процессом, обязано оставить запись.
+
+    Отметка о прерванном прогоне ставится записям без отметки завершения
+    (FR-041), а исход заводился после обращения — и ровно тот случай, ради
+    которого отметка существует, ею и не покрывался (FR-052).
+    """
+    repository = MarketDataRepository(db_session)
+    seen: list[str] = []
+
+    async def action() -> int:
+        runs = await _runs_of(db_session, "run-trace")
+        seen.extend(f"{row.source_id}:{row.status}" for row in runs)
+        return 1
+
+    await ingest.run_source(repository, "run-trace", "equity_d1", SESSION, action)
+    await db_session.commit()
+
+    assert seen == ["equity_d1:running"]
+    done = await _runs_of(db_session, "run-trace")
+    assert [row.status for row in done] == [ingest.STATUS_OK]
+    assert done[0].finished_at is not None
+
+
+# --- FR-048: опознание по ISIN не зависит от выбора источников ---------------
+
+
+class IsinCountingIss(CountingIss):
+    """Биржа, считающая обращения за устойчивыми идентификаторами."""
+
+    def __init__(self, sessions: list[dt.date] | None = None) -> None:
+        super().__init__(sessions)
+        self.isin_calls = 0
+
+    async def fetch_equity_isins(self) -> dict[str, str]:
+        self.isin_calls += 1
+        return {"SBER": "RU0009029540"}
+
+
+@pytest.mark.db
+async def test_ручной_сбор_котировок_опознаёт_бумаги(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Сквозной случай ревью: выбраны одни котировки.
+
+    Опознание привязали к сверке связей, а та выполняется только когда выбраны
+    позиции: ручной сбор котировок заводил переименованной бумаге вторую
+    сущность, не спросив ISIN ни разу (FR-048).
+    """
+    from financial_ai.market_data import groups
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await db_session.commit()
+
+    iss = IsinCountingIss([SESSION])
+    await ingest.catch_up(
+        db_session,
+        settings,
+        SESSION,
+        sessions=[SESSION],
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        source_ids=groups.source_ids_for((groups.BY_ID[groups.GroupId.QUOTES],)),
+    )
+
+    assert iss.isin_calls == 1
+
+
+@pytest.mark.db
+async def test_опознание_идёт_один_раз_на_прогон(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Обратная форма: ответ один на всё окно, и спрашивать его на сессию незачем."""
+    from financial_ai.market_data import groups
+
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([EARLIER, SESSION])
+    await db_session.commit()
+
+    iss = IsinCountingIss([EARLIER, SESSION])
+    await ingest.catch_up(
+        db_session,
+        settings,
+        SESSION,
+        sessions=[EARLIER, SESSION],
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        source_ids=groups.source_ids_for((groups.BY_ID[groups.GroupId.QUOTES],)),
+    )
+
+    assert iss.isin_calls == 1
+
+
+# --- FR-050: журнал не считает остановленную сессию собранной ----------------
+
+
+@pytest.mark.db
+async def test_журнал_не_называет_остановленную_сессию_собранной(
+    db_session: AsyncSession,
+) -> None:
+    """Учитывались только неудачи, и остановленный прогон выглядел завершённым.
+
+    «Собрана 1 сессия» при трёх спрошенных бумагах из ста двадцати — ровно то
+    утверждение, которого исход «прервано» и должен был не допустить (FR-050).
+    """
+    from financial_ai.market_data import journal
+
+    repository = MarketDataRepository(db_session)
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="run-mixed",
+        source_id="equity_d1",
+        status=ingest.STATUS_OK,
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+    )
+    await repository.record_run(
+        run_id="run-mixed",
+        source_id=positions.SOURCE_ID,
+        status=ingest.STATUS_STOPPED,
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+        failure_reason="спрошено 3 бумаг из 120",
+    )
+    await db_session.commit()
+
+    runs = await journal.recent_runs(db_session)
+
+    assert [run.collected for run in runs] == [0]
+    assert [run.failed for run in runs] == [1]
+
+
+@pytest.mark.db
+async def test_журнал_по_прежнему_считает_собранную_сессию_собранной(
+    db_session: AsyncSession,
+) -> None:
+    """Обратная форма: прерванный исход не должен обесценить настоящий успех."""
+    from financial_ai.market_data import journal
+
+    repository = MarketDataRepository(db_session)
+    moment = dt.datetime.now(dt.UTC)
+    for source_id in ("equity_d1", positions.SOURCE_ID):
+        await repository.record_run(
+            run_id="run-ok",
+            source_id=source_id,
+            status=ingest.STATUS_OK,
+            started_at=moment,
+            finished_at=moment,
+            session_date=SESSION,
+        )
+    await db_session.commit()
+
+    runs = await journal.recent_runs(db_session)
+
+    assert [run.collected for run in runs] == [1]
+    assert [run.status for run in runs] == [journal.STATUS_FINISHED]

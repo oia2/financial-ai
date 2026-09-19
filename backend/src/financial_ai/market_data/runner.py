@@ -147,13 +147,19 @@ class CatchupState:
 
     @property
     def unfinished(self) -> list[dt.date]:
-        """Сессии плана, до которых прогон не дошёл.
+        """Сессии плана, которые продолжение обязано доделать.
 
-        Исход есть у каждой пройденной сессии — собранной, недособранной или
-        пропущенной с причиной. Остальные и составляют то, что продолжение
-        обязано доделать: «остановка — не отмена» (FR-058).
+        Не только те, которых не начинали. Сессия, чей план источников не
+        доработан до конца, тоже непройденная: остановка после котировок, но до
+        агрегатов, оставляла сессию с исходом — и продолжение брало следующую,
+        а недобранные агрегаты не добирало никогда (FR-058).
+
+        Пропущенная сессия сюда не входит: у пропуска есть причина, и
+        продолжение не должно спорить с ней молча. Несобранная — тоже: её
+        доберёт обычный план по правилам повторов, а тащить её в продолжение
+        значило бы перевыбирать её вечно.
         """
-        return [day for day in self.requested if day not in self.outcomes]
+        return [day for day in self.requested if self.outcomes.get(day) in (None, "partial")]
 
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
         """Отметить состояние источника и момент последнего ответа."""
@@ -477,8 +483,18 @@ class CatchupRunner:
     def _on_session_start(self, day: dt.date) -> None:
         self._state.begin_session(day)
 
-    def _on_session_done(self, day: dt.date, closed: bool) -> None:
-        if closed:
+    def _on_session_done(self, day: dt.date, closed: bool | str) -> None:
+        """Исход сессии: собрана, не собрана либо прервана по команде.
+
+        Прерванная — отдельно от несобранной: её план не доработан, и доделать
+        его обязано продолжение. Несобранную доберёт обычный план по правилам
+        повторов, и тащить её в продолжение значило бы перевыбирать её вечно
+        (FR-058).
+        """
+        if closed == ingest.INTERRUPTED:
+            self._state.failed.append(day)
+            self._state.outcomes[day] = "partial"
+        elif closed:
             self._state.closed.append(day)
             self._state.outcomes[day] = "collected"
         else:

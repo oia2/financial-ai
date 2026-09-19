@@ -30,12 +30,15 @@ class FakeRepository:
         observed: set[dt.date] | None = None,
         runs: dict[str, set[dt.date]] | None = None,
         by_source: dict[str, set[dt.date]] | None = None,
+        stopped: dict[str, set[dt.date]] | None = None,
     ) -> None:
         self._observed = observed or set()
         self._runs = runs or {}
         # Наблюдения, разложенные по источнику, — так их и спрашивает правило.
         # Ключ здесь — набор начал имён рядов, которым источник владеет.
         self._by_source = by_source or {}
+        # Сессии, у которых последний исход источника — «прервано».
+        self._stopped = stopped or {}
 
     async def sessions_with_observations(
         self,
@@ -57,6 +60,11 @@ class FakeRepository:
         self, sessions: list[dt.date], source_id: str
     ) -> set[dt.date]:
         return {day for day in sessions if day in self._runs.get(source_id, set())}
+
+    async def sessions_left_unfinished(
+        self, sessions: list[dt.date], source_id: str
+    ) -> set[dt.date]:
+        return {day for day in sessions if day in self._stopped.get(source_id, set())}
 
 
 def group(group_id: groups.GroupId) -> groups.SourceGroup:
@@ -153,5 +161,33 @@ async def test_справочник_без_оси_сессий_недобран�
     missing = await completeness.missing_sessions(
         repository, group(groups.GroupId.REFERENCE), WINDOW
     )
+
+    assert missing == []
+
+
+async def test_прерванный_исход_перевешивает_наблюдение() -> None:
+    """Остановка успевает записать собранное, и строка закрывала бы сессию.
+
+    Отдельного исхода мало: полнота считается ещё и по наличию непустого
+    наблюдения, а прерванный сбор успевает его оставить — остановка после
+    первого инструмента из ста двадцати объявляла день собранным навсегда
+    (FR-050).
+    """
+    repository = FakeRepository(
+        runs={"equity_d1": set(WINDOW)},
+        observed=set(WINDOW),
+        stopped={"equity_d1": {WINDOW[1]}},
+    )
+
+    missing = await completeness.missing_sessions(repository, group(groups.GroupId.QUOTES), WINDOW)
+
+    assert missing == [WINDOW[1]]
+
+
+async def test_добранная_после_остановки_сессия_незакрытой_не_остаётся() -> None:
+    """Обратная форма: правило смотрит на ПОСЛЕДНИЙ исход, а не на любой бывший."""
+    repository = FakeRepository(runs={"equity_d1": set(WINDOW)}, observed=set(WINDOW))
+
+    missing = await completeness.missing_sessions(repository, group(groups.GroupId.QUOTES), WINDOW)
 
     assert missing == []

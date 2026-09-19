@@ -449,3 +449,61 @@ async def test_продолжать_нечего_и_об_этом_сказано
     body = response.json()
     assert body["resumed"] is False
     assert body["requested_sessions"] == len(MISSING)
+
+
+async def test_недоработанная_сессия_достаётся_продолжению(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сквозной случай ревью: остановка ВНУТРИ сессии, после котировок.
+
+    Сессия получала исход «собрана», и продолжение брало следующую, а
+    недобранные агрегаты не добирало никогда (FR-058).
+    """
+    import asyncio
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+
+    async def half_session(session, settings, asof_date, *args, **kwargs):  # type: ignore[no-untyped-def]
+        """Первая сессия начата, но её план не доработан — как при остановке."""
+        result = ingest.CatchupResult()
+        result.requested = list(kwargs.get("sessions") or [])
+        on_start = kwargs.get("on_session_start")
+        on_done = kwargs.get("on_session_done")
+
+        day = result.requested[0]
+        if on_start is not None:
+            on_start(day)
+        await asyncio.sleep(0)
+        result.interrupted.append(day)
+        if on_done is not None:
+            # Исход прерванной сессии — третий, рядом с «собрана» и «не
+            # собрана»: её план не доработан по команде.
+            on_done(day, ingest.INTERRUPTED)
+        return result
+
+    monkeypatch.setattr(ingest, "catch_up", half_session)
+
+    await worker_client.post("/internal/catchup", json={})
+    await _wait_idle(runner)
+
+    # Недоработанная сессия остаётся в непройденных наравне с нетронутой.
+    assert list(runner.state.unfinished) == MISSING
+
+
+async def test_собранная_сессия_продолжению_не_достаётся(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Обратная форма: доведённая до конца сессия заново не берётся."""
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp())
+
+    await worker_client.post("/internal/catchup", json={})
+    await _wait_idle(runner)
+
+    assert list(runner.state.unfinished) == []

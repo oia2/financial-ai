@@ -119,9 +119,7 @@ async def pending_sessions(
     # иначе перевыбирался бы вечно: сессия остаётся неполной, значит остаётся в
     # списке, значит собирается снова — и так каждые пятнадцать минут без конца.
     attempts = await repository.attempts_by_session(missing)
-    within_limit = [
-        day for day in missing if attempts.get(day, 0) < settings.market_data_session_max_attempts
-    ]
+    within_limit = await _within_attempt_limit(repository, missing, settings)
     for day in missing:
         if day not in within_limit:
             logger.warning(
@@ -142,12 +140,7 @@ async def pending_sessions(
     # за дату одним заходом и котировки — первыми, поэтому их последняя попытка и
     # есть «когда мы в последний раз брались за этот день», какой бы источник ни
     # оставался незакрытым.
-    ready = _after_retry_delay(
-        within_limit,
-        await repository.last_attempt_by_session(within_limit, equity_d1.SOURCE_ID),
-        settings,
-        moment,
-    )
+    ready = await selectable(repository, within_limit, settings, moment)
 
     # Сессия, отложенная выдержкой, не исчезает молча: человек видит, что она
     # ждёт повтора, и через сколько (FR-002).
@@ -197,6 +190,51 @@ def _after_retry_delay(
             continue
         ready.append(day)
     return ready
+
+
+async def _within_attempt_limit(
+    repository: MarketDataRepository,
+    missing: list[dt.date],
+    settings: Settings,
+) -> list[dt.date]:
+    """Сессии, не исчерпавшие предел попыток."""
+    attempts = await repository.attempts_by_session(missing)
+    return [
+        day for day in missing if attempts.get(day, 0) < settings.market_data_session_max_attempts
+    ]
+
+
+async def selectable(
+    repository: MarketDataRepository,
+    missing: list[dt.date],
+    settings: Settings,
+    moment: dt.datetime | None = None,
+) -> list[dt.date]:
+    """Из недостающих сессий — те, которые сбор ДЕЙСТВИТЕЛЬНО возьмёт.
+
+    Правило одно на работу и на обещание. Раздел называл ближайшую недостающую
+    сессию независимо от того, возьмут её или нет, — а сбор пропускает
+    ждущую выдержки после неудачи и исчерпавшую предел попыток, и экран
+    обещал одно, пока система брала другое (FR-054).
+
+    Записей здесь не делается: объявление причины пропуска принадлежит сбору,
+    а не сводке, которую читают по нескольку раз в минуту.
+    """
+    if not missing:
+        return []
+
+    within_limit = await _within_attempt_limit(repository, missing, settings)
+
+    # Отметка времени берётся по котировкам: `ingest_session` гонит все источники
+    # за дату одним заходом и котировки — первыми, поэтому их последняя попытка и
+    # есть «когда мы в последний раз брались за этот день», какой бы источник ни
+    # оставался незакрытым.
+    return _after_retry_delay(
+        within_limit,
+        await repository.last_attempt_by_session(within_limit, equity_d1.SOURCE_ID),
+        settings,
+        moment or moscow_now(),
+    )
 
 
 async def calendar_is_due(
