@@ -515,3 +515,8 @@ MEDIUM нет. Формы всех четырёх ответов сверены 
 
 - [X] T179 Считать следующую сессию правилом разделённого порядка в backend/src/financial_ai/market_data/coverage.py per FR-054 (contradicts)
 - [X] T180 Различить подпись у закрытой сессии в артефакте Open Design и в frontend/src/widgets/catchup-section/CatchupSection.tsx per FR-054 (missing)
+
+## Phase 43: Известное объявляется в начале сессии
+
+- [X] T181 Объявлять суточный пропуск и закрытые источники до первого обращения в backend/src/financial_ai/market_data/ingest.py per FR-058l (contradicts)
+- [X] T182 Покрыть испытаниями оба объявления в backend/tests/market_data/test_review_rules.py

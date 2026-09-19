@@ -1637,3 +1637,83 @@ async def test_счётчик_не_шагает_по_собранным(db_sessi
 
     # Спросить предстоит двоих из трёх — собранного в счёт не берём.
     assert seen == [(1, 2), (2, 2)]
+
+
+# --- FR-058l: известное объявляется в начале сессии --------------------------
+
+
+@pytest.mark.db
+async def test_суточный_справочник_убирается_из_плана_сразу(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """До первого обращения известно, что сегодня его не спрашивают.
+
+    Объявленное по ходу очереди показывало ожидающими строки, которых в работе
+    нет, и лента «плясала», пока прогон доходил до каждой (FR-058l).
+    """
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([EARLIER, SESSION])
+    await db_session.commit()
+
+    iss = CountingIss([EARLIER, SESSION])
+    # Первый прогон спрашивает справочники — суточный гейт закрывается.
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        EARLIER,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+
+    seen: list[tuple[str, str]] = []
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        on_source=lambda source_id, status, outcome: seen.append((source_id, status)),
+    )
+
+    # Оба справочника объявлены ДО первого обращения к бирже.
+    omitted = [i for i, (_, status) in enumerate(seen) if status == ingest.STATUS_OMITTED]
+    first_request = next(i for i, (_, status) in enumerate(seen) if status == "running")
+    assert len(omitted) == 2
+    assert max(omitted) < first_request
+
+
+@pytest.mark.db
+async def test_закрытый_источник_объявляется_собранным_сразу(
+    db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
+) -> None:
+    """Обратная форма: закрытая строка не должна висеть ожидающей до своей очереди."""
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([SESSION])
+    await db_session.commit()
+
+    iss = CountingIss([SESSION])
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+    )
+
+    seen: list[tuple[str, str]] = []
+    await ingest.ingest_session(
+        db_session,
+        settings,
+        SESSION,
+        client=iss,
+        cbr_client=cbr_client,
+        positions_client=FakePositionsClient(),  # type: ignore[arg-type]
+        on_source=lambda source_id, status, outcome: seen.append((source_id, status)),
+    )
+
+    assert ("equity_d1", ingest.STATUS_OK) in seen
+    # И ни одного обращения к нему: он закрыт за эту сессию.
+    assert iss.quote_calls == [SESSION.isoformat()]

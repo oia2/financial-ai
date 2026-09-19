@@ -255,10 +255,22 @@ async def ingest_session(
         # Шаг 3: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
         closed = await repository.sources_closed_for(session_date)
+
+        # Известное о сессии объявляется СРАЗУ, а не когда до источника дойдёт
+        # очередь: что суточный справочник сегодня не спрашивается и что
+        # источник за эту сессию закрыт, известно до первого обращения. Иначе
+        # лента показывает ожидающими строки, которых в работе нет, и «пляшет»,
+        # пока прогон доходит до каждой (FR-058l).
+        if on_source is not None:
+            for source_id in (reference.SECTORS_SOURCE_ID, securities.SOURCE_ID):
+                if not await reference_is_due(repository, source_id, session_date):
+                    on_source(source_id, STATUS_OMITTED, None)
+            for source_id in sorted(closed):
+                outcome = _already_collected(source_id)
+                on_source(source_id, outcome.status, outcome)
+
         if equity_d1.SOURCE_ID in closed:
             quotes_outcome = _already_collected(equity_d1.SOURCE_ID)
-            if on_source is not None:
-                on_source(equity_d1.SOURCE_ID, quotes_outcome.status, quotes_outcome)
         else:
             quotes_outcome = await run_source(
                 repository,
@@ -302,10 +314,8 @@ async def ingest_session(
             # конца — оно уже отправлено, и бросить ответ значило бы спросить
             # то же самое ещё раз, — а новых не будет (FR-044).
             if source_id in collected:
-                outcome = _already_collected(source_id)
-                result.outcomes.append(outcome)
-                if on_source is not None:
-                    on_source(source_id, outcome.status, outcome)
+                # Объявлено в начале сессии — здесь только исход прогона.
+                result.outcomes.append(_already_collected(source_id))
                 continue
 
             if should_stop is not None and should_stop():
@@ -349,11 +359,8 @@ async def ingest_session(
             ),
         ):
             if not await reference_is_due(repository, source_id, session_date):
-                # В план этого прогона источник не попадает: спрашивать его
-                # сегодня больше нечем, и строка «уже спрошен сегодня»
-                # отвечала бы на вопрос, которого никто не задавал (FR-007).
-                if on_source is not None:
-                    on_source(source_id, STATUS_OMITTED, None)
+                # Объявлено в начале сессии: в план этого прогона источник не
+                # попадает (FR-007, FR-058l).
                 continue
             outcome = await run_source(
                 repository, run_id, source_id, session_date, action, on_source=on_source
@@ -703,6 +710,12 @@ async def _catch_up_session(
     # спрашивается (FR-058e).
     collected = await repository.sources_closed_for(session_date)
 
+    # Известное объявляется сразу — см. ежедневный путь (FR-058l).
+    if on_source is not None:
+        for source_id in sorted(collected):
+            done = _already_collected(source_id)
+            on_source(source_id, done.status, done)
+
     for source_id, action in (
         (
             equity_d1.SOURCE_ID,
@@ -753,10 +766,7 @@ async def _catch_up_session(
         if source_ids is not None and source_id not in source_ids:
             continue
         if source_id in collected:
-            outcome = _already_collected(source_id)
-            outcomes.append(outcome)
-            if on_source is not None:
-                on_source(source_id, outcome.status, outcome)
+            outcomes.append(_already_collected(source_id))
             continue
         # Источник, исчерпавший повторы на нескольких сессиях подряд, дальше в
         # прогоне не запрашивается: обращения к нему заведомо не приносят данных.
