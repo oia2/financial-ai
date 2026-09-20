@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from financial_ai.market_data.interrupt import SourceStoppedError
+from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
@@ -77,9 +77,18 @@ async def sync_iss_series_range(
     каждую сессию. Ежедневный добор — частный случай с совпадающими границами.
 
     Неудача одного ряда не отменяет остальные: ряды независимы, и терять
-    собранное из-за недоступности одного индекса незачем.
+    собранное из-за недоступности одного индекса незачем. **Но и успехом она
+    не становится.** Обход продолжается, полученное сохраняется, а итог
+    сообщает неуспех и называет несобранные ряды: пока он сообщал успех, один
+    полученный ряд из пяти закрывал сессию всем пяти, и остальные четыре не
+    попадали больше ни в один план (FR-032).
+
+    Пустой ответ и сломанный контракт здесь разные исходы. Ряд, за который
+    биржа ответила корректно и значений не дала, работу закрывает: спрашивать
+    нечего. Ряд, обращение за которым упало, остаётся работой.
     """
     written = 0
+    unfinished: list[str] = []
     for spec in specs:
         should_stop = getattr(client, "should_stop", None)
         if should_stop is not None and should_stop():
@@ -88,14 +97,46 @@ async def sync_iss_series_range(
             values = await _fetch_series(client, spec, date_from, date_till)
         except SourceStoppedError as error:
             raise SourceStoppedError(written + error.rows_written) from error
+        except SeriesFetchError as error:
+            # Ряд не получен. Дальше идём — ряды независимы, — но запоминаем:
+            # незавершённое обязано дожить до исхода.
+            logger.warning("глобальный ряд %s не собран: %s", spec.series_id, error)
+            unfinished.append(spec.series_id)
+            continue
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
+
+    if unfinished:
+        raise SourcePartialError(
+            rows_written=written,
+            detail=(
+                f"не собраны ряды: {', '.join(unfinished)}"
+                f" (получено {len(specs) - len(unfinished)} из {len(specs)})"
+            ),
+            unfinished=tuple(unfinished),
+        )
     return written
+
+
+class SeriesFetchError(RuntimeError):
+    """Обращение за одним рядом не удалось.
+
+    Отдельный тип, а не пустой словарь: пустой словарь неотличим от
+    корректного ответа без значений, и разница между «биржа сказала, что
+    данных нет» и «мы не смогли спросить» пропадала ровно там, где она нужна
+    (FR-032).
+    """
 
 
 async def _fetch_series(
     client: IssClient, spec: SeriesSpec, date_from: dt.date, date_till: dt.date
 ) -> dict[dt.date, Decimal | None]:
+    """Значения одного ряда за период.
+
+    Пустой словарь означает корректный ответ без значений и **только** его.
+    Несостоявшееся обращение поднимает ``SeriesFetchError``: раньше оба случая
+    возвращали ``{}``, и неизвестность записывалась успехом.
+    """
     try:
         rows = await client.fetch_security_history(
             spec.secid,
@@ -109,8 +150,7 @@ async def _fetch_series(
     except SourceStoppedError:
         raise
     except Exception as error:  # noqa: BLE001 — один ряд не должен ронять остальные
-        logger.warning("глобальный ряд %s не собран: %s", spec.series_id, error)
-        return {}
+        raise SeriesFetchError(f"{spec.series_id}: {error}") from error
 
     return rows_to_values(rows, spec.value_column)
 

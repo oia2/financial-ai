@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.market_data import completeness, gaps, groups, links, plan
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_today
-from financial_ai.market_data.interrupt import SourceStoppedError
+from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import (
@@ -935,22 +935,48 @@ async def _sync_cbr_range(
 
     Страницы Банка России уже принимают границы периода, поэтому дыра любой
     длины закрывается двумя обращениями — по одному на ключевую ставку и ЗКЦ.
+
+    **Ставка и кривая независимы, и падение одной не отменяет другую.** Прежде
+    ошибка кривой уносила с собой весь источник, а полученная ставка не
+    засчитывалась ничем: на стенде 2026-09-20 у `CBR_KEY_RATE` оказалось 311
+    значений против 308 у каждой точки `CBR_ZCYC_*`. Теперь получившаяся часть
+    сохраняется, а незавершённая называется в исходе и остаётся работой —
+    источник не закрывается (FR-032).
     """
     config = cbr.CbrConfig()
     written = 0
+    unfinished: list[str] = []
 
-    key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client, should_stop)
-    written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
+    try:
+        key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client, should_stop)
+    except SourceStoppedError as error:
+        raise SourceStoppedError(written + error.rows_written) from error
+    except Exception as error:  # noqa: BLE001 — кривая не зависит от ставки
+        logger.warning("ЦБ: ключевая ставка не собрана: %s", error)
+        unfinished.append(cbr.KEY_RATE_SERIES_ID)
+    else:
+        written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
 
     if should_stop is not None and should_stop():
         raise SourceStoppedError(written)
+
     try:
         zcyc = await cbr.fetch_zcyc(config, date_from, date_till, client, should_stop)
     except SourceStoppedError as error:
         raise SourceStoppedError(written + error.rows_written) from error
-    for series_id, values in zcyc.items():
-        written += await repository.upsert_global_values(series_id, values)
+    except Exception as error:  # noqa: BLE001 — ставка уже сохранена и не теряется
+        logger.warning("ЦБ: кривая бескупонной доходности не собрана: %s", error)
+        unfinished.append("кривая ЗКЦ")
+    else:
+        for series_id, values in zcyc.items():
+            written += await repository.upsert_global_values(series_id, values)
 
+    if unfinished:
+        raise SourcePartialError(
+            rows_written=written,
+            detail=f"не собрано: {', '.join(unfinished)}",
+            unfinished=tuple(unfinished),
+        )
     return written
 
 
@@ -1092,6 +1118,23 @@ async def run_source(
             failure_reason=stop.detail,
         )
         logger.info("сбор: источник %s прерван: %s", source_id, stop.detail)
+    except SourcePartialError as partial:
+        # Полученное уже записано источником и остаётся в хранилище. Неуспехом
+        # исход называется не поэтому, а потому что применимая работа сделана
+        # не вся: один собранный ряд из пяти не говорит ничего про остальные
+        # четыре, и «ок» здесь закрыл бы сессию всем пяти (FR-032).
+        outcome = SourceOutcome(
+            source_id,
+            STATUS_FAILED,
+            rows_written=partial.rows_written,
+            failure_reason=partial.detail,
+        )
+        logger.warning(
+            "сбор: источник %s отработал не всю работу (%s), сохранено строк: %d",
+            source_id,
+            partial.detail,
+            partial.rows_written,
+        )
     except IssError as error:
         outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=str(error))
         logger.warning("сбор: источник %s не удался: %s", source_id, error)
