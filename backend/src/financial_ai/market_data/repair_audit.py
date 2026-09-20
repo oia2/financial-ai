@@ -170,3 +170,8 @@ async def run_plan(session: AsyncSession, settings: Settings, plan_id: str) -> t
         status, reason = "completed", None
     await repository.finish_repair_plan(plan_id, status, reason)
     return status, current.requests_spent, remaining
+
+
+async def extend_plan(repository: MarketDataRepository, plan_id: str, request_budget: int) -> None:
+    if request_budget <= 0 or not await repository.extend_repair_plan(plan_id, request_budget):
+        raise ValueError("новый лимит должен быть больше текущего лимита существующего плана")

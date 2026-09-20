@@ -168,6 +168,19 @@ class MarketDataRepository:
         )
         await self._session.commit()
 
+    async def extend_repair_plan(self, plan_id: str, request_budget: int) -> bool:
+        """Raise a stopped plan's absolute limit only by an explicit command."""
+        result = await self._session.execute(
+            update(RepairPlan)
+            .where(
+                RepairPlan.plan_id == plan_id,
+                RepairPlan.request_budget < request_budget,
+            )
+            .values(request_budget=request_budget, status="planned", reason=None)
+        )
+        await self._session.commit()
+        return bool(getattr(result, "rowcount", 0))
+
     # --- торговые сессии ---------------------------------------------------
 
     async def add_trading_sessions(self, dates: list[dt.date]) -> int:

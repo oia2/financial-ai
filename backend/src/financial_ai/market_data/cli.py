@@ -156,6 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
     repair_run = sub.add_parser("repair-run", help="Выполнить ранее созданный план ремонта")
     repair_run.add_argument("--plan-id", required=True)
 
+    repair_extend = sub.add_parser("repair-extend", help="Явно увеличить лимит плана ремонта")
+    repair_extend.add_argument("--plan-id", required=True)
+    repair_extend.add_argument("--request-budget", type=int, required=True)
+
     return parser
 
 
@@ -220,6 +224,18 @@ async def _repair_run(plan_id: str) -> int:
         return 2
     print(f"план {plan_id}: {status}; HTTP-попыток израсходовано {spent}; осталось пар {remaining}")
     return 0 if status == "completed" else 1
+
+
+async def _repair_extend(plan_id: str, request_budget: int) -> int:
+    factory = get_session_factory()
+    try:
+        async with factory() as session:
+            await repair_audit.extend_plan(MarketDataRepository(session), plan_id, request_budget)
+    except ValueError as error:
+        print(str(error))
+        return 2
+    print(f"план {plan_id}: общий лимит HTTP-попыток увеличен до {request_budget}")
+    return 0
 
 
 async def _run(session_date: dt.date | None) -> int:
@@ -725,6 +741,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "repair-run":
         return asyncio.run(_repair_run(args.plan_id))
+    if args.command == "repair-extend":
+        return asyncio.run(_repair_extend(args.plan_id, args.request_budget))
     return 1
 
 
