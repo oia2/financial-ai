@@ -173,8 +173,7 @@ async def sync_positions(
     # Знаменатель — те, кого предстоит спросить, а не весь список: собранные
     # пары пропускаются, и обещать обращение к ним нельзя (FR-058i).
     todo = sum(
-        (asset_id_for(ticker), links[asset_id_for(ticker)]) not in already
-        for ticker in wanted
+        (asset_id_for(ticker), links[asset_id_for(ticker)]) not in already for ticker in wanted
     )
 
     stopped = False

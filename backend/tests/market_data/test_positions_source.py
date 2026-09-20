@@ -720,7 +720,6 @@ async def test_без_остановки_повторы_идут_как_преж
     """Обратная форма: отмена повторов не должна отменить сами повторы."""
     import httpx
 
-    from financial_ai.market_data.interrupt import SourceStoppedError
     from financial_ai.market_data.sources.positions_client import PositionsClient
 
     attempts = {"n": 0}

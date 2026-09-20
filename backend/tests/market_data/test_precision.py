@@ -121,9 +121,7 @@ async def test_json_numbers_survive_http_response() -> None:
 @respx.mock
 async def test_json_numbers_are_not_float_after_parsing() -> None:
     """Сторожевой тест пути: дробное число ответа — Decimal, а не float."""
-    body = (
-        b'{"history": {"columns": ["SECID", "CLOSE"], "data": [["SBER", 314.22]]}}'
-    )
+    body = b'{"history": {"columns": ["SECID", "CLOSE"], "data": [["SBER", 314.22]]}}'
     respx.get(url__startswith=PRECISION_BASE).mock(
         return_value=httpx.Response(200, content=body, headers={"content-type": "application/json"})
     )
@@ -137,10 +135,7 @@ async def test_json_numbers_are_not_float_after_parsing() -> None:
 @respx.mock
 async def test_json_null_stays_missing_not_zero() -> None:
     """`null` ответа остаётся отсутствием наблюдения и нулём не становится."""
-    body = (
-        b'{"history": {"columns": ["SECID", "OPEN", "CLOSE"],'
-        b' "data": [["SBER", null, 314.22]]}}'
-    )
+    body = b'{"history": {"columns": ["SECID", "OPEN", "CLOSE"], "data": [["SBER", null, 314.22]]}}'
     respx.get(url__startswith=PRECISION_BASE).mock(
         return_value=httpx.Response(200, content=body, headers={"content-type": "application/json"})
     )

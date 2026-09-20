@@ -58,8 +58,15 @@ def _row(day: dt.date) -> dict[str, object]:
 
 async def test_one_series_of_five_saves_value_but_does_not_close_source() -> None:
     """1 успешный ряд + 4 ошибки: ряд сохранён, источник незавершён."""
-    client = _client([[_row(DAY)], IssError("нет ответа"), IssError("нет ответа"),
-                      IssError("нет ответа"), IssError("нет ответа")])
+    client = _client(
+        [
+            [_row(DAY)],
+            IssError("нет ответа"),
+            IssError("нет ответа"),
+            IssError("нет ответа"),
+            IssError("нет ответа"),
+        ]
+    )
     repository = _repository()
 
     with pytest.raises(SourcePartialError) as raised:
@@ -127,9 +134,7 @@ async def test_stop_keeps_priority_over_partial() -> None:
 
 async def test_key_rate_survives_a_broken_curve(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ставка сохранена, кривая остаётся работой, источник не закрыт."""
-    monkeypatch.setattr(
-        cbr, "fetch_key_rate", AsyncMock(return_value={DAY: Decimal("16.5")})
-    )
+    monkeypatch.setattr(cbr, "fetch_key_rate", AsyncMock(return_value={DAY: Decimal("16.5")}))
     monkeypatch.setattr(
         cbr, "fetch_zcyc", AsyncMock(side_effect=ValueError("разметка страницы изменилась"))
     )

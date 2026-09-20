@@ -149,7 +149,7 @@ async def _fetch_series(
         )
     except SourceStoppedError:
         raise
-    except Exception as error:  # noqa: BLE001 — один ряд не должен ронять остальные
+    except Exception as error:
         raise SeriesFetchError(f"{spec.series_id}: {error}") from error
 
     return rows_to_values(rows, spec.value_column)

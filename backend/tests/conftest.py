@@ -123,6 +123,7 @@ async def db_session(database_available: bool, _schema: None) -> AsyncIterator[o
                 "market_equity_aggregate, market_futures_position, market_asset_sector, "
                 "market_dividend_event, "
                 "market_ingest_run, "
+                "market_coverage_boundary, "
                 # Связи инструментов и причины пропусков (spec 008): связь,
                 # открытая одним тестом, меняла бы состав запросов в следующем.
                 "market_asset_futures_link, market_asset_alias, market_session_skip, "
