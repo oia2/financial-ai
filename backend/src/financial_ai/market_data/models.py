@@ -363,5 +363,22 @@ class IngestRun(Base):
     period_from: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
     period_till: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
 
+    # NULL — старый исход либо прогон, ещё не завершивший проверку полноты.
+    coverage_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Причина завершения, включая законный успешный ответ без новых строк.
+    coverage_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CoverageBoundary(Base):
+    """Неизменяемая граница старой области, требующей аудита."""
+
+    __tablename__ = "market_coverage_boundary"
+
+    coverage_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    boundary_session: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

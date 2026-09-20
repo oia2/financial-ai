@@ -31,6 +31,8 @@ class FakeRepository:
         runs: dict[str, set[dt.date]] | None = None,
         by_source: dict[str, set[dt.date]] | None = None,
         stopped: dict[str, set[dt.date]] | None = None,
+        failed: dict[str, set[dt.date]] | None = None,
+        boundary: dt.date | None = None,
     ) -> None:
         self._observed = observed or set()
         self._runs = runs or {}
@@ -39,6 +41,8 @@ class FakeRepository:
         self._by_source = by_source or {}
         # Сессии, у которых последний исход источника — «прервано».
         self._stopped = stopped or {}
+        self._failed = failed or {}
+        self._boundary = boundary
 
     async def sessions_with_observations(
         self,
@@ -64,7 +68,15 @@ class FakeRepository:
     async def sessions_left_unfinished(
         self, sessions: list[dt.date], source_id: str
     ) -> set[dt.date]:
-        return {day for day in sessions if day in self._stopped.get(source_id, set())}
+        return {
+            day
+            for day in sessions
+            if day in self._stopped.get(source_id, set())
+            or day in self._failed.get(source_id, set())
+        }
+
+    async def coverage_boundary(self) -> dt.date | None:
+        return self._boundary
 
 
 def group(group_id: groups.GroupId) -> groups.SourceGroup:
@@ -89,8 +101,8 @@ async def test_группа_закрыта_когда_отработал_каж�
     assert missing == []
 
 
-async def test_непустое_наблюдение_закрывает_сессию_без_журнала() -> None:
-    """Наблюдение — тоже доказательство: диапазонный источник пишет исход на конец периода."""
+async def test_непустое_наблюдение_само_по_себе_не_закрывает_источник() -> None:
+    """Строка не доказывает, что все применимые части источника обработаны."""
     everywhere = {
         key: set(WINDOW)
         for source_id in group(groups.GroupId.GLOBAL).source_ids
@@ -100,7 +112,7 @@ async def test_непустое_наблюдение_закрывает_сесс
 
     missing = await completeness.missing_sessions(repository, group(groups.GroupId.GLOBAL), WINDOW)
 
-    assert missing == []
+    assert missing == WINDOW
 
 
 async def test_наблюдение_одного_источника_не_закрывает_сессию_остальным() -> None:
@@ -130,7 +142,13 @@ async def test_наблюдения_считаются_только_своими
         "IDX_WEIGHT_": set(WINDOW),
         "BRENT_": {WINDOW[0], WINDOW[2]},
     }
-    repository = FakeRepository(by_source=by_source)
+    repository = FakeRepository(
+        runs={
+            source_id: set(WINDOW) - ({WINDOW[1]} if source_id == "brent" else set())
+            for source_id in group(groups.GroupId.GLOBAL).source_ids
+        },
+        by_source=by_source,
+    )
 
     missing = await completeness.missing_sessions(repository, group(groups.GroupId.GLOBAL), WINDOW)
 
@@ -191,3 +209,28 @@ async def test_добранная_после_остановки_сессия_н�
     missing = await completeness.missing_sessions(repository, group(groups.GroupId.QUOTES), WINDOW)
 
     assert missing == []
+
+
+async def test_поздний_failed_перевешивает_частичное_наблюдение() -> None:
+    repository = FakeRepository(
+        runs={"equity_d1": set(WINDOW)},
+        observed=set(WINDOW),
+        failed={"equity_d1": {WINDOW[1]}},
+    )
+
+    missing = await completeness.missing_sessions(repository, group(groups.GroupId.QUOTES), WINDOW)
+
+    assert missing == [WINDOW[1]]
+
+
+async def test_непроверенные_старые_сессии_требуют_аудита() -> None:
+    repository = FakeRepository(
+        runs={"equity_d1": {WINDOW[2]}},
+        boundary=WINDOW[1],
+    )
+
+    audit = await completeness.requires_audit_sessions(
+        repository, group(groups.GroupId.QUOTES), "equity_d1", WINDOW
+    )
+
+    assert audit == set(WINDOW[:2])

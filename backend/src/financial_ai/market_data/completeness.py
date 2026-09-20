@@ -15,10 +15,11 @@
 каком догоне, поэтому обязательным входом оставили одни котировки — иначе
 ранжирование не запускалось бы вовсе.
 
-**Правило здесь одно и объединяет оба признака.** Сессия закрыта, если за неё
-есть непустое наблюдение ИЛИ успешный прогон источника. Первое чинит диапазонные
-источники. Второе сохраняет законный случай «биржа ответила, данных за день
-нет»: наблюдений не будет никогда, а сессия собрана.
+**Строки сами по себе не закрывают работу.** Источник закрывает дату только
+после успешного исхода, проверенного текущей версией правила полноты. Частичные
+строки остаются полезными данными, но не заменяют обработку всего применимого
+набора рядов или пар. Успешная проверка может законно завершиться без новых
+строк; старые неподтверждённые даты требуют аудита и не запускают автодогон.
 """
 
 from __future__ import annotations
@@ -122,24 +123,38 @@ async def closed_sessions(
     if group.session_column is None or not window:
         return set()
 
-    observed = await repository.sessions_with_observations(
-        group.model,
-        group.session_column,
-        group.value_columns,
-        window,
-        key_column=group.key_column,
-        keys=group.keys_of(source_id),
-    )
-    # Пустой ответ биржи — законный исход, и наблюдений после него не будет:
-    # такие сессии закрывает журнал прогонов. Он не отбрасывается, а дополняет
-    # наблюдения.
-    closed = observed | await repository.sessions_with_successful_run(window, source_id)
-
-    # **Прерванный исход перевешивает наблюдения.** Остановка успевает
-    # записать собранное, и строка закрывала бы сессию вопреки отдельному
-    # исходу: остановка после первого инструмента из ста двадцати оставляла
-    # одну строку, и день числился собранным навсегда (FR-050).
+    # Закрывает только успешный исход, проверенный текущей версией правила.
+    # Наличие строки не доказывает, что источник обработал все свои ряды или
+    # все применимые пары «актив — контракт» (FR-032).
+    closed = await repository.sessions_with_successful_run(window, source_id)
+    # Более поздний failed/stopped/running либо старый непроверенный исход
+    # перевешивает прежний успех и частичные наблюдения.
     return closed - await repository.sessions_left_unfinished(window, source_id)
+
+
+async def requires_audit_sessions(
+    repository: MarketDataRepository,
+    group: SourceGroup,
+    source_id: str,
+    window: list[dt.date],
+    *,
+    closed: set[dt.date] | None = None,
+    boundary: dt.date | None = None,
+) -> set[dt.date]:
+    """Старая область без успешного подтверждения текущим правилом."""
+    if not window or group.session_column is None:
+        return set()
+    if boundary is None:
+        boundary = await repository.coverage_boundary()
+    if boundary is None:
+        return set()
+    old_window = [day for day in window if day <= boundary]
+    if not old_window:
+        return set()
+    source_closed = closed
+    if source_closed is None:
+        source_closed = await closed_sessions(repository, group, source_id, old_window)
+    return set(old_window) - source_closed
 
 
 async def incomplete_sessions(
@@ -179,6 +194,24 @@ async def incomplete_sessions(
         if not window:
             continue
 
-        incomplete.update(await missing_sessions(repository, group, window))
+        source_closures = await closed_by_source(repository, group, window)
+        missing = await missing_sessions(repository, group, window, source_closures)
+        # Старый непроверенный диапазон показывается как audit-required, но
+        # не превращается в автоматический исторический догон после миграции.
+        requires_audit: set[dt.date] = set()
+        boundary = await repository.coverage_boundary()
+        for source_id in group.source_ids:
+            requires_audit.update(
+                await requires_audit_sessions(
+                    repository,
+                    group,
+                    source_id,
+                    window,
+                    closed=source_closures[source_id],
+                    boundary=boundary,
+                )
+            )
+        missing = [day for day in missing if day not in requires_audit]
+        incomplete.update(missing)
 
     return sorted(incomplete)

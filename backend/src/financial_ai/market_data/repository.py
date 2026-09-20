@@ -20,11 +20,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from financial_ai.market_data.coverage_rule import CURRENT_COVERAGE_VERSION
 from financial_ai.market_data.models import (
     UNKNOWN_CONTRACT,
     AssetAlias,
     AssetFuturesLink,
     AssetSector,
+    CoverageBoundary,
     EquityAggregate,
     EquityDailyBar,
     FuturesPosition,
@@ -573,6 +575,17 @@ class MarketDataRepository:
         if period_from is None and period_till is None and session_date is not None:
             period_from = period_till = session_date
 
+        # Только нормально завершившийся прогон подтверждается текущим
+        # правилом. Запущенный, упавший или остановленный останется непроверенным.
+        coverage_version = CURRENT_COVERAGE_VERSION if status == "ok" else None
+        coverage_reason = (
+            "completed_with_values"
+            if status == "ok" and rows_written > 0
+            else "completed_no_new_rows"
+            if status == "ok"
+            else None
+        )
+
         statement = (
             insert(IngestRun)
             .values(
@@ -583,6 +596,8 @@ class MarketDataRepository:
                 trigger=trigger,
                 period_from=period_from,
                 period_till=period_till,
+                coverage_version=coverage_version,
+                coverage_reason=coverage_reason,
                 failure_reason=failure_reason,
                 rows_written=rows_written,
                 started_at=started_at,
@@ -598,6 +613,8 @@ class MarketDataRepository:
                     "finished_at": finished_at,
                     "period_from": period_from,
                     "period_till": period_till,
+                    "coverage_version": coverage_version,
+                    "coverage_reason": coverage_reason,
                 },
             )
         )
@@ -646,12 +663,10 @@ class MarketDataRepository:
     async def sessions_left_unfinished(
         self, sessions: list[dt.date], source_id: str
     ) -> set[dt.date]:
-        """Сессии окна, у которых ПОСЛЕДНИЙ исход источника — «прервано».
+        """Сессии, у которых последний исход не подтверждён текущим правилом.
 
-        Прерванный сбор успевает записать собранное, и наблюдение закрывало бы
-        сессию (FR-047) вопреки отдельному исходу: остановка после первого
-        инструмента из двух оставляла строку, и строка объявляла день собранным
-        (FR-050).
+        Частичные наблюдения не перевешивают более позднюю ошибку, остановку,
+        незавершённый `running` или старый успех без версии полноты.
 
         Берётся именно ПОСЛЕДНИЙ исход: сессия, остановленная однажды и
         добранная следующим прогоном, незакрытой не остаётся.
@@ -659,22 +674,42 @@ class MarketDataRepository:
         if not sessions:
             return set()
 
+        latest = await self.latest_run_by_session(sessions, source_id)
+        return {
+            day
+            for (day, _), run in latest.items()
+            if run.status != "ok" or run.coverage_version != CURRENT_COVERAGE_VERSION
+        }
+
+    async def latest_run_by_session(
+        self, sessions: list[dt.date], source_id: str | None = None
+    ) -> dict[tuple[dt.date, str], IngestRun]:
+        """Последний исход каждого источника на каждую дату его периода."""
+        if not sessions:
+            return {}
+
+        filters = [
+            or_(
+                IngestRun.session_date.in_(sessions),
+                and_(
+                    IngestRun.period_from.is_not(None),
+                    IngestRun.period_till.is_not(None),
+                    IngestRun.period_from <= max(sessions),
+                    IngestRun.period_till >= min(sessions),
+                ),
+            )
+        ]
+        if source_id is not None:
+            filters.append(IngestRun.source_id == source_id)
         rows = await self._session.scalars(
             select(IngestRun)
-            .where(
-                or_(
-                    IngestRun.session_date.in_(sessions),
-                    (IngestRun.period_from <= max(sessions))
-                    & (IngestRun.period_till >= min(sessions)),
-                ),
-                IngestRun.source_id == source_id,
-            )
+            .where(*filters)
             .order_by(
                 func.coalesce(IngestRun.finished_at, IngestRun.started_at).desc(),
                 IngestRun.id.desc(),
             )
         )
-        latest: dict[dt.date, str] = {}
+        latest: dict[tuple[dt.date, str], IngestRun] = {}
         for run in rows.all():
             for day in sessions:
                 if day == run.session_date or (
@@ -682,8 +717,16 @@ class MarketDataRepository:
                     and run.period_till is not None
                     and run.period_from <= day <= run.period_till
                 ):
-                    latest.setdefault(day, run.status)
-        return {day for day, status in latest.items() if status == "stopped"}
+                    latest.setdefault((day, run.source_id), run)
+        return latest
+
+    async def coverage_boundary(self) -> dt.date | None:
+        """Последняя сессия старой области, зафиксированная миграцией."""
+        return await self._session.scalar(
+            select(CoverageBoundary.boundary_session).where(
+                CoverageBoundary.coverage_version == CURRENT_COVERAGE_VERSION
+            )
+        )
 
     async def group_coverage(
         self,
@@ -774,8 +817,7 @@ class MarketDataRepository:
     ) -> set[dt.date]:
         """Сессии окна, за которые источник отработал успешно.
 
-        Успешный прогон при нуле наблюдений — законный исход: биржа ответила,
-        данных за день нет. Такая сессия собрана, и повторять её незачем.
+        Успех закрывает работу только если он записан текущей версией правила.
         """
         if not sessions:
             return set()
@@ -788,6 +830,7 @@ class MarketDataRepository:
             select(IngestRun.session_date, IngestRun.period_from, IngestRun.period_till).where(
                 IngestRun.source_id == source_id,
                 IngestRun.status == "ok",
+                IngestRun.coverage_version == CURRENT_COVERAGE_VERSION,
                 or_(
                     IngestRun.session_date.in_(sessions),
                     and_(
@@ -1241,6 +1284,7 @@ class MarketDataRepository:
             select(func.max(IngestRun.started_at)).where(
                 IngestRun.source_id == source_id,
                 IngestRun.status == "ok",
+                IngestRun.coverage_version == CURRENT_COVERAGE_VERSION,
             )
         )
 

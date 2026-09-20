@@ -16,10 +16,13 @@ import datetime as dt
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import coverage
+from financial_ai.market_data import completeness, coverage, groups
+from financial_ai.market_data.calendar import TradingCalendar
+from financial_ai.market_data.models import CoverageBoundary
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository, PositionRow
 
 pytestmark = pytest.mark.db
@@ -69,6 +72,16 @@ async def _seed(
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
     if quotes:
         await repository.upsert_daily_bars([_bar(day) for day in quotes])
+        for day in quotes:
+            await repository.record_run(
+                run_id=f"seed-quotes-{day}",
+                source_id="equity_d1",
+                status="ok",
+                started_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+                finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+                session_date=day,
+                rows_written=1,
+            )
     if positions:
         await repository.upsert_positions(positions)
     if sectors:
@@ -109,6 +122,68 @@ async def test_full_window_has_no_gaps(db_session: AsyncSession, settings: Setti
 
     assert quotes["coverage_ratio"] == 1.0
     assert quotes["gaps"] == 0
+
+
+async def test_legacy_coverage_requires_audit_without_automatic_backfill(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Boundary captures old empty/successful dates and is not an auto-catchup job."""
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions(SESSIONS)
+    await repository.upsert_asset("EQ_AST_SBER", "SBER", ASOF)
+    await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
+    await repository.upsert_daily_bars([_bar(day) for day in SESSIONS[:2]])
+    db_session.add(CoverageBoundary(coverage_version=1, boundary_session=SESSIONS[2]))
+    # A legacy `ok` must not become proof merely because it has zero failures.
+    await repository.record_run(
+        run_id="legacy-ok",
+        source_id="equity_d1",
+        status="ok",
+        started_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+        finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+        session_date=SESSIONS[0],
+        rows_written=1,
+    )
+    await db_session.flush()
+    from financial_ai.market_data.models import IngestRun
+
+    await db_session.execute(
+        update(IngestRun).where(IngestRun.run_id == "legacy-ok").values(coverage_version=None)
+    )
+    await db_session.commit()
+
+    report = await coverage.build_report(db_session, settings, ASOF)
+    quotes = _group(report, "quotes")
+    assert quotes["requires_audit"] >= 3
+    assert quotes["sessions_covered"] == 0
+
+    automatic = await completeness.incomplete_sessions(
+        repository,
+        TradingCalendar(repository),
+        settings,
+        ASOF,
+        closed=SESSIONS,
+    )
+    assert not set(automatic) & set(SESSIONS[:3])
+    assert set(automatic) & set(SESSIONS[3:])
+
+    # An explicit successful repair can validate its own date without moving
+    # the one-time boundary; subsequent fresh failures still stay incomplete.
+    await repository.record_run(
+        run_id="repair-one-date",
+        source_id="equity_d1",
+        status="ok",
+        started_at=dt.datetime(2026, 9, 4, 19, tzinfo=dt.UTC),
+        finished_at=dt.datetime(2026, 9, 4, 19, tzinfo=dt.UTC),
+        session_date=SESSIONS[0],
+        rows_written=1,
+    )
+    await db_session.commit()
+    closed = await completeness.closed_sessions(
+        repository, groups.BY_ID[groups.GroupId.QUOTES], "equity_d1", SESSIONS
+    )
+    assert SESSIONS[0] in closed
+    assert await repository.coverage_boundary() == SESSIONS[2]
 
 
 async def test_group_without_a_single_row_shows_zeroes_not_absence(
@@ -310,6 +385,15 @@ async def test_report_is_computed_not_stored(db_session: AsyncSession, settings:
     before = _group(await coverage.build_report(db_session, settings, ASOF), "quotes")
 
     await repository.upsert_daily_bars([_bar(SESSIONS[1])])
+    await repository.record_run(
+        run_id="computed-report-second-session",
+        source_id="equity_d1",
+        status="ok",
+        started_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+        finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
+        session_date=SESSIONS[1],
+        rows_written=1,
+    )
     await db_session.commit()
     after = _group(await coverage.build_report(db_session, settings, ASOF), "quotes")
 
