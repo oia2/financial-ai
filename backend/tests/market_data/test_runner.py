@@ -42,7 +42,12 @@ ASOF = SESSIONS[-1]
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(market_data_catchup_window_sessions=5)
+    return Settings(
+        market_data_catchup_window_sessions=5,
+        market_data_price_window_sessions=5,
+        market_data_global_window_sessions=5,
+        market_data_positions_window_sessions=2,
+    )
 
 
 def _bar(day: dt.date) -> DailyBar:
@@ -298,6 +303,23 @@ async def test_only_selected_groups_are_collected(
     await _wait_until_idle(instance)
 
     assert fake.source_ids == frozenset({"equity_d1"})
+
+
+async def test_positions_only_uses_its_short_window_and_ignores_other_group_gaps(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(db_session, [SESSIONS[4]])
+    fake = FakeCatchUp()
+    monkeypatch.setattr(ingest, "catch_up", fake)
+
+    instance = CatchupRunner(settings)
+    await instance.start(group_ids=["positions"])
+    await _wait_until_idle(instance)
+
+    assert fake.source_ids == frozenset({"futures_positions"})
+    # У позиций окно в две сессии, поэтому более старые дыры агрегатов/цен
+    # не добавляются в ручной план.
+    assert fake.visited == [SESSIONS[3]]
 
 
 async def test_range_narrows_the_plan(

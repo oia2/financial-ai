@@ -495,16 +495,27 @@ class CatchupRunner:
             if report.needs_backfill:
                 raise BackfillRequiredError("в хранилище нет наблюдений: нужна первичная загрузка")
 
-            # Что брать в сбор — считается по ВСЕМ группам с осью сессий, тем же
-            # правилом, что и в ежедневном цикле. Прежде ручной догон шёл по
-            # отчёту о котировках, и сессия с собранными барами и пустыми
-            # позициями в план не попадала: на стенде 2026-09-18 он запросил
-            # четыре сессии там, где недобранных были сотни (FR-031, FR-032).
-            missing = await completeness.incomplete_sessions(
-                repository, calendar, self._settings, asof, closed=report.window
-            )
+            # Ручной выбор ограничивает и даты, и источники. Каждая выбранная
+            # группа вносит только свои собственные окна; обязательность для
+            # ML не должна протаскивать несвязанные старые дыры в этот план.
+            missing: set[dt.date] = set()
+            selected_historical = [group for group in selected if group.has_history]
+            for group in selected_historical:
+                depth = group.window_sessions(self._settings)
+                if depth is None:
+                    continue
+                window = await calendar.window(asof, depth)
+                group_missing = set(await completeness.missing_sessions(repository, group, window))
+                audit: set[dt.date] = set()
+                for source_id in group.source_ids:
+                    audit.update(
+                        await completeness.requires_audit_sessions(
+                            repository, group, source_id, window
+                        )
+                    )
+                missing.update(group_missing - audit)
 
-        sessions, clamped = _clamp(missing, date_from, date_till)
+        sessions, clamped = _clamp(sorted(missing), date_from, date_till)
         if not sessions:
             raise NothingToCatchUpError("пропущенных сессий нет")
 
