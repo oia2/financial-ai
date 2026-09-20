@@ -10,9 +10,11 @@ HTTP-библиотека здесь не нужна. Поведение пов�
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -388,7 +390,7 @@ class IssClient:
             else:
                 if response.status_code == httpx.codes.OK:
                     try:
-                        payload: dict[str, Any] = response.json()
+                        payload: dict[str, Any] = _loads(response.content)
                     except ValueError as error:
                         raise IssError(f"ответ MOEX ISS не является JSON: {error}") from error
                     return payload
@@ -415,6 +417,19 @@ class IssClient:
         raise IssError(
             f"MOEX ISS недоступен после {self._config.retries} попыток ({last_error}): {url}"
         )
+
+
+def _loads(body: bytes) -> dict[str, Any]:
+    """Разобрать ответ биржи, переводя дробные числа сразу в ``Decimal``.
+
+    ``response.json()`` разбирает их в ``float``, и на этом значение биржи уже
+    искажено: `123456789.123456789` становится `123456789.12345679`. Перевод в
+    ``Decimal`` после этого потерю не возвращает — восстанавливать нечего.
+    Поэтому точка перевода одна и стоит она в разборе, а не у потребителя.
+
+    Целые числа `json` разбирает в ``int`` и без нас: там теряться нечему.
+    """
+    return json.loads(body, parse_float=Decimal)
 
 
 def _rows_to_dicts(columns: list[str], data: list[list[Any]]) -> list[dict[str, Any]]:
