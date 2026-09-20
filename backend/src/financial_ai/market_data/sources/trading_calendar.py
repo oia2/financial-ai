@@ -37,7 +37,14 @@ async def sync_trading_calendar(
 
     Возвращает число добавленных сессий. Уже известные не дублируются.
     """
-    start = date_from or EARLIEST_DATE
+    if date_from is not None:
+        start = date_from
+    else:
+        # Daily refreshes need only a bounded overlap before the saved tail.
+        # Using today's date here would strand the calendar after downtime;
+        # anchoring to the last saved session still fetches the entire gap.
+        latest = await repository.latest_trading_session()
+        start = latest - dt.timedelta(days=14) if latest is not None else EARLIEST_DATE
     end = date_till or dt.date.today()
 
     rows = await client.fetch_security_history(
