@@ -43,6 +43,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from financial_ai.config import Settings
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,11 @@ USER_AGENT = (
 
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 RETRY_BACKOFF_FACTOR = 1.7
+
+# Сколько снимков поиска держать, чтобы не спрашивать их второй раз. Предел
+# нужен, потому что окно позиций — 82 сессии на десятки контрактов: без него
+# прогон догона держал бы в памяти тысячи разобранных ответов.
+SNAPSHOT_CACHE_LIMIT = 512
 
 # Строка таблицы с открытыми позициями. Соседние строки — число держателей и
 # изменения за день; они относятся к инженерии признаков и не переносятся.
@@ -167,6 +173,14 @@ class PositionsClient:
         self._state = PageState()
         self._requests_made = 0
         self._first_available: dict[str, dt.date | None] = {}
+        # Снимки, полученные при поиске первой доступной даты. Поиск и сбор
+        # спрашивают одни и те же пары «контракт — дата», и без этого удачная
+        # проба выбрасывалась, а через несколько строк запрашивалась снова
+        # (FR-022).
+        #
+        # Живёт ровно столько, сколько клиент, то есть один прогон, и ограничен
+        # по числу: долговременным хранилищем HTTP-ответов это быть не должно.
+        self._snapshots: dict[tuple[str, dt.date], PositionSnapshot | None] = {}
 
     async def __aenter__(self) -> PositionsClient:
         if self._client is None:
@@ -208,6 +222,14 @@ class PositionsClient:
         наблюдение о запрошенной сессии значило бы передатировать его.
         """
         code = contract_code.strip().upper()
+
+        # Снимок этой пары мог прийти при поиске первой доступной даты. Второй
+        # раз он не спрашивается: обращения, заведомо не приносящие нового,
+        # не выполняются (FR-022, FR-058e).
+        cached = self._snapshots.get((code, day))
+        if cached is not None:
+            return cached
+
         await self._ensure_state(day)
 
         instrument = self._state.instruments.get(code)
@@ -230,7 +252,15 @@ class PositionsClient:
                 snapshot.trade_date,
             )
             return None
+
+        self._remember(code, day, snapshot)
         return snapshot
+
+    def _remember(self, code: str, day: dt.date, snapshot: PositionSnapshot) -> None:
+        """Запомнить полученный снимок на время прогона."""
+        if len(self._snapshots) >= SNAPSHOT_CACHE_LIMIT:
+            return
+        self._snapshots[(code, day)] = snapshot
 
     def searched_for_first_date(self, contract_code: str) -> bool:
         """Выполнялся ли уже поиск первой доступной даты по этому контракту.
@@ -244,21 +274,24 @@ class PositionsClient:
     async def first_available_date(
         self, contract_code: str, sessions: list[dt.date]
     ) -> dt.date | None:
-        """Первая сессия, за которую по контракту вообще есть данные.
+        """Самая ранняя сессия окна, за которую по контракту НАЙДЕНЫ данные.
 
-        ``None`` означает «искали по всему переданному окну и не нашли», если
-        поиск выполнялся, и «ещё не искали», если сессий не передали. Различить
-        помогает :meth:`searched_for_first_date`.
+        Это **нижняя граница существования, а не дата появления контракта**.
+        Найденная дата доказывает, что инструмент тогда уже был; про более
+        раннее время она не говорит ничего.
 
-        **Отметка из собранных данных сюда не передаётся, и это не упущение.**
-        Самая ранняя собранная сессия доказывает, что инструмент тогда
-        существовал, но про более раннее время не говорит ничего. Подстановка её
-        как ответа запрещала бы догон истории навсегда — сессии старше уже
-        собранных пропускались бы как несуществующие. Вызывающий использует её,
-        чтобы вовсе не звать этот поиск для сессий не старше отметки.
+        ``None`` означает «не найдено», и доказательством отсутствия истории
+        это НЕ ЯВЛЯЕТСЯ. Сетка проб редкая — шаг задаётся настройкой, — а у
+        позиций законно бывают пустые даты: контракт существует, а сделок в
+        этот день не было. Одна отрицательная проба в такой день объявляла бы
+        несуществующим контракт, торгуемый годами, и данные между пробами
+        терялись бы целиком (FR-032).
 
-        Поиск — как в оригинале: редкая сетка проб, затем уточнение внутри
-        последнего шага. Выполняется однократно за время жизни клиента.
+        Ошибка обращения наружу **передаётся**: раньше она превращалась в
+        «данных нет», и сбой сети был неотличим от отсутствия истории.
+
+        Выполняется однократно за время жизни клиента; удачные пробы
+        сохраняются и вторично не запрашиваются.
         """
         code = contract_code.strip().upper()
         if code in self._first_available:
@@ -273,12 +306,19 @@ class PositionsClient:
 
         hit: int | None = None
         for position in probes:
+            # Исключение не глушится: незавершённая проба оставляет границу
+            # неизвестной, а не отрицательной.
             if await self._has_data(code, sessions[position]):
                 hit = position
                 break
 
         if hit is None:
-            logger.info("позиции %s: данных нет ни в одной пробе окна", code)
+            logger.info(
+                "позиции %s: ни одна из %d проб окна не дала значений; "
+                "нижняя граница остаётся неизвестной",
+                code,
+                len(probes),
+            )
             self._first_available[code] = None
             return None
 
@@ -288,15 +328,18 @@ class PositionsClient:
                 found = sessions[position]
                 break
 
-        logger.info("позиции %s: первая доступная дата %s", code, found)
+        logger.info("позиции %s: данные найдены начиная с %s", code, found)
         self._first_available[code] = found
         return found
 
     async def _has_data(self, contract_code: str, day: dt.date) -> bool:
-        try:
-            snapshot = await self.fetch(contract_code, day)
-        except PositionsSourceError:
-            return False
+        """Есть ли за эту дату значения по контракту.
+
+        Ошибка обмена НЕ ловится. Пока она возвращала ``False``, упавшая проба
+        читалась как доказанное отсутствие данных: все обращения могли упасть,
+        а источник заканчивался исходом «ок» с нулём строк (FR-032).
+        """
+        snapshot = await self.fetch(contract_code, day)
         return snapshot is not None and snapshot.has_values
 
     # --- внутреннее ---------------------------------------------------------
@@ -354,7 +397,10 @@ class PositionsClient:
 
         for attempt in range(1, self._settings.market_data_positions_retries + 1):
             if attempt > 1 and self.should_stop is not None and self.should_stop():
-                raise PositionsSourceError(f"повтор отменён остановкой ({last_error})")
+                # Отдельный исход, а не ошибка источника: остановка — команда
+                # человека, и выдавать её за неисправность биржи нельзя
+                # (FR-050, FR-058j).
+                raise SourceStoppedError(detail=f"повтор отменён остановкой ({last_error})")
             try:
                 response = await self._client.post(
                     REQUEST_URL,

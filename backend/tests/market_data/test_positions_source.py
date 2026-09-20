@@ -297,9 +297,12 @@ async def test_pause_is_kept_between_batches(monkeypatch: pytest.MonkeyPatch) ->
         market_data_positions_batch_size=2,
         market_data_positions_batch_pause_seconds=0.25,
     )
+    # Даты РАЗНЫЕ: повтор одной и той же пары «контракт — дата» второго
+    # обращения больше не делает, и пять одинаковых вызовов проверяли бы уже
+    # не темп, а кеш снимков (T206).
     async with PositionsClient(settings, client=recorder.client()) as client:
-        for _ in range(5):
-            await client.fetch("SBRF_F", SESSION)
+        for shift in range(5):
+            await client.fetch("SBRF_F", SESSION - dt.timedelta(days=shift))
 
     # Шесть обращений: одно за состоянием формы и пять за данными.
     assert len(recorder.requests) == 6
@@ -321,8 +324,8 @@ async def test_batch_size_is_configurable(monkeypatch: pytest.MonkeyPatch) -> No
         market_data_positions_batch_pause_seconds=0.5,
     )
     async with PositionsClient(settings, client=recorder.client()) as client:
-        for _ in range(5):
-            await client.fetch("SBRF_F", SESSION)
+        for shift in range(5):
+            await client.fetch("SBRF_F", SESSION - dt.timedelta(days=shift))
 
     assert pauses == [0.5]
 
@@ -484,10 +487,21 @@ async def test_share_without_a_contract_is_not_asked(db_session: AsyncSession) -
 
 
 @pytest.mark.db
-async def test_period_before_the_instrument_existed_is_not_asked(
+async def test_date_before_the_found_lower_bound_is_still_asked(
     db_session: AsyncSession,
 ) -> None:
-    """FR-024b: до первой доступной даты данных нет и быть не может."""
+    """Ненайденная нижняя граница отсутствием данных не является.
+
+    Прежде этот тест требовал обратного: сессия раньше найденной первой
+    доступной даты не спрашивалась вовсе. Найденная дата доказывает, что
+    инструмент тогда УЖЕ БЫЛ, и ничего не говорит про более раннее время
+    (FR-034). А сетка проб редкая, и пустые даты у позиций законны: контракт
+    существует, сделок в этот день нет.
+
+    Из-за этого правила догон за 2026-08-10…14 пропускал 69 активов из 69 при
+    нулевых обращениях. Теперь нужная дата проверяется обращением: незнание
+    основанием не спрашивать не является (T206, FR-032).
+    """
     await _seed_assets(db_session, ["SBER"])
     client = FakePositionsClient(first_available={"SBRF_F": SESSION + dt.timedelta(days=7)})
 
@@ -498,8 +512,10 @@ async def test_period_before_the_instrument_existed_is_not_asked(
         sessions=[SESSION],
     )
 
-    assert client.calls == []
-    assert written == 0
+    # Обращение выполнено — и принесло значения. Ровно их прежнее правило и
+    # теряло, не спросив ни разу.
+    assert client.calls == [("SBRF_F", SESSION)]
+    assert written == 1
 
 
 @pytest.mark.db
@@ -565,22 +581,31 @@ async def test_sessions_older_than_collected_are_still_requested(
 
 
 @pytest.mark.db
-async def test_contract_without_any_data_is_not_asked_again(
+async def test_contract_without_probe_hits_is_still_asked(
     db_session: AsyncSession,
 ) -> None:
-    """Искали по всему окну и не нашли — обращения бесполезны (FR-022)."""
+    """Отрицательные пробы отсутствия истории не доказывают.
+
+    Прежде этот тест требовал обратного — «искали по всему окну и не нашли,
+    значит обращения бесполезны», — и это было правилом потери данных: одна
+    отрицательная проба в законно пустой день закрывала контракт, торгуемый
+    годами, а данные между пробами терялись целиком.
+
+    Спрошенная пара без значений даёт `EmptyPositionsError`: ноль значений на
+    выполненных обращениях — неуспех, а не успешная пустота (FR-018, FR-032).
+    """
     await _seed_assets(db_session, ["SBER"])
     client = FakePositionsClient(available={})
 
-    written = await positions.sync_positions(
-        client,  # type: ignore[arg-type]
-        MarketDataRepository(db_session),
-        SESSION,
-        sessions=[SESSION],
-    )
+    with pytest.raises(positions.EmptyPositionsError):
+        await positions.sync_positions(
+            client,  # type: ignore[arg-type]
+            MarketDataRepository(db_session),
+            SESSION,
+            sessions=[SESSION],
+        )
 
-    assert written == 0
-    assert client.calls == []
+    assert client.calls == [("SBRF_F", SESSION)]
 
 
 @pytest.mark.db
@@ -669,10 +694,8 @@ async def test_остановка_прерывает_повторы_обраще
     """
     import httpx
 
-    from financial_ai.market_data.sources.positions_client import (
-        PositionsClient,
-        PositionsSourceError,
-    )
+    from financial_ai.market_data.interrupt import SourceStoppedError
+    from financial_ai.market_data.sources.positions_client import PositionsClient
 
     attempts = {"n": 0}
 
@@ -683,7 +706,9 @@ async def test_остановка_прерывает_повторы_обраще
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as http:
         client = PositionsClient(Settings(), http, should_stop=lambda: True)
-        with pytest.raises(PositionsSourceError, match="повтор отменён остановкой"):
+        # Остановка — команда человека, и выдавать её за неисправность биржи
+        # нельзя: исход отдельный (T206, FR-050).
+        with pytest.raises(SourceStoppedError, match="повтор отменён остановкой"):
             await client.fetch("SBRF_F", SESSION)
 
     # Одна попытка, а не четыре: повторы отменены остановкой.
@@ -695,10 +720,8 @@ async def test_без_остановки_повторы_идут_как_преж
     """Обратная форма: отмена повторов не должна отменить сами повторы."""
     import httpx
 
-    from financial_ai.market_data.sources.positions_client import (
-        PositionsClient,
-        PositionsSourceError,
-    )
+    from financial_ai.market_data.interrupt import SourceStoppedError
+    from financial_ai.market_data.sources.positions_client import PositionsClient
 
     attempts = {"n": 0}
 
@@ -717,3 +740,88 @@ async def test_без_остановки_повторы_идут_как_преж
             await client.fetch("SBRF_F", SESSION)
 
     assert attempts["n"] == 3
+
+
+# --- T206: сбой, отсутствие и повторное использование снимка -----------------
+#
+# Три вещи, которые этот источник раньше путал между собой: неудавшееся
+# обращение, доказанное отсутствие данных и уже полученный ответ. `_has_data()`
+# ловил ошибку обмена и возвращал False, поэтому упавшая проба читалась как
+# «данных нет», а все упавшие пробы давали источнику исход «ок» с нулём строк.
+
+
+async def test_failed_probe_is_not_read_as_absence() -> None:
+    """Сбой обращения при поиске передаётся наружу, а не становится «нет данных»."""
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="сервис недоступен")
+
+    sessions = [SESSION - dt.timedelta(days=n) for n in range(10, 0, -1)]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(failing))
+    async with PositionsClient(_settings(), client=http) as client:
+        with pytest.raises(PositionsSourceError):
+            await client.first_available_date("SBRF_F", sessions)
+
+    # И отрицательный ответ при этом не запомнен: иначе один сбой сети закрыл бы
+    # контракт на весь прогон.
+    assert client.searched_for_first_date("SBRF_F") is False
+
+
+async def test_failed_probe_does_not_cache_absence_for_later_calls() -> None:
+    """После сбоя поиск повторяется, а не отвечает из запомненного «нет»."""
+    calls = {"n": 0}
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(503, text="сервис недоступен")
+        return httpx.Response(200, text=LIVE_STATE + LIVE_TABLE)
+
+    # Окно кончается SESSION: подделка отдаёт снимок именно за эту дату, и
+    # удачная проба в принципе возможна — иначе тест не отличил бы
+    # «спросили снова» от «ответили запомненным нет».
+    sessions = [SESSION - dt.timedelta(days=n) for n in range(3, -1, -1)]
+    http = httpx.AsyncClient(transport=httpx.MockTransport(flaky))
+    async with PositionsClient(_settings(), client=http) as client:
+        with pytest.raises(PositionsSourceError):
+            await client.first_available_date("SBRF_F", sessions)
+        # Второй заход обязан снова пойти в источник — и, раз источник ожил,
+        # найти дату. Запомненное «нет» ответило бы `None`, не спросив.
+        spent = calls["n"]
+        found = await client.first_available_date("SBRF_F", sessions)
+
+        assert calls["n"] > spent
+        assert found is not None
+
+
+async def test_found_snapshot_is_not_requested_twice() -> None:
+    """Снимок, полученный при поиске, повторно не запрашивается (FR-022)."""
+    recorder = Recorder()
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        found = await client.first_available_date("SBRF_F", [SESSION])
+        assert found == SESSION
+        spent = len(recorder.requests)
+
+        # Ровно та пара «контракт — дата», которую только что принёс поиск.
+        snapshot = await client.fetch("SBRF_F", SESSION)
+
+        assert snapshot is not None
+        assert len(recorder.requests) == spent
+
+
+async def test_stop_cancels_retries_with_its_own_outcome() -> None:
+    """Остановка прекращает повторы и называется своим исходом, не ошибкой источника."""
+    from financial_ai.market_data.interrupt import SourceStoppedError
+
+    attempts = {"n": 0}
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503, text="сервис недоступен")
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(failing))
+    client = PositionsClient(_settings(), http, should_stop=lambda: True)
+    with pytest.raises(SourceStoppedError):
+        await client.fetch("SBRF_F", SESSION)
+
+    assert attempts["n"] == 1
