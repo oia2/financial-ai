@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
@@ -80,7 +81,13 @@ async def sync_iss_series_range(
     """
     written = 0
     for spec in specs:
-        values = await _fetch_series(client, spec, date_from, date_till)
+        should_stop = getattr(client, "should_stop", None)
+        if should_stop is not None and should_stop():
+            raise SourceStoppedError(written)
+        try:
+            values = await _fetch_series(client, spec, date_from, date_till)
+        except SourceStoppedError as error:
+            raise SourceStoppedError(written + error.rows_written) from error
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
     return written
@@ -99,6 +106,8 @@ async def _fetch_series(
             market=spec.market,
             board=spec.board,
         )
+    except SourceStoppedError:
+        raise
     except Exception as error:  # noqa: BLE001 — один ряд не должен ронять остальные
         logger.warning("глобальный ряд %s не собран: %s", spec.series_id, error)
         return {}

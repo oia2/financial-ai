@@ -32,6 +32,18 @@ from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
 
 
+async def closed_sources_for(repository: MarketDataRepository, session_date: dt.date) -> set[str]:
+    """Сбор пропускает ровно те источники, которые сводка считает закрытыми."""
+    closed: set[str] = set()
+    for group in groups.GROUPS:
+        if not group.has_history:
+            continue
+        for source_id, days in (await closed_by_source(repository, group, [session_date])).items():
+            if session_date in days:
+                closed.add(source_id)
+    return closed
+
+
 async def closed_by_source(
     repository: MarketDataRepository,
     group: SourceGroup,

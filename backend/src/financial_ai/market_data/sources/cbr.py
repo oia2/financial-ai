@@ -28,6 +28,7 @@ from decimal import Decimal
 import httpx
 from bs4 import BeautifulSoup
 
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,8 @@ async def _get(
 
     try:
         for attempt in range(1, config.retries + 1):
+            if should_stop is not None and should_stop():
+                raise SourceStoppedError()
             try:
                 response = await http.get(url, params=params)
             except httpx.HTTPError as error:
@@ -242,7 +245,7 @@ async def _get(
                 last_error = f"HTTP {response.status_code}"
 
             if should_stop is not None and should_stop():
-                raise CbrError(f"повтор отменён остановкой ({last_error})")
+                raise SourceStoppedError(detail=f"повтор отменён остановкой ({last_error})")
 
             if attempt < config.retries:
                 logger.warning(

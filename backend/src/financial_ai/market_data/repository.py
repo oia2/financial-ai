@@ -630,48 +630,6 @@ class MarketDataRepository:
         rows = await self._session.scalars(statement.distinct())
         return set(rows.all())
 
-    async def sources_closed_for(self, session_date: dt.date) -> set[str]:
-        """Источники, ЗАКРЫТЫЕ за эту сессию: последний исход — успех.
-
-        Сессия попадает в план из-за НЕДОСТАЮЩЕГО источника, и спрашивать
-        заодно собранные значит делать обращения, заведомо не приносящие
-        данных: на стенде котировки числились собранными по всем 314 сессиям и
-        всё равно запрашивались заново при каждом заходе в сессию (FR-058k,
-        FR-022).
-
-        Цена правила названа прямо: переиздание бара биржей за уже закрытую
-        сессию сбор сам не подхватит. Раньше подхватывал случайно — только
-        пока сессия оставалась незакрытой по какому-нибудь другому источнику.
-        """
-        rows = await self._session.execute(
-            select(IngestRun.source_id, IngestRun.status)
-            .where(IngestRun.session_date == session_date)
-            .distinct(IngestRun.source_id)
-            .order_by(IngestRun.source_id, IngestRun.started_at.desc(), IngestRun.id.desc())
-        )
-        return {source_id for source_id, status in rows.all() if status == "ok"}
-
-    async def sources_collected_in_run(self, run_id: str, session_date: dt.date) -> set[str]:
-        """Источники, уже собранные ЭТИМ прогоном за эту сессию.
-
-        Прогон, вернувшийся к недобранной сессии, добирает недостающее, а не
-        проходит круг заново: на стенде 2026-09-19 после остановки и
-        продолжения котировки за одну сессию спрашивались трижды, все три раза
-        успешно (FR-058e, FR-022).
-
-        Счёт идёт В ПРЕДЕЛАХ ПРОГОНА, а не по всей истории. Биржа переиздаёт
-        бары, и следующий прогон обязан забрать поправку: правило «уже собрано»
-        поверх всей истории отменило бы её молча.
-        """
-        rows = await self._session.scalars(
-            select(IngestRun.source_id).where(
-                IngestRun.run_id == run_id,
-                IngestRun.session_date == session_date,
-                IngestRun.status == "ok",
-            )
-        )
-        return set(rows.all())
-
     async def sessions_left_unfinished(
         self, sessions: list[dt.date], source_id: str
     ) -> set[dt.date]:
@@ -688,16 +646,31 @@ class MarketDataRepository:
         if not sessions:
             return set()
 
-        rows = await self._session.execute(
-            select(IngestRun.session_date, IngestRun.status)
+        rows = await self._session.scalars(
+            select(IngestRun)
             .where(
-                IngestRun.session_date.in_(sessions),
+                or_(
+                    IngestRun.session_date.in_(sessions),
+                    (IngestRun.period_from <= max(sessions))
+                    & (IngestRun.period_till >= min(sessions)),
+                ),
                 IngestRun.source_id == source_id,
             )
-            .distinct(IngestRun.session_date)
-            .order_by(IngestRun.session_date, IngestRun.started_at.desc(), IngestRun.id.desc())
+            .order_by(
+                func.coalesce(IngestRun.finished_at, IngestRun.started_at).desc(),
+                IngestRun.id.desc(),
+            )
         )
-        return {day for day, status in rows.all() if status == "stopped" and day is not None}
+        latest: dict[dt.date, str] = {}
+        for run in rows.all():
+            for day in sessions:
+                if day == run.session_date or (
+                    run.period_from is not None
+                    and run.period_till is not None
+                    and run.period_from <= day <= run.period_till
+                ):
+                    latest.setdefault(day, run.status)
+        return {day for day, status in latest.items() if status == "stopped"}
 
     async def group_coverage(
         self,
@@ -850,7 +823,7 @@ class MarketDataRepository:
         return await self._session.scalar(select(func.max(IngestRun.started_at)))
 
     async def last_attempt_by_session(
-        self, sessions: list[dt.date], source_id: str
+        self, sessions: list[dt.date], source_id: str | None = None
     ) -> dict[dt.date, dt.datetime]:
         """Когда по каждой сессии в последний раз ПЫТАЛИСЬ собрать источник.
 
@@ -861,12 +834,12 @@ class MarketDataRepository:
         """
         if not sessions:
             return {}
+        filters: list[ColumnElement[bool]] = [IngestRun.session_date.in_(sessions)]
+        if source_id is not None:
+            filters.append(IngestRun.source_id == source_id)
         rows = await self._session.execute(
             select(IngestRun.session_date, func.max(IngestRun.started_at))
-            .where(
-                IngestRun.session_date.in_(sessions),
-                IngestRun.source_id == source_id,
-            )
+            .where(*filters)
             .group_by(IngestRun.session_date)
         )
         return {day: at for day, at in rows.all() if day is not None and at is not None}

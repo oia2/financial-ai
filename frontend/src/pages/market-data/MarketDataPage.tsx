@@ -210,6 +210,8 @@ export function MarketDataPage() {
           journalSkipsTotal={runs.data?.skips_total ?? 0}
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
+          expectedSession={coverage.data?.next_expected_session ?? null}
+          nextSessionTime={coverage.data ? localThreshold(coverage.data.ingest_after_close) : null}
           nextBlocked={coverage.data?.next_session_blocked === true}
           nextClosed={coverage.data?.next_session_closed === true}
           emptyStorage={emptyStorage}
@@ -256,6 +258,8 @@ export function MarketDataPage() {
       {coverage.data !== undefined && (
         <CollectionCalendar
           nextSession={coverage.data.next_session}
+          expectedSession={coverage.data.next_expected_session ?? null}
+          nextBlocked={coverage.data.next_session_blocked === true}
           nextClosed={coverage.data.next_session_closed === true}
           threshold={{
             local: localThreshold(coverage.data.ingest_after_close),

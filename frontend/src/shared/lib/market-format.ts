@@ -28,6 +28,24 @@ export function formatIsoDate(value: string | null | undefined): string {
   return value.slice(0, 10).split('-').reverse().join('.');
 }
 
+/** Дата сбора с порогом: для московской даты сегодня вместо числа пишется «сегодня». */
+export function formatCollectionStart(
+  sessionDate: string | null | undefined,
+  localTime: string | null | undefined,
+): string {
+  if (!sessionDate) return DASH;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  const today = `${value('year')}-${value('month')}-${value('day')}`;
+  const date = sessionDate.slice(0, 10) === today ? 'сегодня' : formatIsoDate(sessionDate);
+  return localTime ? `${date} после ${localTime}` : date;
+}
+
 /**
  * Отметка времени прогона без года: день, месяц, часы, минуты.
  *

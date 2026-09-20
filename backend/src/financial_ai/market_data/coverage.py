@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import completeness, groups, plan
-from financial_ai.market_data.calendar import TradingCalendar, moscow_today
+from financial_ai.market_data.calendar import TradingCalendar, moscow_now
 from financial_ai.market_data.repository import MarketDataRepository
 
 
@@ -174,6 +174,19 @@ async def _source_outcomes(
             if closed is None:
                 closed = await completeness.closed_sessions(repository, group, source_id, window)
             count = len(closed)
+
+            # Неудача за ЗАКРЫТУЮ сессию не показывается: данные получены
+            # другим путём — диапазонный запрос приносит триста сессий одним
+            # ответом, — и посессионные попытки после него падают, ничего не
+            # меняя. Сводка говорила «собрано 314 из 314» и рядом «неудач по
+            # дням 44»: оба утверждения верны по отдельности и противоречат
+            # друг другу вместе (FR-058m).
+            broken = [
+                failure
+                for failure in broken
+                if dt.date.fromisoformat(str(failure["session_date"])) not in closed
+            ]
+
             # Три состояния, а не два. «Не всё покрыто» и «источник падал» —
             # разные вещи: первое бывает на любом недособранном окне и ничего
             # не требует, второе требует вмешательства. Пока состояний было
@@ -302,7 +315,7 @@ async def build_report(
     # или ждут выдержки, — дата не называется вовсе. Подставлять вместо неё
     # ближайший торговый день значит обещать сбор, которого не будет; ближайший
     # день остаётся ответом только там, где недостающего нет (FR-054).
-    from financial_ai.market_data.advance import selectable, within_attempt_limit
+    from financial_ai.market_data.advance import selectable, session_is_closed, within_attempt_limit
 
     missing = sorted(pending)
     # Два разных ожидания, и путать их нельзя. Сессию, ждущую выдержки после
@@ -331,7 +344,19 @@ async def build_report(
         next_session = None
         next_blocked = True
     else:
-        next_session = await calendar.latest_session(moscow_today())
+        # Недостающего нет: возьмут СЛЕДУЮЩУЮ сессию, а её календарь не знает —
+        # он строится по состоявшимся торгам. Называть последнюю собранную
+        # значило бы обещать собрать уже собранное (FR-054).
+        next_session = None
+
+    now = moscow_now()
+    expected_session = None
+    if not missing:
+        # Сегодня ещё можно ждать новую сессию: календарь хранит состоявшиеся
+        # торги и утром понедельника обычно заканчивается пятницей.
+        expected_session = max(now.date(), asof_date + dt.timedelta(days=1))
+        while expected_session.weekday() >= 5:
+            expected_session += dt.timedelta(days=1)
 
     return {
         "asof_date": asof_date.isoformat(),
@@ -343,11 +368,15 @@ async def build_report(
             "asof_date": universe_date.isoformat() if universe_date else None,
         },
         "next_session": next_session.isoformat() if next_session else None,
+        # Оценка по будням, пока биржевой календарь ещё не подтвердил дату.
+        "next_expected_session": expected_session.isoformat() if expected_session else None,
         # Почему даты нет: сбор не возьмёт ничего, пока человек не вмешается.
         "next_session_blocked": next_blocked,
         # Названная сессия уже закрыта: ждать её закрытия нечего, сбор возьмёт
         # её ближайшим прогоном. При отставании это обычное дело (FR-054).
-        "next_session_closed": bool(next_session and next_session < asof_date),
+        "next_session_closed": bool(
+            next_session and session_is_closed(next_session, settings, now)
+        ),
         # Порог сбора текущей сессии. Биржевое время отдаёт сервер: оно живёт в
         # настройке сборщика, и второе объявление того же факта в интерфейсе
         # однажды разошлось бы с первым.

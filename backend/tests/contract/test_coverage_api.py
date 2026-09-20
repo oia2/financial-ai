@@ -311,6 +311,7 @@ async def test_следующим_не_называется_сессия_жду�
 
 async def test_следующей_называется_та_сессию_которую_возьмут_первой(
     db_session: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Порядок сбора разделился надвое, и строка обязана следовать ему (FR-054).
 
@@ -321,6 +322,7 @@ async def test_следующей_называется_та_сессию_кот�
     """
     repository = await seed(db_session, ["SBER"])
     later = ASOF + dt.timedelta(days=1)
+    monkeypatch.setattr(coverage, "moscow_now", lambda: dt.datetime.combine(later, dt.time(10)))
     await repository.add_trading_sessions([later])
     await db_session.commit()  # type: ignore[attr-defined]
 
@@ -362,3 +364,94 @@ async def test_когда_свежая_собрана_следующей_идё�
 
     assert report["next_session"] == ASOF.isoformat()
     assert report["next_session_closed"] is True
+
+
+async def test_неудача_за_закрытую_сессию_не_показывается(db_session: object) -> None:
+    """«Собрано 314 из 314» и рядом «неудач по дням 44» — оба верны, вместе врут.
+
+    Данные бывают получены другим путём: диапазонный запрос приносит триста
+    сессий одним ответом, и посессионные попытки после него падают, ничего не
+    меняя. Человек по этой строке решает, вмешиваться или нет (FR-058m).
+    """
+    from financial_ai.market_data.models import GlobalDailySeries
+
+    repository = await seed(db_session, ["SBER"])
+    moment = dt.datetime.now(dt.UTC)
+
+    # Данные за сессию есть — их принёс диапазонный запрос.
+    db_session.add(  # type: ignore[attr-defined]
+        GlobalDailySeries(series_id="CBR_KEY_RATE", session_date=ASOF, value=Decimal("16.5"))
+    )
+    # А посессионная попытка после него упала.
+    await repository.record_run(
+        run_id="посессионная-попытка",
+        source_id="cbr",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=ASOF,
+        failure_reason="ЦБ недоступен: ConnectError",
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+
+    group = next(g for g in report["groups"] if g["group"] == "global")  # type: ignore[index,union-attr]
+    cbr = next(s for s in group["sources"] if s["source_id"] == "cbr")  # type: ignore[index,call-overload]
+    assert cbr["failures_total"] == 0
+    assert cbr["failures"] == []
+
+
+async def test_неудача_за_незакрытую_сессию_показывается(db_session: object) -> None:
+    """Обратная форма: настоящая неудача обязана остаться видимой."""
+    repository = await seed(db_session, ["SBER"])
+    moment = dt.datetime.now(dt.UTC)
+
+    await repository.record_run(
+        run_id="настоящая-неудача",
+        source_id="cbr",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=ASOF,
+        failure_reason="ЦБ недоступен: ConnectError",
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+
+    group = next(g for g in report["groups"] if g["group"] == "global")  # type: ignore[index,union-attr]
+    cbr = next(s for s in group["sources"] if s["source_id"] == "cbr")  # type: ignore[index,call-overload]
+    assert cbr["failures_total"] == 1
+    assert cbr["failures"][0]["session_date"] == ASOF.isoformat()  # type: ignore[index]
+
+
+async def test_когда_всё_собрано_дата_не_называется(db_session: object) -> None:
+    """Возьмут СЛЕДУЮЩУЮ сессию, а её календарь не знает.
+
+    Он строится по состоявшимся торгам, и называть последнюю собранную значило
+    бы обещать собрать уже собранное: на стенде «Возьмёт сессию 18.09.2026»,
+    когда 18.09 давно в календаре и закрыта (FR-054).
+    """
+    repository = await seed(db_session, ["SBER"])
+    moment = dt.datetime.now(dt.UTC)
+    from financial_ai.market_data import groups as group_registry
+
+    for group in group_registry.GROUPS:
+        for source_id in group.source_ids:
+            await repository.record_run(
+                run_id=f"всё-собрано-{source_id}",
+                source_id=source_id,
+                status="ok",
+                started_at=moment,
+                finished_at=moment,
+                session_date=ASOF,
+                rows_written=1,
+            )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+
+    assert report["next_session"] is None
+    # И это НЕ «взять нечего, пока не вмешаетесь»: причины различаются.
+    assert report["next_session_blocked"] is False

@@ -5,7 +5,7 @@
  * строке, а не через number (SC-002, FR-016).
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { isNegative, isZero, roundDecimal, shiftDecimal } from '@/shared/lib/decimal';
 import {
@@ -17,8 +17,31 @@ import {
   formatSignedMoney,
   formatSignedPercent,
 } from '@/shared/lib/format';
+import { formatCollectionStart } from '@/shared/lib/market-format';
 
 const NBSP = ' ';
+
+describe('дата и время следующего сбора', () => {
+  it('пишет «сегодня» для текущей московской даты', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-20T21:30:00Z'));
+      expect(formatCollectionStart('2026-09-21', '01:30')).toBe('сегодня после 01:30');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('сохраняет дату для другого торгового дня', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-20T21:30:00Z'));
+      expect(formatCollectionStart('2026-09-22', '01:30')).toBe('22.09.2026 после 01:30');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('разделители разрядов', () => {
   it('группирует тысячи неразрывным пробелом', () => {

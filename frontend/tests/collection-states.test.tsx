@@ -114,9 +114,21 @@ describe('ход прогона', () => {
   it('идёт: календарь помечен суточным и в счёт сессии не входит', async () => {
     renderWith(catchupFixture('running'));
 
-    expect(await screen.findByText('раз в сутки')).toBeInTheDocument();
+    // Пометка области сказана НАД лентой одной фразой и у строки не
+    // повторяется: рядом с её собственной подписью — «собран ранее · на весь
+    // период» — она читалась как вторая характеристика работы.
+    const head = await waitFor(() => {
+      const found = document.querySelector('.rail-head');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(head.textContent).toContain('торговый календарь — раз в сутки');
     // Посессионных источников три, отработал один: календарь в счёт не идёт.
-    expect(document.querySelector('.rail-head b')?.textContent).toContain('1 из 3');
+    expect(head.querySelector('b')?.textContent).toContain('1 из 3');
+
+    const flags = [...document.querySelectorAll('.rail .rail-flag')].map((n) => n.textContent);
+    expect(flags).not.toContain('раз в сутки');
+    expect(flags).not.toContain('на весь период');
   });
 
   it('у каждого пропуска названа причина', async () => {
@@ -409,11 +421,21 @@ describe('пауза автосбора', () => {
 });
 
 describe('следующий сбор', () => {
-  function renderWithCoverage(next: string | null, blocked: boolean) {
+  function renderWithCoverage(
+    next: string | null,
+    blocked: boolean,
+    expected: string | null = null,
+  ) {
     server.use(
       http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('finished'))),
       http.get('*/api/market-data/coverage', () =>
-        HttpResponse.json(coverageFixture({ next_session: next, next_session_blocked: blocked })),
+        HttpResponse.json(
+          coverageFixture({
+            next_session: next,
+            next_session_blocked: blocked,
+            next_expected_session: expected,
+          }),
+        ),
       ),
     );
 
@@ -442,7 +464,23 @@ describe('следующий сбор', () => {
       return found as HTMLElement;
     });
     expect(line.textContent).toContain('не будет');
-    expect(line.textContent).toContain('исчерпали попытки');
+    expect(line.textContent).toContain('нужен ручной сбор');
+    const schedule = document.querySelector('.schedule-facts') as HTMLElement;
+    expect(schedule.textContent).toContain('нет автосбора');
+    expect(schedule.textContent).toContain('нужен ручной сбор');
+    expect(schedule.textContent).not.toContain('после');
+  });
+
+  it('показывает ожидаемую дату сервера под прогоном и календарём', async () => {
+    renderWithCoverage(null, false, '2099-01-05');
+    await waitFor(() => {
+      expect(document.querySelector('.run-next')?.textContent).toContain('05.01.2099');
+      expect(document.querySelector('.schedule-facts')?.textContent).toContain('05.01.2099');
+    });
+    expect(document.querySelector('.run-next')?.textContent).toContain('дата уточняется');
+    expect(document.querySelector('.schedule-facts')?.textContent).not.toContain(
+      'ближайший торговый день',
+    );
   });
 
   it('дата известна: обещание остаётся обещанием', async () => {
@@ -454,7 +492,7 @@ describe('следующий сбор', () => {
       return found as HTMLElement;
     });
     expect(line.textContent).toContain('17.09.2026');
-    expect(line.textContent).toContain('после закрытия сессии');
+    expect(line.textContent).toMatch(/после \d\d:\d\d/);
   });
 });
 

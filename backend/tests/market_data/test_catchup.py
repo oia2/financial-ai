@@ -292,7 +292,7 @@ async def test_catchup_runs_are_marked(
 async def test_daily_run_is_marked_daily(
     db_session: AsyncSession, settings: Settings, cbr_client: httpx.AsyncClient
 ) -> None:
-    await _seed(db_session, SESSIONS)
+    await _seed(db_session, [day for day in SESSIONS if day != SESSIONS[2]])
 
     await ingest.ingest_session(db_session, settings, SESSIONS[2], FakeIss(), cbr_client)
 

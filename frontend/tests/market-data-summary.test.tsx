@@ -185,10 +185,9 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const schedule = (await screen.findByText('Следующий сбор')).closest('ul') as HTMLElement;
-    expect(schedule.textContent).toMatch(/ближайшим прогоном/);
+    expect(schedule.textContent).toMatch(/24\.04\.2026 — ближайшим прогоном/);
     expect(schedule.textContent).not.toMatch(/сегодня после/);
-    expect(within(schedule).getByText('Возьмёт сессию')).toBeInTheDocument();
-    expect(within(schedule).getByText('24.04.2026')).toBeInTheDocument();
+    expect(within(schedule).getByText('Последняя закрытая')).toBeInTheDocument();
   });
 
   it('в неторговый день сбор не обещается на сегодня', async () => {
@@ -205,7 +204,7 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const schedule = (await screen.findByText('Следующий сбор')).closest('ul') as HTMLElement;
-    expect(schedule.textContent).toMatch(/в ближайший торговый день после/);
+    expect(schedule.textContent).toMatch(/03\.09\.2026 после \d\d:\d\d/);
   });
 
   it('клетка календаря открывает сведения о дате', async () => {

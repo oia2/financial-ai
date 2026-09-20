@@ -13,7 +13,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 
 import type { CalendarDayDto } from '@/entities/market-data';
 import { useCalendar } from '@/entities/market-data';
-import { formatIsoDate } from '@/shared/lib/market-format';
+import { formatCollectionStart, formatIsoDate } from '@/shared/lib/market-format';
 
 /** Названия групп в сведениях о дате. Порядок — как в таблице групп. */
 const GROUP_TITLE: Record<string, string> = {
@@ -45,16 +45,6 @@ const NOTE: Record<string, string> = {
   future: 'ожидается',
 };
 
-/**
- * Совпадает ли пояс зрителя с биржевым.
- *
- * Москва — UTC+3 круглый год. Сравнение по смещению, а не по названию зоны:
- * зон с тем же смещением несколько, и все они для нас одно и то же.
- */
-function moscowIsLocal(): boolean {
-  return new Date().getTimezoneOffset() === -180;
-}
-
 function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -71,6 +61,8 @@ function shift(month: string, delta: number): string {
 
 export function CollectionCalendar({
   nextSession,
+  expectedSession,
+  nextBlocked = false,
   nextClosed = false,
   threshold,
   lastClosed,
@@ -82,6 +74,8 @@ export function CollectionCalendar({
 }: {
   /** Сессия, которую возьмёт следующий сбор. Из торгового календаря (FR-024a). */
   nextSession: string | null;
+  expectedSession?: string | null;
+  nextBlocked?: boolean;
   /** Названная сессия давно закрыта: сбор возьмёт её ближайшим прогоном. */
   nextClosed?: boolean;
   /** Порог сбора текущей сессии: время и биржевое время. */
@@ -107,11 +101,6 @@ export function CollectionCalendar({
   const forward = shift(monthKey(new Date()), 1);
   // Назад — не дальше самой ранней известной сессии: пустые месяцы иначе
   // листались бы бесконечно, а показать там нечего.
-  // Торгуется ли сегодня. Порог имеет смысл только в торговый день: в
-  // воскресенье «сегодня после 23:30» обещает сбор сессии, которой не будет.
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const todayIsSession = days.some((day) => day.date === todayIso && day.kind === 'session');
-
   const backward = calendar.data?.earliest_month ?? null;
   const atStart = backward !== null && month <= backward;
 
@@ -126,46 +115,31 @@ export function CollectionCalendar({
           <span>Следующий сбор</span>
           <strong>
             {/*
-              Три разных ответа, и подменять один другим нельзя.
+              Дата и время — один ответ; ветви ниже добавляют только нужное уточнение.
 
-              При ОТСТАВАНИИ ближайший сбор не ждёт порога вовсе: он возьмёт
-              недостающую сессию следующим же прогоном, через минуту. Строка
-              «сегодня после 23:30» рядом с датой из прошлого обещала, что её
-              соберут вечером.
-
-              В НЕТОРГОВЫЙ день порога нет: сессии сегодня не будет.
+              Пропуск прошлой сессии берётся ближайшим прогоном, без ожидания
+              порога. Для ожидаемой будущей даты добавляется пояснение, что
+              календарь биржи ещё не подтвердил торговый день.
             */}
             {paused ? (
+              'автосбор на паузе'
+            ) : nextBlocked ? (
+              'нет автосбора — нужен ручной сбор'
+            ) : nextClosed && nextSession ? (
+              <>{formatCollectionStart(nextSession, null)} — ближайшим прогоном</>
+            ) : nextSession || expectedSession ? (
               <>
-                не будет <span className="msk">пока автосбор на паузе</span>
-              </>
-            ) : nextClosed ? (
-              <>
-                ближайшим прогоном <span className="msk">порога не ждёт</span>
+                {formatCollectionStart(nextSession ?? expectedSession, threshold.local)}
+                {nextSession === null && (
+                  <>
+                    {' · '}
+                    <span className="msk">дата уточняется по календарю биржи</span>
+                  </>
+                )}
               </>
             ) : (
-              <>
-                {`${todayIsSession ? 'сегодня' : 'в ближайший торговый день'} после ${threshold.local} `}
-                {/*
-                  Московское время — только дополнение к биржевому порогу и
-                  только когда пояс зрителя не совпадает с биржевым: иначе оно
-                  повторяет уже сказанное (FR-022). Пробел перед скобкой —
-                  часть текста, а не отступ: без него строка слипается.
-                */}
-                {!moscowIsLocal() && <span className="msk">(порог {threshold.exchange})</span>}
-              </>
+              'дата уточняется'
             )}
-          </strong>
-        </li>
-        <li>
-          {/*
-            Какую сессию возьмёт ближайший сбор. Отдельной строкой, потому что
-            при отставании это дата из прошлого: рядом со словом «следующий»
-            она читалась бы как ошибка.
-          */}
-          <span>Возьмёт сессию</span>
-          <strong className="mono">
-            {nextSession === null ? '—' : formatIsoDate(nextSession)}
           </strong>
         </li>
         <li>
@@ -175,7 +149,7 @@ export function CollectionCalendar({
       </ul>
 
       <p className="schedule-explanation">
-        Порог {threshold.exchange} — момент, с которого разрешено собирать сегодняшнюю сессию. Часть
+        Порог {threshold.exchange} — время, после которого можно собирать указанную сессию. Часть
         источников публикуется позже: позиции по фьючерсам приходят с задержкой и добираются
         повторами. Ручной сбор истории от порога не зависит.
       </p>

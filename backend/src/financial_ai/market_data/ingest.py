@@ -22,7 +22,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import gaps, links, plan
+from financial_ai.market_data import completeness, gaps, groups, links, plan
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_today
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
@@ -243,6 +243,24 @@ async def ingest_session(
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван до опознания бумаг", session_date)
+            closed = await completeness.closed_sources_for(repository, session_date)
+            pending_source = next(
+                (
+                    source_id
+                    for source_id in sorted(_DAILY_SESSION_SOURCES)
+                    if source_id not in closed
+                ),
+                None,
+            )
+            if pending_source is not None:
+                outcome = SourceOutcome(
+                    source_id=pending_source,
+                    status=STATUS_STOPPED,
+                    failure_reason="остановлено до запроса",
+                )
+                result.outcomes.append(outcome)
+                await _record(repository, run_id, outcome, session_date)
+                await session.commit()
             return result
 
         # Шаг 2: опознание бумаг. ДО котировок, а не после: ключом наблюдения
@@ -254,7 +272,7 @@ async def ingest_session(
 
         # Шаг 3: котировки. Они задают пространство строк, поэтому идут
         # раньше всего, что на него накладывается.
-        closed = await repository.sources_closed_for(session_date)
+        closed = await completeness.closed_sources_for(repository, session_date)
 
         # Известное о сессии объявляется СРАЗУ, а не когда до источника дойдёт
         # очередь: что суточный справочник сегодня не спрашивается и что
@@ -338,14 +356,6 @@ async def ingest_session(
             result.outcomes.append(outcome)
             await session.commit()
 
-        if should_stop is not None and should_stop():
-            logger.info("сбор сессии %s прерван по команде", session_date)
-            outcome = _not_asked(reference.SECTORS_SOURCE_ID)
-            result.outcomes.append(outcome)
-            await _record(repository, run_id, outcome, session_date)
-            await session.commit()
-            return result
-
         # Справочники текущего состояния — по суточному гейту, а не на каждую
         # сессию. Оси сессий у них нет: ответ один и тот же, каким бы днём его
         # ни спросили, и ручной догон их поэтому не запрашивает вовсе. При
@@ -365,11 +375,21 @@ async def ingest_session(
                 # Объявлено в начале сессии: в план этого прогона источник не
                 # попадает (FR-007, FR-058l).
                 continue
+            if should_stop is not None and should_stop():
+                outcome = _not_asked(source_id)
+                result.outcomes.append(outcome)
+                await _record(repository, run_id, outcome, session_date)
+                await session.commit()
+                return result
             outcome = await run_source(
                 repository, run_id, source_id, session_date, action, on_source=on_source
             )
             result.outcomes.append(outcome)
             await session.commit()
+
+        if positions.SOURCE_ID in collected:
+            result.outcomes.append(_already_collected(positions.SOURCE_ID))
+            return result
 
         if should_stop is not None and should_stop():
             logger.info("сбор сессии %s прерван по команде", session_date)
@@ -579,6 +599,7 @@ async def catch_up(
             cbr_client,
             source_ids,
             on_source=on_source,
+            should_stop=should_stop,
         )
 
         if should_stop is not None and should_stop():
@@ -711,13 +732,14 @@ async def _catch_up_session(
     outcomes: list[SourceOutcome] = []
     # То же правило, что и в ежедневном пути: собранное за эту сессию заново не
     # спрашивается (FR-058e).
-    collected = await repository.sources_closed_for(session_date)
+    collected = await completeness.closed_sources_for(repository, session_date)
 
     # Известное объявляется сразу — см. ежедневный путь (FR-058l). Только по
     # тем, кого собирает сама сессия: диапазонный источник идёт раз на прогон
     # и свой исход уже объявил.
     if on_source is not None:
-        for source_id in sorted(collected & _CATCHUP_SESSION_SOURCES):
+        selected = _CATCHUP_SESSION_SOURCES if source_ids is None else source_ids
+        for source_id in sorted(collected & _CATCHUP_SESSION_SOURCES & selected):
             done = _already_collected(source_id)
             on_source(source_id, done.status, done)
 
@@ -749,6 +771,14 @@ async def _catch_up_session(
             ),
         ),
     ):
+        # Остановка относится только к выбранной и ещё не выполненной работе.
+        if source_ids is not None and source_id not in source_ids:
+            continue
+        if source_id in collected:
+            outcomes.append(_already_collected(source_id))
+            continue
+        if not health.is_open(source_id):
+            continue
         # Остановка проверяется и здесь, между источниками. Прежде она ждала
         # конца сессии, а сессия с позициями идёт по обращению на каждый из
         # десятков контрактов — минуты после нажатия. Недобранные источники
@@ -767,16 +797,6 @@ async def _catch_up_session(
             await _record(repository, run_id, outcome, session_date, trigger=TRIGGER_CATCHUP)
             break
 
-        # Выбор групп пришёл от человека: к невыбранным источникам не ходим.
-        if source_ids is not None and source_id not in source_ids:
-            continue
-        if source_id in collected:
-            outcomes.append(_already_collected(source_id))
-            continue
-        # Источник, исчерпавший повторы на нескольких сессиях подряд, дальше в
-        # прогоне не запрашивается: обращения к нему заведомо не приносят данных.
-        if not health.is_open(source_id):
-            continue
         outcome = await run_source(
             repository,
             run_id,
@@ -801,6 +821,7 @@ async def _catch_up_ranges(
     cbr_client: httpx.AsyncClient | None,
     source_ids: frozenset[str] | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Закрыть дыру источниками, умеющими выборку за период.
 
@@ -810,29 +831,40 @@ async def _catch_up_ranges(
     Идентификатор прогона — общий с посессионной частью: это один прогон, а не
     два соседних (FR-052).
     """
-    if source_ids is not None and global_series.SOURCE_ID not in source_ids:
-        return
-
-    await run_source(
-        repository,
-        run_id,
-        global_series.SOURCE_ID,
-        date_till,
-        lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
-        trigger=TRIGGER_CATCHUP,
-        period=(date_from, date_till),
-        on_source=on_source,
-    )
-    await run_source(
-        repository,
-        run_id,
-        cbr.SOURCE_ID,
-        date_till,
-        lambda: _sync_cbr_range(repository, date_from, date_till, cbr_client),
-        trigger=TRIGGER_CATCHUP,
-        period=(date_from, date_till),
-        on_source=on_source,
-    )
+    window = await repository.sessions_between(date_from, date_till)
+    group = next(group for group in groups.GROUPS if global_series.SOURCE_ID in group.source_ids)
+    for source_id, action in (
+        (
+            global_series.SOURCE_ID,
+            lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
+        ),
+        (
+            cbr.SOURCE_ID,
+            lambda: _sync_cbr_range(repository, date_from, date_till, cbr_client, should_stop),
+        ),
+    ):
+        if source_ids is not None and source_id not in source_ids:
+            continue
+        closed = await completeness.closed_sessions(repository, group, source_id, window)
+        if window and set(window) <= closed:
+            if on_source is not None:
+                done = _already_collected(source_id)
+                on_source(source_id, done.status, done)
+            continue
+        if should_stop is not None and should_stop():
+            break
+        await run_source(
+            repository,
+            run_id,
+            source_id,
+            date_till,
+            action,
+            trigger=TRIGGER_CATCHUP,
+            period=(date_from, date_till),
+            on_source=on_source,
+        )
+        # Остановка может завершить догон сразу после диапазонной части.
+        await repository.commit()
 
 
 async def ingest_and_rank(
@@ -889,17 +921,7 @@ async def _sync_cbr(
     закрытия сессии и уже относятся к дню `t`. Поэтому запрашиваются за ту же
     дату, а не за предыдущую.
     """
-    config = cbr.CbrConfig()
-    written = 0
-
-    key_rate = await cbr.fetch_key_rate(config, session_date, session_date, client, should_stop)
-    written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
-
-    zcyc = await cbr.fetch_zcyc(config, session_date, session_date, client, should_stop)
-    for series_id, values in zcyc.items():
-        written += await repository.upsert_global_values(series_id, values)
-
-    return written
+    return await _sync_cbr_range(repository, session_date, session_date, client, should_stop)
 
 
 async def _sync_cbr_range(
@@ -907,6 +929,7 @@ async def _sync_cbr_range(
     date_from: dt.date,
     date_till: dt.date,
     client: httpx.AsyncClient | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> int:
     """Макроряды ЦБ за период.
 
@@ -916,10 +939,15 @@ async def _sync_cbr_range(
     config = cbr.CbrConfig()
     written = 0
 
-    key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client)
+    key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client, should_stop)
     written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
 
-    zcyc = await cbr.fetch_zcyc(config, date_from, date_till, client)
+    if should_stop is not None and should_stop():
+        raise SourceStoppedError(written)
+    try:
+        zcyc = await cbr.fetch_zcyc(config, date_from, date_till, client, should_stop)
+    except SourceStoppedError as error:
+        raise SourceStoppedError(written + error.rows_written) from error
     for series_id, values in zcyc.items():
         written += await repository.upsert_global_values(series_id, values)
 

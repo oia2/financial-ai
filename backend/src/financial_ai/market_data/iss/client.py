@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss import urls
 
 logger = logging.getLogger(__name__)
@@ -378,6 +379,8 @@ class IssClient:
         last_error: str = "неизвестная причина"
 
         for attempt in range(1, self._config.retries + 1):
+            if self.should_stop is not None and self.should_stop():
+                raise SourceStoppedError()
             try:
                 response = await self._client.get(url, params=params)
             except httpx.HTTPError as error:
@@ -396,7 +399,7 @@ class IssClient:
                 last_error = f"HTTP {response.status_code}"
 
             if self.should_stop is not None and self.should_stop():
-                raise IssError(f"повтор отменён остановкой ({last_error}): {url}")
+                raise SourceStoppedError(detail=f"повтор отменён остановкой ({last_error})")
 
             if attempt < self._config.retries:
                 logger.warning(

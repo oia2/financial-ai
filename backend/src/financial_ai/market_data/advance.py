@@ -35,7 +35,7 @@ from financial_ai.market_data import completeness, ingest
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
-from financial_ai.market_data.sources import equity_d1, trading_calendar
+from financial_ai.market_data.sources import trading_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +237,7 @@ async def selectable(
     # оставался незакрытым.
     return _after_retry_delay(
         within_limit,
-        await repository.last_attempt_by_session(within_limit, equity_d1.SOURCE_ID),
+        await repository.last_attempt_by_session(within_limit),
         settings,
         moment or moscow_now(),
     )

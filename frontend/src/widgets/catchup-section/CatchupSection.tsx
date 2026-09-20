@@ -19,6 +19,7 @@ import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/en
 import {
   formatAgo,
   formatDuration,
+  formatCollectionStart,
   formatIsoDate,
   formatShortStamp,
   plural,
@@ -46,6 +47,8 @@ export function CatchupSection({
   journalSkipsTotal = 0,
   paused,
   nextSession,
+  expectedSession,
+  nextSessionTime,
   nextBlocked = false,
   nextClosed = false,
   emptyStorage,
@@ -70,6 +73,9 @@ export function CatchupSection({
   paused: boolean;
   /** Сессия, которую возьмёт следующий сбор, по торговому календарю. */
   nextSession: string | null;
+  expectedSession?: string | null;
+  /** Местное время порога сбора. */
+  nextSessionTime?: string | null;
   /**
    * Даты нет потому, что сбор не возьмёт НИЧЕГО: недостающие сессии исчерпали
    * попытки. Пустая дата без этого признака значит обратное — недостающего
@@ -143,7 +149,11 @@ export function CatchupSection({
           <span className="quiet">
             {emptyStorage
               ? 'Первичную загрузку выполняет администратор системы.'
-              : 'Первый сбор начнётся после закрытия ближайшей сессии, и здесь появится его итог.'}
+              : nextSession || expectedSession
+                ? `Первый сбор — ${formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}${
+                    nextSession === null ? '; дата уточняется по календарю биржи' : ''
+                  }.`
+                : 'Дата первого сбора уточняется по торговому календарю.'}
           </span>
           {!emptyStorage && !nothingToCatchUp && (
             <button className="primary-button run-quiet-action" type="button" onClick={onStart}>
@@ -240,14 +250,23 @@ export function CatchupSection({
 
       {past && (
         <p className="run-next">
-          Следующий сбор — <b>{paused || nextBlocked ? 'не будет' : formatIsoDate(nextSession)}</b>
+          Следующий сбор —{' '}
+          <b>
+            {paused || nextBlocked
+              ? 'не будет'
+              : nextClosed && nextSession
+                ? `${formatCollectionStart(nextSession, null)} — ближайшим прогоном`
+                : formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}
+          </b>
           {paused
             ? ', пока автосбор на паузе'
             : nextBlocked
-              ? ', недостающие сессии исчерпали попытки — нужен ручной сбор'
-              : nextClosed
-                ? ', ближайшим прогоном: сессия давно закрыта'
-                : ', после закрытия сессии'}
+              ? ', нужен ручной сбор'
+              : nextSession === null
+                ? expectedSession
+                  ? ', дата уточняется по календарю биржи'
+                  : ', ожидаем обновления календаря биржи'
+                : ''}
         </p>
       )}
 

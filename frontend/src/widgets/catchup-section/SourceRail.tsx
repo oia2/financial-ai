@@ -71,12 +71,13 @@ export function SourceRail({
 
       <ul className="rail">
         {sources.map((source, index) => {
+          // Пометка области у строки НЕ дублируется: она уже сказана над
+          // лентой одной фразой («плюс глобальные ряды — на весь период»).
+          // Повторённая у каждой строки, она соседствует с её собственной
+          // подписью — «собран ранее · на весь период», — и читается как
+          // вторая характеристика работы, которой нет.
           const flag =
-            index === nextIndex
-              ? 'следующий'
-              : source.state === 'running'
-                ? 'идёт'
-                : FLAG_BY_SCOPE[source.scope];
+            index === nextIndex ? 'следующий' : source.state === 'running' ? 'идёт' : undefined;
 
           return (
             <li
