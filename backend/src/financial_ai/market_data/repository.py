@@ -452,35 +452,48 @@ class MarketDataRepository:
             for r in rows
         ]
         statement = insert(FuturesPosition).values(payload)
+        # `COALESCE(новое, прежнее)`: пустое поле повторного ответа НЕ затирает
+        # уже полученное значение. Покрытие по сторонам бывает частичным
+        # по-настоящему, и повтор, принёсший три поля из четырёх, обнулял бы
+        # четвёртое — превращая собранное в «не знаем» (FR-032a).
+        #
+        # Значение значением замещается как прежде: биржа переиздаёт данные, и
+        # запрет на исправление был бы хуже.
         statement = statement.on_conflict_do_update(
             index_elements=["asset_id", "session_date", "contract_code"],
             set_={
-                "fiz_long": statement.excluded.fiz_long,
-                "fiz_short": statement.excluded.fiz_short,
-                "jur_long": statement.excluded.jur_long,
-                "jur_short": statement.excluded.jur_short,
+                "fiz_long": func.coalesce(statement.excluded.fiz_long, FuturesPosition.fiz_long),
+                "fiz_short": func.coalesce(statement.excluded.fiz_short, FuturesPosition.fiz_short),
+                "jur_long": func.coalesce(statement.excluded.jur_long, FuturesPosition.jur_long),
+                "jur_short": func.coalesce(statement.excluded.jur_short, FuturesPosition.jur_short),
             },
         )
         await self._session.execute(statement)
         return len(payload)
 
-    async def assets_with_positions(self, session_date: dt.date) -> set[str]:
-        """Активы, по которым за эту сессию уже есть непустая строка.
+    async def positions_collected_on(self, session_date: dt.date) -> set[tuple[str, str]]:
+        """Пары «актив — контракт», по которым за эту сессию есть непустая строка.
 
         Нужно источнику позиций: его единица обращения — «инструмент и дата»,
         и «сессия собрана» не означает «все инструменты собраны». Без этого
         повторный догон стоил бы столько же, сколько первый (FR-024c).
 
+        **Контракт входит в ключ.** Пока ответом был один `asset_id`, строка,
+        собранная ДРУГИМ семейством контрактов, считалась собранной и для
+        текущего: после смены семейства пара пропускалась, недобор нового
+        инструмента оставался невидимым, а ряд выглядел непрерывным, будучи
+        склеенным из двух разных инструментов (FR-039, FR-030).
+
         Пустые строки не в счёт: строка без значений — это не собранные данные,
         и запрашивать пару заново как раз нужно.
         """
-        rows = await self._session.scalars(
-            select(FuturesPosition.asset_id).where(
+        rows = await self._session.execute(
+            select(FuturesPosition.asset_id, FuturesPosition.contract_code).where(
                 FuturesPosition.session_date == session_date,
                 _positions_filled(),
             )
         )
-        return set(rows.all())
+        return {(asset_id, contract) for asset_id, contract in rows.all()}
 
     async def first_position_dates(self) -> dict[str, dt.date]:
         """Первая сессия со значениями по каждому активу.

@@ -131,12 +131,18 @@ async def test_cleaned_session_becomes_uncovered_for_that_asset(
     """
     await _seed(db_session)
     repository = MarketDataRepository(db_session)
-    assert "EQ_AST_LKOH" not in await repository.assets_with_positions(SESSION)
+    # Ключ собранного — пара «актив — контракт»: строка, собранная другим
+    # семейством, про текущее не говорит ничего (FR-039, T207).
+    collected = await repository.positions_collected_on(SESSION)
+    assert not any(asset_id == "EQ_AST_LKOH" for asset_id, _ in collected)
 
     await db_session.execute(text(_cleanup_sql()))
     await db_session.commit()
 
-    assert await repository.assets_with_positions(SESSION) == {"EQ_AST_SBER", "EQ_AST_GAZP"}
+    assert {asset_id for asset_id, _ in await repository.positions_collected_on(SESSION)} == {
+        "EQ_AST_SBER",
+        "EQ_AST_GAZP",
+    }
 
 
 async def test_cleanup_is_repeatable(db_session: AsyncSession) -> None:

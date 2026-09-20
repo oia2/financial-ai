@@ -33,7 +33,7 @@ import datetime as dt
 import logging
 from collections.abc import Callable
 
-from financial_ai.market_data.interrupt import SourceStoppedError
+from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.positions_client import (
@@ -44,6 +44,11 @@ from financial_ai.market_data.sources.positions_client import (
 logger = logging.getLogger(__name__)
 
 SOURCE_ID = "futures_positions"
+
+# Сколько строк копится до закрепления. Пачка нужна, чтобы обрыв процесса не
+# уносил всё собранное за сессию, и не должна быть в одну строку: каждая
+# фиксация — обращение к БД, а обращений к источнику здесь и так десятки.
+SAVE_BATCH_ROWS = 20
 
 
 class EmptyPositionsError(RuntimeError):
@@ -106,7 +111,7 @@ async def sync_positions(
         raise EmptyPositionsError("действующих связей бумаг и контрактов нет: спрашивать нечего")
 
     known_tickers = await repository.tickers_with_history()
-    already = await repository.assets_with_positions(session_date)
+    already = await repository.positions_collected_on(session_date)
     first_seen = await repository.first_position_dates()
 
     # Бумага, по которой позиции собирались, обязана иметь связь — действующую
@@ -145,13 +150,32 @@ async def sync_positions(
             "ни у одной торговавшейся бумаги нет фьючерсного контракта: соответствие не построилось"
         )
 
-    rows: list[PositionRow] = []
+    pending: list[PositionRow] = []
     requested = 0
+    written = 0
     skipped_collected = 0
+
+    async def flush() -> None:
+        """Закрепить накопленную пачку.
+
+        **Границей считается commit, а не вызов `upsert`.** Незакоммиченная
+        пачка живёт в памяти сессии и исчезает вместе с процессом — вместе со
+        ВСЕМИ предыдущими пачками той же транзакции. Обрыв процесса после
+        восьмидесяти обращений терял их все (FR-050, T207).
+        """
+        nonlocal pending, written
+        if not pending:
+            return
+        written += await repository.upsert_positions(pending)
+        await repository.commit()
+        pending = []
 
     # Знаменатель — те, кого предстоит спросить, а не весь список: собранные
     # пары пропускаются, и обещать обращение к ним нельзя (FR-058i).
-    todo = sum(1 for ticker in wanted if asset_id_for(ticker) not in already)
+    todo = sum(
+        (asset_id_for(ticker), links[asset_id_for(ticker)]) not in already
+        for ticker in wanted
+    )
 
     stopped = False
     for ticker in wanted:
@@ -164,41 +188,79 @@ async def sync_positions(
             break
 
         asset_id = asset_id_for(ticker)
+        contract = links[asset_id]
 
-        if asset_id in already:
+        if (asset_id, contract) in already:
             # Пара уже собрана. Для источников с единицей «дата» это следует из
             # правил догона; здесь единица мельче сессии, и правило нужно явно.
+            #
+            # Контракт входит в ключ: строка, собранная ДРУГИМ семейством, про
+            # текущее не говорит ничего, и пропуск по одному активу скрывал
+            # недобор нового инструмента (FR-039).
             skipped_collected += 1
             continue
 
-        contract = links[asset_id]
         requested += 1
         if on_progress is not None:
             on_progress(requested, todo)
-        snapshot = await client.fetch(contract, session_date)
+
+        try:
+            snapshot = await client.fetch(contract, session_date)
+        except SourceStoppedError as error:
+            # Если клиент сообщил остановку внутри обращения, прибавить уже
+            # закреплённые пачки к числу строк исхода.
+            await flush()
+            raise SourceStoppedError(
+                written + error.rows_written,
+                error.detail,
+            ) from error
+        except Exception as error:
+            # Полученное до ошибки или остановки закрепляется ДО выхода.
+            # Иначе ошибка на восьмидесятом контракте уносила семьдесят девять
+            # уже полученных ответов (FR-032a, T207).
+            await flush()
+            if written:
+                # Обычная ошибка после успешных обращений тоже должна сообщить
+                # run_source фактическое число сохранённых строк. Она остаётся
+                # неуспехом, а точная причина и незавершённая пара видны в журнале.
+                raise SourcePartialError(
+                    rows_written=written,
+                    detail=f"не удалось собрать {contract}: {error}",
+                    unfinished=(f"{contract}/{session_date}",),
+                ) from error
+            raise
+        except BaseException:
+            # Например, отмена coroutine: закрепить полученное, но не менять
+            # семантику системной отмены.
+            await flush()
+            raise
+
         if snapshot is None:
             continue
 
-        rows.append(
-            PositionRow(
-                asset_id=asset_id,
-                session_date=session_date,
-                # Контракт входит в ключ наблюдения: повторный сбор той же даты
-                # другим семейством не должен затирать прежнее молча (FR-039).
-                contract_code=contract,
-                fiz_long=snapshot.fiz_long,
-                fiz_short=snapshot.fiz_short,
-                jur_long=snapshot.jur_long,
-                jur_short=snapshot.jur_short,
-            )
+        row = PositionRow(
+            asset_id=asset_id,
+            session_date=session_date,
+            # Контракт входит в ключ наблюдения: повторный сбор той же даты
+            # другим семейством не должен затирать прежнее молча (FR-039).
+            contract_code=contract,
+            fiz_long=snapshot.fiz_long,
+            fiz_short=snapshot.fiz_short,
+            jur_long=snapshot.jur_long,
+            jur_short=snapshot.jur_short,
         )
+        # Пустые строки не записываются вовсе: именно они заставляли догон
+        # считать сессию закрытой.
+        if _has_values(row):
+            pending.append(row)
+        if len(pending) >= SAVE_BATCH_ROWS:
+            await flush()
 
-    filled = [row for row in rows if _has_values(row)]
+    await flush()
 
     if lost:
-        # Собранное записывается ДО отказа: видимость расхождения не
-        # оплачивается потерей данных по остальным бумагам (FR-020a).
-        await repository.upsert_positions(filled)
+        # Собранное записано выше: видимость расхождения не оплачивается
+        # потерей данных по остальным бумагам (FR-020a).
         raise EmptyPositionsError(
             "бумаги с историей позиций потеряли связь с контрактом: "
             + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
@@ -209,13 +271,12 @@ async def sync_positions(
         # мы просто не успели спросить остальных. Но и успехом он не является:
         # исход «ок» закрывал бы сессию по этому источнику навсегда, хотя
         # спрошены были три контракта из ста двадцати (FR-050).
-        written = await repository.upsert_positions(filled)
         raise SourceStoppedError(
             written,
             f"спрошено {requested} бумаг из {len(wanted)}",
         )
 
-    if requested and not filled:
+    if requested and not written:
         # Ровно то различие, ради которого FR-018 существует: настоящая
         # частичность даёт значения хотя бы по части инструментов, дефект —
         # ноль. Ноль записывается как неуспех, а не как успешная пустота.
@@ -224,12 +285,10 @@ async def sync_positions(
             "ни одного значения не получено"
         )
 
-    written = await repository.upsert_positions(filled)
     logger.info(
-        "позиции за %s: спрошено %d, со значениями %d, записано %d (уже собрано %d)",
+        "позиции за %s: спрошено %d, записано %d (уже собрано %d)",
         session_date,
         requested,
-        len(filled),
         written,
         skipped_collected,
     )
