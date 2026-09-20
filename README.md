@@ -327,6 +327,27 @@ docker compose … exec backend-worker python -m financial_ai.market_data.cli ca
 docker compose … exec backend-worker python -m financial_ai.market_data.cli catchup-stop
 ```
 
+#### Адресный ремонт подтверждённых пробелов
+
+Перед ручным восстановлением сначала выполняется аудит, затем сохраняется план с явным
+лимитом физических HTTP-попыток. Создание плана внешних запросов не делает; повторный
+`repair-run` продолжает тот же план, а увеличить лимит можно только отдельной командой.
+
+```bash
+docker compose … exec backend-worker python -m financial_ai.market_data.cli repair-audit \
+    --from 2026-05-27 --till 2026-09-18 --source futures_positions
+docker compose … exec backend-worker python -m financial_ai.market_data.cli repair-plan \
+    --from 2026-05-27 --till 2026-09-18 --source futures_positions --request-budget 6500
+docker compose … exec backend-worker python -m financial_ai.market_data.cli repair-run --plan-id <UUID>
+# Только после осознанного решения расширить бюджет:
+docker compose … exec backend-worker python -m financial_ai.market_data.cli repair-extend \
+    --plan-id <UUID> --request-budget 9000
+```
+
+Недоступный после серии неудач источник больше не опрашивается впустую до конца одного
+прогона, но для каждой непройденной сессии сохраняется `failed` с причиной. Поэтому
+неполнота остаётся видна в аудите и не выдаётся за успешный сбор.
+
 То же самое доступно **из интерфейса**: раздел «Рыночные данные» показывает сводку и ведёт
 догон — запуск с выбором групп и диапазона, ход работы, остановка и продолжение. Команда
 остаётся: она удобнее в сценариях эксплуатации и не требует браузера.

@@ -12,11 +12,13 @@ from decimal import Decimal
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import groups, ingest
 from financial_ai.market_data.iss.client import IssError
+from financial_ai.market_data.models import IngestRun
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
 from tests.market_data.conftest import NoInstrumentChanges
@@ -499,6 +501,15 @@ async def test_failing_source_is_dropped_after_a_streak(
     # Четыре пропущенные сессии, но спрашивали только до порога.
     assert len(result.requested) == 4
     assert iss.quote_attempts == 2
+    recorded = list(
+        await db_session.scalars(
+            select(IngestRun).where(
+                IngestRun.source_id == equity_d1.SOURCE_ID,
+                IngestRun.failure_reason == "источник недоступен после серии неудач",
+            )
+        )
+    )
+    assert {run.session_date for run in recorded} == set(SESSIONS[2:4])
 
 
 async def test_single_failure_does_not_close_the_source(

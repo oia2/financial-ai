@@ -781,6 +781,13 @@ async def _catch_up_session(
             outcomes.append(_already_collected(source_id))
             continue
         if not health.is_open(source_id):
+            outcome = SourceOutcome(
+                source_id,
+                STATUS_FAILED,
+                failure_reason="источник недоступен после серии неудач",
+            )
+            outcomes.append(outcome)
+            await _record(repository, run_id, outcome, session_date, trigger=TRIGGER_CATCHUP)
             continue
         # Остановка проверяется и здесь, между источниками. Прежде она ждала
         # конца сессии, а сессия с позициями идёт по обращению на каждый из
