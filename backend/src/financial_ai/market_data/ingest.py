@@ -484,6 +484,7 @@ async def catch_up(
     on_skip: Callable[[dt.date, str, str | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     run_id: str | None = None,
+    prepare_assets: bool = True,
 ) -> CatchupResult:
     """Догнать пропущенные сессии окна.
 
@@ -618,7 +619,9 @@ async def catch_up(
         # на сущность, и два имени одной сущности не могут значить разные
         # бумаги в разные дни одного окна. Датированное концом окна, опознание
         # рвало ряд внутри ОДНОГО прогона (FR-048).
-        alias_events = await _sync_aliases(repository, iss, result.requested[0])
+        alias_events = []
+        if prepare_assets:
+            alias_events = await _sync_aliases(repository, iss, result.requested[0])
 
         # Связи — тоже раз на прогон, и по той же причине, что диапазонные
         # источники: ответ один на всё окно. Но датируются ДНЁМ ОБРАЩЕНИЯ, а не
@@ -633,7 +636,7 @@ async def catch_up(
             await session.commit()
             return result
 
-        if source_ids is None or positions.SOURCE_ID in source_ids:
+        if prepare_assets and (source_ids is None or positions.SOURCE_ID in source_ids):
             asked_on = await calendar.latest_session(moscow_today()) or result.requested[-1]
             confirmed = await repository.latest_link_start()
             if confirmed is not None and asked_on < confirmed:

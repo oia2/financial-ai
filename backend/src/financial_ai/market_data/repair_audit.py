@@ -143,23 +143,30 @@ async def run_plan(session: AsyncSession, settings: Settings, plan_id: str) -> t
 
     days = sorted({item.session_date for item in pending})
     source_ids = frozenset(item.source_id for item in pending)
+    repair_needs_assets = bool(
+        source_ids & frozenset({"equity_d1", "equity_agg", "futures_positions"})
+    )
     async with (
         IssClient(ingest.build_iss_config(settings), request_permit=permit) as iss,
         PositionsClient(settings, request_permit=permit) as positions,
         httpx.AsyncClient(event_hooks={"request": [cbr_permit]}) as cbr_client,
     ):
-        await ingest.catch_up(
-            session,
-            settings,
-            days[-1],
-            client=iss,
-            cbr_client=cbr_client,
-            positions_client=positions,
-            sessions=days,
-            source_ids=source_ids,
-            should_stop=lambda: exhausted,
-            run_id=plan_id,
-        )
+        try:
+            await ingest.catch_up(
+                session,
+                settings,
+                days[-1],
+                client=iss,
+                cbr_client=cbr_client,
+                positions_client=positions,
+                sessions=days,
+                source_ids=source_ids,
+                should_stop=lambda: exhausted,
+                run_id=plan_id,
+                prepare_assets=repair_needs_assets,
+            )
+        except SourceStoppedError:
+            exhausted = True
 
     refreshed = await repository.repair_plan(plan_id)
     assert refreshed is not None
