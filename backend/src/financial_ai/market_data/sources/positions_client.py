@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import time
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from bs4 import BeautifulSoup
 
 from financial_ai.config import Settings
 from financial_ai.market_data.interrupt import SourceStoppedError
+from financial_ai.market_data.http_metrics import HttpMetrics
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -171,7 +173,7 @@ class PositionsClient:
         self._client = client
         self._owns_client = client is None
         self._state = PageState()
-        self._requests_made = 0
+        self.metrics = HttpMetrics()
         self._first_available: dict[str, dt.date | None] = {}
         # Снимки, полученные при поиске первой доступной даты. Поиск и сбор
         # спрашивают одни и те же пары «контракт — дата», и без этого удачная
@@ -204,7 +206,7 @@ class PositionsClient:
         инструмент и дата, и цена сбора в обращениях важнее, чем у остальных
         источников.
         """
-        return self._requests_made
+        return self.metrics.attempts
 
     # --- обмен --------------------------------------------------------------
 
@@ -339,7 +341,10 @@ class PositionsClient:
         читалась как доказанное отсутствие данных: все обращения могли упасть,
         а источник заканчивался исходом «ок» с нулём строк (FR-032).
         """
+        before = self.metrics.attempts
         snapshot = await self.fetch(contract_code, day)
+        if self.metrics.attempts > before:
+            self.metrics.search_probes += 1
         return snapshot is not None and snapshot.has_values
 
     # --- внутреннее ---------------------------------------------------------
@@ -390,8 +395,6 @@ class PositionsClient:
         if self._client is None:
             raise PositionsSourceError("клиент не инициализирован: используйте async with")
 
-        await self._throttle()
-
         delay = self._settings.market_data_positions_retry_backoff_seconds
         last_error = "неизвестная причина"
 
@@ -402,6 +405,8 @@ class PositionsClient:
                 # (FR-050, FR-058j).
                 raise SourceStoppedError(detail=f"повтор отменён остановкой ({last_error})")
             try:
+                await self._throttle()
+                started = time.monotonic()
                 response = await self._client.post(
                     REQUEST_URL,
                     params={"d": _date_token(day), "t": "1"},
@@ -409,12 +414,23 @@ class PositionsClient:
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
             except httpx.HTTPError as error:
+                self.metrics.record_attempt(
+                    retry=attempt > 1,
+                    search_probe=False,
+                    elapsed_seconds=time.monotonic() - started,
+                )
                 # У обрыва соединения текст пустой: без имени класса в
                 # сообщении остаётся «сетевая ошибка: » — причина, по которой
                 # нечего искать. То же правило, что у клиента ЦБ (FR-002).
                 last_error = f"сетевая ошибка: {error or type(error).__name__}"
             else:
+                self.metrics.record_attempt(
+                    retry=attempt > 1,
+                    search_probe=False,
+                    elapsed_seconds=time.monotonic() - started,
+                )
                 if response.status_code == httpx.codes.OK:
+                    self.metrics.record_success()
                     return response.content.decode("utf-8", errors="ignore")
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise PositionsSourceError(
@@ -445,12 +461,12 @@ class PositionsClient:
         pause = self._settings.market_data_positions_batch_pause_seconds
         if self.should_stop is not None and self.should_stop():
             # Пауза перед обращением, которого не будет, — чистое ожидание.
-            self._requests_made += 1
             return
-        if self._requests_made and pause and self._requests_made % size == 0:
-            logger.debug("позиции: пауза %.1f с после %d обращений", pause, self._requests_made)
+        if self.metrics.attempts and pause and self.metrics.attempts % size == 0:
+            logger.debug(
+                "позиции: пауза %.1f с после %d обращений", pause, self.metrics.attempts
+            )
             await asyncio.sleep(pause)
-        self._requests_made += 1
 
 
 # --- разбор -------------------------------------------------------------------

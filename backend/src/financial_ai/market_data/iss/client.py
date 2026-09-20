@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -20,6 +21,7 @@ from typing import Any
 import httpx
 
 from financial_ai.market_data.interrupt import SourceStoppedError
+from financial_ai.market_data.http_metrics import HttpMetrics
 from financial_ai.market_data.iss import urls
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,7 @@ class IssClient:
         # ждала их все. Доводится до конца отправленный запрос — не серия из
         # повторов (FR-058j).
         self.should_stop = should_stop
+        self.metrics = HttpMetrics()
 
     async def __aenter__(self) -> IssClient:
         if self._client is None:
@@ -384,11 +387,23 @@ class IssClient:
             if self.should_stop is not None and self.should_stop():
                 raise SourceStoppedError()
             try:
+                started = time.monotonic()
                 response = await self._client.get(url, params=params)
             except httpx.HTTPError as error:
+                self.metrics.record_attempt(
+                    retry=attempt > 1,
+                    search_probe=False,
+                    elapsed_seconds=time.monotonic() - started,
+                )
                 last_error = f"сетевая ошибка: {error}"
             else:
+                self.metrics.record_attempt(
+                    retry=attempt > 1,
+                    search_probe=False,
+                    elapsed_seconds=time.monotonic() - started,
+                )
                 if response.status_code == httpx.codes.OK:
+                    self.metrics.record_success()
                     try:
                         payload: dict[str, Any] = _loads(response.content)
                     except ValueError as error:

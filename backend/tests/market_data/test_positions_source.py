@@ -739,6 +739,8 @@ async def test_без_остановки_повторы_идут_как_преж
             await client.fetch("SBRF_F", SESSION)
 
     assert attempts["n"] == 3
+    assert client.metrics.to_dict()["attempts"] == 3
+    assert client.metrics.to_dict()["retries"] == 2
 
 
 # --- T206: сбой, отсутствие и повторное использование снимка -----------------

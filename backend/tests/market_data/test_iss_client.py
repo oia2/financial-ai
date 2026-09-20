@@ -77,6 +77,13 @@ async def test_retries_on_retryable_status(config: IssConfig, status: int) -> No
         rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
     assert len(rows) == 1
     assert route.call_count == 2
+    assert client.metrics.to_dict() == {
+        "attempts": 2,
+        "successful_responses": 1,
+        "retries": 1,
+        "search_probes": 0,
+        "elapsed_seconds": pytest.approx(client.metrics.elapsed_seconds),
+    }
 
 
 @respx.mock

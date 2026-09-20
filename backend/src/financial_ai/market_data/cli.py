@@ -494,6 +494,7 @@ async def _verify_brent(session_date: dt.date) -> int:
         )
 
     print(f"срочный рынок за {session_date}: строк {len(rows)}")
+    print(f"HTTP ISS: {iss.metrics.to_dict()}")
     if not rows:
         print("ПУСТО — раздел отвечает, но строк за эту дату нет.")
         print("Проверьте, что адрес строится БЕЗ сегмента доски.")
