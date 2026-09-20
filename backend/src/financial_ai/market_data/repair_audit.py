@@ -119,6 +119,10 @@ async def run_plan(session: AsyncSession, settings: Settings, plan_id: str) -> t
     if saved is None:
         raise ValueError(f"план ремонта {plan_id} не найден")
     plan, items = saved
+    # A process that died mid-plan leaves no worker to finish it.  Preserve
+    # the consumed budget and make the interruption explicit before resuming.
+    if plan.status == "running":
+        await repository.finish_repair_plan(plan_id, "stopped", "interrupted")
     pending = [item for item in items if item.status == "pending"]
     if not pending:
         return plan.status, plan.requests_spent, 0
