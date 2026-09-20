@@ -13,15 +13,15 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 import httpx
 
-from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.http_metrics import HttpMetrics
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss import urls
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ class IssClient:
         config: IssConfig,
         client: httpx.AsyncClient | None = None,
         should_stop: Callable[[], bool] | None = None,
+        request_permit: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._client = client
@@ -72,6 +73,7 @@ class IssClient:
         # ждала их все. Доводится до конца отправленный запрос — не серия из
         # повторов (FR-058j).
         self.should_stop = should_stop
+        self.request_permit = request_permit
         self.metrics = HttpMetrics()
 
     async def __aenter__(self) -> IssClient:
@@ -387,6 +389,8 @@ class IssClient:
             if self.should_stop is not None and self.should_stop():
                 raise SourceStoppedError()
             try:
+                if self.request_permit is not None:
+                    await self.request_permit()
                 started = time.monotonic()
                 response = await self._client.get(url, params=params)
             except httpx.HTTPError as error:

@@ -34,6 +34,8 @@ from financial_ai.market_data.models import (
     IngestRun,
     MarketAsset,
     PriceSeries,
+    RepairItem,
+    RepairPlan,
     SessionSkip,
     TradingSession,
 )
@@ -106,6 +108,65 @@ class MarketDataRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def create_repair_plan(
+        self, plan_id: str, request_budget: int, items: list[tuple[dt.date, str, int]]
+    ) -> None:
+        """Сохранить план до первого внешнего обращения."""
+        self._session.add(
+            RepairPlan(plan_id=plan_id, request_budget=request_budget, status="planned")
+        )
+        # PostgreSQL проверяет FK сразу; родитель должен быть записан раньше
+        # строк плана, даже если идентификатор известен приложению заранее.
+        await self._session.flush()
+        self._session.add_all(
+            RepairItem(
+                plan_id=plan_id,
+                session_date=day,
+                source_id=source_id,
+                expected_attempts=expected_attempts,
+            )
+            for day, source_id, expected_attempts in items
+        )
+        await self._session.commit()
+
+    async def repair_plan(self, plan_id: str) -> tuple[RepairPlan, list[RepairItem]] | None:
+        plan = await self._session.get(RepairPlan, plan_id)
+        if plan is None:
+            return None
+        items = list(
+            (
+                await self._session.scalars(
+                    select(RepairItem)
+                    .where(RepairItem.plan_id == plan_id)
+                    .order_by(RepairItem.session_date, RepairItem.source_id)
+                )
+            ).all()
+        )
+        return plan, items
+
+    async def reserve_repair_attempt(self, plan_id: str) -> bool:
+        """Atomically spend one persisted budget unit before an HTTP attempt."""
+        result = await self._session.execute(
+            update(RepairPlan)
+            .where(
+                RepairPlan.plan_id == plan_id,
+                RepairPlan.requests_spent < RepairPlan.request_budget,
+            )
+            .values(requests_spent=RepairPlan.requests_spent + 1, status="running", reason=None)
+        )
+        await self._session.commit()
+        return bool(getattr(result, "rowcount", 0))
+
+    async def finish_repair_plan(
+        self, plan_id: str, status: str, reason: str | None = None
+    ) -> None:
+        await self._session.execute(
+            update(RepairPlan)
+            .where(RepairPlan.plan_id == plan_id)
+            .values(status=status, reason=reason)
+        )
+        await self._session.commit()
 
     # --- торговые сессии ---------------------------------------------------
 

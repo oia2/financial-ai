@@ -382,3 +382,33 @@ class CoverageBoundary(Base):
     recorded_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class RepairPlan(Base):
+    """Явно созданный человеком план адресного восстановления."""
+
+    __tablename__ = "market_repair_plan"
+
+    plan_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    requests_spent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class RepairItem(Base):
+    """Одна пара «источник — дата» в плане ремонта."""
+
+    __tablename__ = "market_repair_item"
+    __table_args__ = (UniqueConstraint("plan_id", "session_date", "source_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("market_repair_plan.plan_id"), nullable=False)
+    session_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)

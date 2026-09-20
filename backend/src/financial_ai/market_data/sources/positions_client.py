@@ -34,9 +34,9 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-import time
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -44,8 +44,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from financial_ai.config import Settings
-from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.http_metrics import HttpMetrics
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,7 @@ class PositionsClient:
         settings: Settings,
         client: httpx.AsyncClient | None = None,
         should_stop: Callable[[], bool] | None = None,
+        request_permit: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._settings = settings
         # Признак остановки нужен САМОМУ клиенту: четыре попытки с нарастающей
@@ -170,6 +171,7 @@ class PositionsClient:
         # человека ждать их все. Доводится до конца отправленный запрос — не
         # серия из четырёх (FR-058j).
         self.should_stop = should_stop
+        self.request_permit = request_permit
         self._client = client
         self._owns_client = client is None
         self._state = PageState()
@@ -406,6 +408,8 @@ class PositionsClient:
                 raise SourceStoppedError(detail=f"повтор отменён остановкой ({last_error})")
             try:
                 await self._throttle()
+                if self.request_permit is not None:
+                    await self.request_permit()
                 started = time.monotonic()
                 response = await self._client.post(
                     REQUEST_URL,
@@ -463,9 +467,7 @@ class PositionsClient:
             # Пауза перед обращением, которого не будет, — чистое ожидание.
             return
         if self.metrics.attempts and pause and self.metrics.attempts % size == 0:
-            logger.debug(
-                "позиции: пауза %.1f с после %d обращений", pause, self.metrics.attempts
-            )
+            logger.debug("позиции: пауза %.1f с после %d обращений", pause, self.metrics.attempts)
             await asyncio.sleep(pause)
 
 

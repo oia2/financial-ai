@@ -16,8 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import get_settings
-from financial_ai.market_data import groups
-from financial_ai.market_data import cli
+from financial_ai.market_data import cli, groups
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
 

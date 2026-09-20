@@ -9,6 +9,7 @@ import httpx
 import pytest
 import respx
 
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
 
 BASE = "https://iss.moex.com/iss"
@@ -115,6 +116,26 @@ async def test_network_error_is_retried(config: IssConfig) -> None:
     async with IssClient(config) as client:
         rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
     assert len(rows) == 1
+
+
+@respx.mock
+async def test_request_permit_stops_before_a_retry(config: IssConfig) -> None:
+    """A repair budget is consumed per physical attempt, not per source."""
+    route = respx.get(url__startswith=BASE).mock(return_value=httpx.Response(503))
+    permits = 0
+
+    async def permit() -> None:
+        nonlocal permits
+        permits += 1
+        if permits > 1:
+            raise SourceStoppedError(detail="request_budget_exhausted")
+
+    async with IssClient(config, request_permit=permit) as client:
+        with pytest.raises(SourceStoppedError, match="request_budget_exhausted"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+    assert route.call_count == 1
+    assert permits == 2
 
 
 @respx.mock

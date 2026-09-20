@@ -28,7 +28,7 @@ import httpx
 from financial_ai.config import get_settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.logging import setup_logging
-from financial_ai.market_data import backfill, gaps, ingest, links
+from financial_ai.market_data import backfill, gaps, ingest, links, repair_audit
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -142,7 +142,69 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ограничить набор бумаг. Можно повторять. По умолчанию — все известные.",
     )
 
+    audit = sub.add_parser("repair-audit", help="Проверить данные перед ручным ремонтом без записи")
+    audit.add_argument("--from", dest="date_from", type=_parse_date, required=True)
+    audit.add_argument("--till", dest="date_till", type=_parse_date, required=True)
+
+    repair_plan = sub.add_parser("repair-plan", help="Создать план ручного ремонта без запуска")
+    repair_plan.add_argument("--from", dest="date_from", type=_parse_date, required=True)
+    repair_plan.add_argument("--till", dest="date_till", type=_parse_date, required=True)
+    repair_plan.add_argument("--request-budget", type=int, required=True)
+
+    repair_run = sub.add_parser("repair-run", help="Выполнить ранее созданный план ремонта")
+    repair_run.add_argument("--plan-id", required=True)
+
     return parser
+
+
+async def _repair_audit(date_from: dt.date, date_till: dt.date) -> int:
+    if date_till < date_from:
+        print("конец диапазона раньше начала")
+        return 2
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = await repair_audit.audit(MarketDataRepository(session), date_from, date_till)
+    if not rows:
+        print("в сохранённом календаре нет торговых сессий указанного диапазона")
+        return 0
+    print("date        source                required present confirmed_absence unknown")
+    for row in rows:
+        print(
+            f"{row.session_date}  {row.source_id:<20} {row.required!s:<8} "
+            f"{row.present!s:<7} {row.confirmed_absence!s:<17} {row.unknown}"
+        )
+    return 0
+
+
+async def _repair_plan(date_from: dt.date, date_till: dt.date, request_budget: int) -> int:
+    if date_till < date_from:
+        print("конец диапазона раньше начала")
+        return 2
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            plan_id, rows = await repair_audit.create_plan(
+                MarketDataRepository(session), date_from, date_till, request_budget
+            )
+    except ValueError as error:
+        print(str(error))
+        return 2
+    pending = sum(row.unknown for row in rows)
+    print(f"план {plan_id}: пар к ремонту {pending}, лимит HTTP-попыток {request_budget}")
+    print("план сохранён; внешние запросы не выполнялись")
+    return 0
+
+
+async def _repair_run(plan_id: str) -> int:
+    factory = get_session_factory()
+    try:
+        async with factory() as session:
+            status, spent, remaining = await repair_audit.run_plan(session, get_settings(), plan_id)
+    except ValueError as error:
+        print(str(error))
+        return 2
+    print(f"план {plan_id}: {status}; HTTP-попыток израсходовано {spent}; осталось пар {remaining}")
+    return 0 if status == "completed" else 1
 
 
 async def _run(session_date: dt.date | None) -> int:
@@ -640,6 +702,12 @@ def main(argv: list[str] | None = None) -> int:
         return _coverage(args.asof)
     if args.command == "backfill":
         return asyncio.run(_backfill(args.date_from, args.ticker))
+    if args.command == "repair-audit":
+        return asyncio.run(_repair_audit(args.date_from, args.date_till))
+    if args.command == "repair-plan":
+        return asyncio.run(_repair_plan(args.date_from, args.date_till, args.request_budget))
+    if args.command == "repair-run":
+        return asyncio.run(_repair_run(args.plan_id))
     return 1
 
 
