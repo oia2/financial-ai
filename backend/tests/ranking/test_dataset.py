@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data import groups
 from financial_ai.market_data.repository import AggregateRow, DailyBar, MarketDataRepository
 from financial_ai.ranking.dataset import DatasetError, build_dataset, prune_datasets
 
@@ -56,6 +57,18 @@ async def _seed(session: AsyncSession, close: str = "314.22") -> None:
     ]
     await repository.upsert_daily_bars(bars)
     await repository.upsert_global_values("IMOEX", {day: Decimal("3200.5") for day in SESSIONS})
+    moment = dt.datetime.now(dt.UTC)
+    for day in SESSIONS:
+        for source_id in groups.source_ids_for(groups.GROUPS):
+            await repository.record_run(
+                run_id=f"seed-{source_id}-{day}",
+                source_id=source_id,
+                status="ok",
+                started_at=moment,
+                finished_at=moment,
+                session_date=day,
+                rows_written=1,
+            )
     await session.commit()
 
 
@@ -318,6 +331,20 @@ async def test_missing_session_reaches_the_manifest(
             for day in (SESSIONS[0], SESSIONS[2])
         ]
     )
+    moment = dt.datetime.now(dt.UTC)
+    for day in SESSIONS:
+        for source_id in groups.source_ids_for(groups.GROUPS):
+            if day == SESSIONS[1] and source_id == "equity_d1":
+                continue
+            await repository.record_run(
+                run_id=f"miss-{source_id[:10]}-{day:%Y%m%d}",
+                source_id=source_id,
+                status="ok",
+                started_at=moment,
+                finished_at=moment,
+                session_date=day,
+                rows_written=1,
+            )
     await db_session.commit()
 
     dataset = await build_dataset(db_session, settings, ASOF)

@@ -182,7 +182,7 @@ async def test_changed_window_reopens_the_expensive_check(
     assert stale is True
 
 
-async def test_range_source_is_complete_by_observations(
+async def test_range_source_is_complete_after_verified_range_runs(
     db_session: AsyncSession, settings: Settings
 ) -> None:
     """Диапазонный источник закрывает окно наблюдениями, а не журналом прогонов.
@@ -209,13 +209,18 @@ async def test_range_source_is_complete_by_observations(
             db_session.add(
                 GlobalDailySeries(series_id=series_id, session_date=day, value=Decimal("16.5"))
             )
-    await repository.record_run(
-        run_id="range-run",
-        source_id="cbr",
-        status="ok",
-        started_at=dt.datetime.now(dt.UTC),
-        session_date=ASOF,
-    )
+    moment = dt.datetime.now(dt.UTC)
+    for source_id in global_group.source_ids:
+        await repository.record_run(
+            run_id=f"range-run-{source_id}",
+            source_id=source_id,
+            status="ok",
+            started_at=moment,
+            finished_at=moment,
+            period_from=SESSIONS[0],
+            period_till=SESSIONS[-1],
+            rows_written=len(SESSIONS),
+        )
     await db_session.commit()
 
     missing = await completeness.missing_sessions(

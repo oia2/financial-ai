@@ -57,6 +57,17 @@ async def _seed(session: AsyncSession, collected: list[dt.date]) -> MarketDataRe
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
     if collected:
         await repository.upsert_daily_bars([_bar(day) for day in collected])
+        moment = dt.datetime.now(dt.UTC)
+        for day in collected:
+            await repository.record_run(
+                run_id=f"seed-quotes-{day}",
+                source_id=equity_d1.SOURCE_ID,
+                status="ok",
+                started_at=moment,
+                finished_at=moment,
+                session_date=day,
+                rows_written=1,
+            )
     await session.commit()
     return repository
 
@@ -68,11 +79,14 @@ async def test_missing_sessions_are_found(db_session: AsyncSession, settings: Se
     assert report.has_gaps is True
 
 
-async def test_full_window_has_no_gaps(db_session: AsyncSession, settings: Settings) -> None:
+async def test_full_quote_window_still_reports_other_missing_groups(
+    db_session: AsyncSession, settings: Settings
+) -> None:
     await _seed(db_session, SESSIONS)
     report = await gaps.find_gaps(db_session, settings, ASOF)
     assert report.missing_sessions == []
-    assert report.has_gaps is False
+    assert report.has_gaps is True
+    assert report.incomplete_sources[SESSIONS[0]]
 
 
 async def test_non_trading_day_is_not_a_gap(db_session: AsyncSession, settings: Settings) -> None:
@@ -129,7 +143,10 @@ async def test_failed_run_leaves_the_session_missing(
 async def test_session_older_than_window_is_not_missing(db_session: AsyncSession) -> None:
     """Сессия старше окна в набор не попадёт, и догонять её незачем."""
     await _seed(db_session, [SESSIONS[3], SESSIONS[4]])
-    narrow = Settings(market_data_catchup_window_sessions=2)
+    narrow = Settings(
+        market_data_catchup_window_sessions=2,
+        market_data_price_window_sessions=2,
+    )
     report = await gaps.find_gaps(db_session, narrow, ASOF)
     assert report.window == SESSIONS[3:]
     assert report.missing_sessions == []
@@ -174,8 +191,8 @@ async def test_incomplete_by_session_names_the_source(
     report = await gaps.find_gaps(db_session, settings, ASOF)
     incomplete = report.incomplete_by_session()
 
-    assert incomplete[SESSIONS[0]] == ["futures_positions"]
-    assert incomplete[SESSIONS[2]] == [equity_d1.SOURCE_ID]
+    assert "futures_positions" in incomplete[SESSIONS[0]]
+    assert equity_d1.SOURCE_ID in incomplete[SESSIONS[2]]
 
 
 async def test_successful_retry_clears_the_unfinished_mark(

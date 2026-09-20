@@ -882,6 +882,7 @@ async def ingest_and_rank(
     """
     # Импорт здесь, а не в шапке: сбор данных не должен зависеть от звена
     # ранжирования — оно может отсутствовать, и это не мешает собирать.
+    from financial_ai.daily_ml import readiness
     from financial_ai.ranking import client as ranking_client
     from financial_ai.ranking import dataset as dataset_module
 
@@ -895,6 +896,9 @@ async def ingest_and_rank(
     # возможности вмешаться — один прогон на живых данных это показал.
     try:
         dataset = await dataset_module.build_dataset(session, settings, result.session_date)
+        if not readiness.dataset_is_complete(dataset.incomplete, settings):
+            logger.warning("ранжирование пропущено: обязательный вход неполон")
+            return result, None
         ranking = await ranking_client.request_ranking(settings, dataset)
     except dataset_module.DatasetError as error:
         logger.warning("набор на %s не собран: %s", result.session_date, error)

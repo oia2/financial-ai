@@ -39,6 +39,8 @@ export interface SourceCoverageDto {
    */
   status: 'ok' | 'partial' | 'failed';
   sessions_covered: number;
+  /** Старые сессии, которые требуют явного аудита/ремонта. */
+  requires_audit: number;
   /**
    * Неудачи по дням: что именно и когда сломалось.
    *
@@ -85,6 +87,8 @@ export interface GroupCoverageDto {
   period_till?: string | null;
   /** Непокрытые сессии окна. */
   gaps?: number;
+  /** Сессии старой области, ожидающие управляемого аудита. */
+  requires_audit?: number;
 
   rows_total: number | null;
   rows_with_values: number | null;

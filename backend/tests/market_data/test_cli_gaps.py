@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import get_settings
+from financial_ai.market_data import groups
 from financial_ai.market_data import cli
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
@@ -57,6 +58,18 @@ async def _seed(session: AsyncSession, collected: list[dt.date]) -> MarketDataRe
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
     if collected:
         await repository.upsert_daily_bars([_bar(day) for day in collected])
+        moment = dt.datetime.now(dt.UTC)
+        for day in collected:
+            for source_id in groups.source_ids_for(groups.GROUPS):
+                await repository.record_run(
+                    run_id=f"seed-{source_id}-{day}",
+                    source_id=source_id,
+                    status="ok",
+                    started_at=moment,
+                    finished_at=moment,
+                    session_date=day,
+                    rows_written=1,
+                )
     await session.commit()
     return repository
 

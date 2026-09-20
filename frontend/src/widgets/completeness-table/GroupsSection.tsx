@@ -173,6 +173,9 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
       <td data-label="Примечание">
         {SCOPE_NOTE[source.scope] ?? ''}
         <SourceFailures failures={source.failures} total={source.failures_total} />
+        {source.requires_audit > 0 && (
+          <small>Явный аудит старых сессий: {source.requires_audit}</small>
+        )}
       </td>
     </tr>
   );
@@ -231,6 +234,7 @@ function groupBadge(group: GroupCoverageDto): Badge {
   // есть записанные неудачи, и они названы днём и причиной.
   if (group.sources.some((source) => source.status === 'failed'))
     return ['error', 'Ошибка источника'];
+  if ((group.requires_audit ?? 0) > 0) return ['partial', 'Нужен аудит'];
   if (group.sources.some((source) => source.status === 'partial')) return ['partial', 'Частично'];
   if (group.has_history && (group.gaps ?? 0) > 0) return ['partial', 'Частично'];
   return ['complete', 'Собрано'];
@@ -244,6 +248,7 @@ function groupBadge(group: GroupCoverageDto): Badge {
  */
 function sourceBadge(source: SourceCoverageDto): Badge {
   if (source.status === 'ok') return ['complete', 'Собрано'];
+  if (source.status !== 'failed' && source.requires_audit > 0) return ['partial', 'Нужен аудит'];
   if (source.status === 'partial') return ['partial', 'Частично'];
   return ['error', 'Ошибка'];
 }

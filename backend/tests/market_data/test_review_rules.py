@@ -1766,7 +1766,7 @@ async def test_счёт_группы_и_её_источника_совпадаю
     by_group = len(window) - len(await completeness.missing_sessions(repository, group, window))
     rows = await coverage._source_outcomes(repository, group, window)
 
-    assert by_group == 2
+    assert by_group == 1
     assert [row["sessions_covered"] for row in rows] == [by_group]
 
 

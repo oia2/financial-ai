@@ -28,9 +28,9 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data import completeness, groups
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.repository import MarketDataRepository
-from financial_ai.market_data.sources import equity_d1
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +50,7 @@ class GapReport:
     window: list[dt.date]
     missing_sessions: list[dt.date]
     unfinished: list[UnfinishedSource] = field(default_factory=list)
+    incomplete_sources: dict[dt.date, list[str]] = field(default_factory=dict)
 
     # Хранилище пусто: это не дыра, а отсутствие истории. Догон здесь
     # продублировал бы первичную загрузку дороже — она берёт историю по бумаге
@@ -58,7 +59,7 @@ class GapReport:
 
     @property
     def has_gaps(self) -> bool:
-        return bool(self.missing_sessions)
+        return bool(self.missing_sessions or self.incomplete_sources)
 
     def incomplete_by_session(self) -> dict[dt.date, list[str]]:
         """Полнота окна по сессиям и источникам.
@@ -67,11 +68,15 @@ class GapReport:
         позиций. Объявление «сессия неполна» без источника заставило бы считать
         неполным весь срез, тогда как задета одна модальность.
         """
-        out: dict[dt.date, set[str]] = {}
-        for day in self.missing_sessions:
-            out.setdefault(day, set()).add(equity_d1.SOURCE_ID)
+        out: dict[dt.date, set[str]] = {
+            day: set(sources) for day, sources in self.incomplete_sources.items()
+        }
         for item in self.unfinished:
             out.setdefault(item.session_date, set()).add(item.source_id)
+        # Совместимость с отчётами, собранными только по котировкам.
+        for day in self.missing_sessions:
+            if day not in out:
+                out.setdefault(day, set()).add("equity_d1")
         return {day: sorted(sources) for day, sources in sorted(out.items())}
 
 
@@ -90,30 +95,40 @@ async def find_gaps(session: AsyncSession, settings: Settings, asof_date: dt.dat
             needs_backfill=True,
         )
 
-    # Здесь счёт идёт по КОТИРОВКАМ, и это осознанно: отчёт отвечает на вопрос
-    # «есть ли у сессии пространство строк», и его же читает набор для
-    # ранжирования, объявляя неполноту окна. Вопрос «что брать в сбор» —
-    # другой, и на него отвечает `completeness.incomplete_sessions` по всем
-    # группам (FR-031); путать их нельзя, иначе полнота набора начнёт зависеть
-    # от групп, которых модель не требует.
-    with_bars = await repository.sessions_with_daily_bars(window)
-    collected = await repository.sessions_with_successful_run(window, equity_d1.SOURCE_ID)
+    # Набор использует собственные окна групп и то же правило, что сводка и
+    # готовность. Сохраняем причины по источнику, включая старые сессии,
+    # ожидающие явного аудита; обязательность групп применит финальный gate ML.
+    missing: set[dt.date] = set()
+    incomplete_sources: dict[dt.date, set[str]] = {}
+    unfinished: dict[tuple[dt.date, str], UnfinishedSource] = {}
+    for group in groups.GROUPS:
+        depth = group.window_sessions(settings)
+        if depth is None:
+            continue
+        source_window = await calendar.window(asof_date, depth)
+        closed_by_source = await completeness.closed_by_source(repository, group, source_window)
+        if group.group_id is groups.GroupId.QUOTES:
+            missing.update(day for day in source_window if day not in closed_by_source["equity_d1"])
 
-    missing = [day for day in window if day not in with_bars and day not in collected]
-
-    unfinished = [
-        UnfinishedSource(
-            session_date=run.session_date,
-            source_id=run.source_id,
-            reason=run.failure_reason,
-        )
-        for run in await repository.failed_runs_for_sessions(window)
-        if run.session_date is not None
-    ]
+        latest = await repository.latest_run_by_session(source_window)
+        for source_id in group.source_ids:
+            not_closed = set(source_window) - closed_by_source[source_id]
+            for day in not_closed:
+                incomplete_sources.setdefault(day, set()).add(source_id)
+                run = latest.get((day, source_id))
+                if run is not None and run.status in {"failed", "stopped", "running"}:
+                    unfinished[(day, source_id)] = UnfinishedSource(
+                        session_date=day,
+                        source_id=source_id,
+                        reason=run.failure_reason,
+                    )
 
     return GapReport(
         asof_date=asof_date,
         window=window,
-        missing_sessions=missing,
-        unfinished=unfinished,
+        missing_sessions=sorted(missing),
+        unfinished=sorted(unfinished.values(), key=lambda row: (row.session_date, row.source_id)),
+        incomplete_sources={
+            day: sorted(source_ids) for day, source_ids in sorted(incomplete_sources.items())
+        },
     )

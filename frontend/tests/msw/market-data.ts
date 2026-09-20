@@ -44,6 +44,7 @@ function sourcesOf(group: GroupCoverageDto['group'], covered: number): SourceCov
     scope,
     status: 'ok',
     sessions_covered: covered,
+    requires_audit: 0,
     failures: [],
     failures_total: 0,
   }));

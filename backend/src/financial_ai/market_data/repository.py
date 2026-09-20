@@ -908,19 +908,14 @@ class MarketDataRepository:
         упавший однажды и собранный со второй попытки, числился бы незакрытым
         вечно, а перечень пропусков превращался бы в журнал былых неудач.
         """
-        if not sessions:
-            return []
-        rows = await self._session.scalars(
-            select(IngestRun)
-            .where(IngestRun.session_date.in_(sessions))
-            .distinct(IngestRun.session_date, IngestRun.source_id)
-            .order_by(
-                IngestRun.session_date,
-                IngestRun.source_id,
-                IngestRun.started_at.desc(),
-            )
+        latest = await self.latest_run_by_session(sessions)
+        return list(
+            {
+                run.id: run
+                for run in latest.values()
+                if run.status in {"failed", "stopped", "running"}
+            }.values()
         )
-        return [run for run in rows.all() if run.status == "failed"]
 
     async def collected_since(
         self, moment: dt.datetime, exclude_sources: tuple[str, ...] = ()
@@ -933,24 +928,17 @@ class MarketDataRepository:
         собирали» означает «вход измениться не мог» — и пересобирать набор ради
         дайджеста не нужно.
 
-        Прогон, **не записавший ни строки**, сбором здесь не считается: он
-        ничего не изменил. Иначе ежедневная сверка календаря, которая обычно не
-        добавляет ни одной сессии, открывала бы дорогую ветку на весь день.
-
         Незавершённый прогон считается сбором: он может писать прямо сейчас.
+        Исходы с нулём строк тоже учитываются: ошибка/остановка и новое
+        подтверждение полноты меняют объявление набора, даже если цены не
+        добавились. Сверка календаря по-прежнему исключается вызывающим кодом.
 
         `exclude_sources` — источники, чьё влияние вызывающий проверяет иначе.
         Так исключается календарь: новые торговые дни появляются каждый день, но
         на окно ПРОШЕДШЕЙ даты влияют, только если попали внутрь него, а это
         видно по сдвигу границ окна.
         """
-        conditions = [
-            IngestRun.status == "ok",
-            or_(
-                IngestRun.finished_at.is_(None),
-                and_(IngestRun.finished_at > moment, IngestRun.rows_written > 0),
-            ),
-        ]
+        conditions = [or_(IngestRun.finished_at.is_(None), IngestRun.finished_at > moment)]
         if exclude_sources:
             conditions.append(IngestRun.source_id.not_in(exclude_sources))
 

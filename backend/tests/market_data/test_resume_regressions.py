@@ -205,12 +205,12 @@ async def test_daily_uses_same_completeness_as_report_and_skips_positions(
     monkeypatch.setattr(ingest, "_sync_cbr", cbr_action)
     monkeypatch.setattr(ingest, "_sync_positions", positions_action)
 
-    assert DAY in await completeness.closed_sessions(repository, GLOBAL, cbr.SOURCE_ID, [DAY])
+    assert DAY not in await completeness.closed_sessions(repository, GLOBAL, cbr.SOURCE_ID, [DAY])
     result = await ingest.ingest_session(
         db_session, Settings(), DAY, client=Mock(), positions_client=Mock()
     )
     assert result.succeeded
-    cbr_action.assert_not_awaited()
+    cbr_action.assert_awaited_once()
     positions_action.assert_not_awaited()
     links_action.assert_not_awaited()
     assert positions.SOURCE_ID in {outcome.source_id for outcome in result.outcomes}

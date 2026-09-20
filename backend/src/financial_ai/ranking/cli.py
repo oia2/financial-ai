@@ -13,6 +13,7 @@ import datetime as dt
 import sys
 
 from financial_ai.config import get_settings
+from financial_ai.daily_ml import readiness
 from financial_ai.db.engine import get_session_factory
 from financial_ai.logging import setup_logging
 from financial_ai.ranking import client as ranking_client
@@ -63,6 +64,9 @@ async def _rank(asof: dt.date) -> int:
             dataset = await dataset_module.build_dataset(session, settings, asof)
         except dataset_module.DatasetError as error:
             print(f"набор не собран: {error}")
+            return 1
+        if not readiness.dataset_is_complete(dataset.incomplete, settings):
+            print("ранжирование не запрошено: обязательный вход неполон")
             return 1
 
     try:

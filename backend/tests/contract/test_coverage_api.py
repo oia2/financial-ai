@@ -398,8 +398,8 @@ async def test_неудача_за_закрытую_сессию_не_показ
 
     group = next(g for g in report["groups"] if g["group"] == "global")  # type: ignore[index,union-attr]
     cbr = next(s for s in group["sources"] if s["source_id"] == "cbr")  # type: ignore[index,call-overload]
-    assert cbr["failures_total"] == 0
-    assert cbr["failures"] == []
+    assert cbr["failures_total"] == 1
+    assert cbr["failures"][0]["session_date"] == ASOF.isoformat()
 
 
 async def test_неудача_за_незакрытую_сессию_показывается(db_session: object) -> None:

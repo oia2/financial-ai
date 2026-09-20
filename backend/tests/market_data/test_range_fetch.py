@@ -102,7 +102,12 @@ async def _count_history_calls(
     session: AsyncSession, sessions: list[dt.date], cbr_client: httpx.AsyncClient
 ) -> int:
     await _seed(session, sessions)
-    settings = Settings(market_data_catchup_window_sessions=len(sessions))
+    settings = Settings(
+        market_data_catchup_window_sessions=len(sessions),
+        market_data_price_window_sessions=len(sessions),
+        market_data_global_window_sessions=len(sessions),
+        market_data_positions_window_sessions=len(sessions),
+    )
     iss = CountingIss(sessions)
     await ingest.catch_up(session, settings, sessions[-1], iss, cbr_client)
     return len(iss.history_calls)
@@ -131,7 +136,12 @@ async def test_per_date_calls_do_grow(
 ) -> None:
     """А источники с выборкой по дате дорожают: это ожидаемо и честно."""
     await _seed(db_session, SHORT)
-    settings = Settings(market_data_catchup_window_sessions=len(SHORT))
+    settings = Settings(
+        market_data_catchup_window_sessions=len(SHORT),
+        market_data_price_window_sessions=len(SHORT),
+        market_data_global_window_sessions=len(SHORT),
+        market_data_positions_window_sessions=len(SHORT),
+    )
     iss = CountingIss(SHORT)
 
     await ingest.catch_up(db_session, settings, SHORT[-1], iss, cbr_client)
@@ -145,13 +155,18 @@ async def test_range_covers_the_whole_gap(
 ) -> None:
     """Границы обращения совпадают с границами дыры, а не с одной датой."""
     await _seed(db_session, SHORT)
-    settings = Settings(market_data_catchup_window_sessions=len(SHORT))
+    settings = Settings(
+        market_data_catchup_window_sessions=len(SHORT),
+        market_data_price_window_sessions=len(SHORT),
+        market_data_global_window_sessions=len(SHORT),
+        market_data_positions_window_sessions=len(SHORT),
+    )
     iss = CountingIss(SHORT)
 
     await ingest.catch_up(db_session, settings, SHORT[-1], iss, cbr_client)
 
     ranges = {(f, t) for _, f, t in iss.history_calls}
-    assert (SHORT[1].isoformat(), SHORT[2].isoformat()) in ranges
+    assert (SHORT[0].isoformat(), SHORT[2].isoformat()) in ranges
 
 
 # --- бесполезные обращения (FR-022, FR-023, SC-007) --------------------------

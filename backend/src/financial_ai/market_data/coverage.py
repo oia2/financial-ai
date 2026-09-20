@@ -36,6 +36,7 @@ class GroupCoverage:
 
     window_sessions: int | None
     sessions_covered: int | None
+    requires_audit: int
     period_from: dt.date | None
     period_till: dt.date | None
     gaps: int | None
@@ -88,6 +89,7 @@ class GroupCoverage:
             # первом же уточнении они разошлись бы (FR-013a).
             "looks_collected_but_empty": self.looks_collected_but_empty,
             "sources": self.sources,
+            "requires_audit": self.requires_audit,
         }
         if self.has_history:
             # У справочника этих полей НЕТ вовсе, а не нули: ноль читался бы
@@ -148,12 +150,12 @@ async def _source_outcomes(
     # иначе удачный повтор не снимал бы отметку, и перечень превратился бы в
     # журнал былых неудач.
     failures: dict[str, list[dict[str, object]]] = {}
-    for run in await repository.failed_runs_for_sessions(window):
-        if run.session_date is None:
+    for (day, source_id), run in (await repository.latest_run_by_session(window)).items():
+        if run.status not in {"failed", "stopped", "running"}:
             continue
-        failures.setdefault(run.source_id, []).append(
+        failures.setdefault(source_id, []).append(
             {
-                "session_date": run.session_date.isoformat(),
+                "session_date": day.isoformat(),
                 "reason": run.failure_reason,
             }
         )
@@ -165,6 +167,7 @@ async def _source_outcomes(
             plan.SESSION,
         )
         broken = failures.get(source_id, [])
+        audit: set[dt.date] = set()
 
         if window:
             # Тем же правилом, что и счёт группы, и ТЕМ ЖЕ расчётом: два числа
@@ -174,6 +177,14 @@ async def _source_outcomes(
             if closed is None:
                 closed = await completeness.closed_sessions(repository, group, source_id, window)
             count = len(closed)
+            audit = await completeness.requires_audit_sessions(
+                repository,
+                group,
+                source_id,
+                window,
+                closed=closed,
+                boundary=await repository.coverage_boundary(),
+            )
 
             # Неудача за ЗАКРЫТУЮ сессию не показывается: данные получены
             # другим путём — диапазонный запрос приносит триста сессий одним
@@ -209,6 +220,7 @@ async def _source_outcomes(
                 "scope": scope,
                 "status": status,
                 "sessions_covered": count,
+                "requires_audit": len(audit) if window else 0,
                 # Свежие сверху: «источник с ошибкой» без дня и причины — это
                 # состояние, с которым человеку нечего делать.
                 "failures": sorted(
@@ -246,19 +258,34 @@ async def build_report(
 
     rows: list[GroupCoverage] = []
     pending: set[dt.date] = set()
+    boundary = await repository.coverage_boundary()
     for group in groups.GROUPS:
         window_size = group.window_sessions(settings)
         window = await calendar.window(asof_date, window_size) if window_size else []
 
         missing: list[dt.date] = []
         closed_sources: dict[str, set[dt.date]] = {}
+        requires_audit: set[dt.date] = set()
         if window:
             # Те же недостающие сессии, что найдёт сбор: правило полноты одно
             # на сводку, поиск пропусков и решение о работе (FR-032). Считается
             # ОДИН раз на группу и отдаётся обоим потребителям.
             closed_sources = await completeness.closed_by_source(repository, group, window)
             missing = await completeness.missing_sessions(repository, group, window, closed_sources)
-            pending.update(missing)
+            for source_id in group.source_ids:
+                requires_audit.update(
+                    await completeness.requires_audit_sessions(
+                        repository,
+                        group,
+                        source_id,
+                        window,
+                        closed=closed_sources[source_id],
+                        boundary=boundary,
+                    )
+                )
+            # Сводка показывает старую неполноту как требующую аудита, но
+            # предсказание следующего автоматического сбора её не выбирает.
+            pending.update(day for day in missing if day not in requires_audit)
 
         raw = await repository.group_coverage(
             group.model,
@@ -276,12 +303,13 @@ async def build_report(
                 has_history=group.has_history,
                 window_sessions=len(window) if group.has_history else None,
                 # Покрытие группы считается ТЕМ ЖЕ правилом, что и исход
-                # каждого её источника: сессия закрыта, если есть непустое
-                # наблюдение либо успешный прогон. Прежде строка группы шла от
+                # каждого её источника: сессия закрыта подтверждённым прогоном.
+                # Прежде строка группы шла от
                 # наблюдений, а раскрытие — от исходов прогонов, и на экране
                 # рядом стояли два числа об одном и том же: «11 из 82» сверху и
                 # «13 из 82» внутри (FR-032).
                 sessions_covered=(len(window) - len(missing)) if group.has_history else None,
+                requires_audit=len(requires_audit) if group.has_history else 0,
                 period_from=raw.period_from,
                 period_till=raw.period_till,
                 gaps=len(missing) if group.has_history else None,
