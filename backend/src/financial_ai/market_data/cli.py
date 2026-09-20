@@ -145,11 +145,13 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("repair-audit", help="Проверить данные перед ручным ремонтом без записи")
     audit.add_argument("--from", dest="date_from", type=_parse_date, required=True)
     audit.add_argument("--till", dest="date_till", type=_parse_date, required=True)
+    audit.add_argument("--source", action="append", default=None)
 
     repair_plan = sub.add_parser("repair-plan", help="Создать план ручного ремонта без запуска")
     repair_plan.add_argument("--from", dest="date_from", type=_parse_date, required=True)
     repair_plan.add_argument("--till", dest="date_till", type=_parse_date, required=True)
     repair_plan.add_argument("--request-budget", type=int, required=True)
+    repair_plan.add_argument("--source", action="append", default=None)
 
     repair_run = sub.add_parser("repair-run", help="Выполнить ранее созданный план ремонта")
     repair_run.add_argument("--plan-id", required=True)
@@ -157,13 +159,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _repair_audit(date_from: dt.date, date_till: dt.date) -> int:
+async def _repair_audit(
+    date_from: dt.date, date_till: dt.date, source_ids: list[str] | None = None
+) -> int:
     if date_till < date_from:
         print("конец диапазона раньше начала")
         return 2
     factory = get_session_factory()
     async with factory() as session:
-        rows = await repair_audit.audit(MarketDataRepository(session), date_from, date_till)
+        rows = await repair_audit.audit(
+            MarketDataRepository(session), date_from, date_till, frozenset(source_ids or ()) or None
+        )
     if not rows:
         print("в сохранённом календаре нет торговых сессий указанного диапазона")
         return 0
@@ -176,7 +182,12 @@ async def _repair_audit(date_from: dt.date, date_till: dt.date) -> int:
     return 0
 
 
-async def _repair_plan(date_from: dt.date, date_till: dt.date, request_budget: int) -> int:
+async def _repair_plan(
+    date_from: dt.date,
+    date_till: dt.date,
+    request_budget: int,
+    source_ids: list[str] | None = None,
+) -> int:
     if date_till < date_from:
         print("конец диапазона раньше начала")
         return 2
@@ -184,7 +195,11 @@ async def _repair_plan(date_from: dt.date, date_till: dt.date, request_budget: i
         factory = get_session_factory()
         async with factory() as session:
             plan_id, rows = await repair_audit.create_plan(
-                MarketDataRepository(session), date_from, date_till, request_budget
+                MarketDataRepository(session),
+                date_from,
+                date_till,
+                request_budget,
+                frozenset(source_ids or ()) or None,
             )
     except ValueError as error:
         print(str(error))
@@ -703,9 +718,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backfill":
         return asyncio.run(_backfill(args.date_from, args.ticker))
     if args.command == "repair-audit":
-        return asyncio.run(_repair_audit(args.date_from, args.date_till))
+        return asyncio.run(_repair_audit(args.date_from, args.date_till, args.source))
     if args.command == "repair-plan":
-        return asyncio.run(_repair_plan(args.date_from, args.date_till, args.request_budget))
+        return asyncio.run(
+            _repair_plan(args.date_from, args.date_till, args.request_budget, args.source)
+        )
     if args.command == "repair-run":
         return asyncio.run(_repair_run(args.plan_id))
     return 1

@@ -33,7 +33,10 @@ class AuditRow:
 
 
 async def audit(
-    repository: MarketDataRepository, date_from: dt.date, date_till: dt.date
+    repository: MarketDataRepository,
+    date_from: dt.date,
+    date_till: dt.date,
+    source_ids: frozenset[str] | None = None,
 ) -> list[AuditRow]:
     """Вернуть доказуемый статус каждого исторического источника и сессии."""
     sessions = await repository.sessions_between(date_from, date_till)
@@ -44,6 +47,8 @@ async def audit(
             continue
         closed_by_source = await completeness.closed_by_source(repository, group, sessions)
         for source_id in group.source_ids:
+            if source_ids is not None and source_id not in source_ids:
+                continue
             present = await repository.sessions_with_observations(
                 group.model,
                 group.session_column,
@@ -76,12 +81,16 @@ async def audit(
 
 
 async def create_plan(
-    repository: MarketDataRepository, date_from: dt.date, date_till: dt.date, request_budget: int
+    repository: MarketDataRepository,
+    date_from: dt.date,
+    date_till: dt.date,
+    request_budget: int,
+    source_ids: frozenset[str] | None = None,
 ) -> tuple[str, list[AuditRow]]:
     """Сохранить только неизвестные пары; сам план ничего не собирает."""
     if request_budget <= 0:
         raise ValueError("лимит HTTP-попыток должен быть положительным")
-    rows = await audit(repository, date_from, date_till)
+    rows = await audit(repository, date_from, date_till, source_ids)
     plan_id = str(uuid.uuid4())
     # Brent идёт первым: это доказанный случай и один ISS-запрос на страницу.
     rows.sort(key=lambda row: (row.source_id != "brent", row.session_date, row.source_id))
