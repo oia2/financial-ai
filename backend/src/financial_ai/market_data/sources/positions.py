@@ -42,6 +42,13 @@ from financial_ai.market_data.sources.positions_client import (
     PositionsClient,
     PositionsSourceError,
 )
+from financial_ai.market_data.verification import (
+    RESULT_CONFIRMED_ABSENCE,
+    RESULT_NOT_APPLICABLE,
+    RESULT_VALUE,
+    VerificationResult,
+    WorkEvidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +75,7 @@ async def sync_positions(
     sessions: list[dt.date] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-) -> int:
+) -> VerificationResult:
     """Собрать позиции за одну торговую сессию.
 
     Чем спрашивать — решает действующая связь бумаги: она знает, с какой даты
@@ -113,7 +120,8 @@ async def sync_positions(
         raise EmptyPositionsError("действующих связей бумаг и контрактов нет: спрашивать нечего")
 
     known_tickers = await repository.tickers_with_history()
-    already = await repository.positions_collected_on(session_date)
+    stored_evidence = await repository.work_evidence_for_sessions(SOURCE_ID, [session_date])
+    proven_work = {item.work_key for item in stored_evidence}
     first_seen = await repository.first_position_dates()
 
     # Бумага, по которой позиции собирались, обязана иметь связь — действующую
@@ -153,6 +161,8 @@ async def sync_positions(
         )
 
     pending: list[PositionRow] = []
+    evidence: list[WorkEvidence] = []
+    unknown: list[str] = []
     requested = 0
     written = 0
     skipped_collected = 0
@@ -175,7 +185,8 @@ async def sync_positions(
     # Знаменатель — те, кого предстоит спросить, а не весь список: собранные
     # пары пропускаются, и обещать обращение к ним нельзя (FR-058i).
     todo = sum(
-        (asset_id_for(ticker), links[asset_id_for(ticker)]) not in already for ticker in wanted
+        _pair_work_key(asset_id_for(ticker), links[asset_id_for(ticker)]) not in proven_work
+        for ticker in wanted
     )
 
     stopped = False
@@ -190,8 +201,9 @@ async def sync_positions(
 
         asset_id = asset_id_for(ticker)
         contract = links[asset_id]
+        work_key = _pair_work_key(asset_id, contract)
 
-        if (asset_id, contract) in already:
+        if work_key in proven_work:
             # Пара уже собрана. Для источников с единицей «дата» это следует из
             # правил догона; здесь единица мельче сессии, и правило нужно явно.
             #
@@ -214,13 +226,14 @@ async def sync_positions(
             raise SourceStoppedError(
                 written + error.rows_written,
                 error.detail,
+                evidence=(*evidence, *error.evidence),
             ) from error
         except Exception as error:
             # Полученное до ошибки или остановки закрепляется ДО выхода.
             # Иначе ошибка на восьмидесятом контракте уносила семьдесят девять
             # уже полученных ответов (FR-032a, T207).
             await flush()
-            if written:
+            if written or evidence:
                 # Обычная ошибка после успешных обращений тоже должна сообщить
                 # run_source фактическое число сохранённых строк. Она остаётся
                 # неуспехом, а точная причина и незавершённая пара видны в журнале.
@@ -228,6 +241,7 @@ async def sync_positions(
                     rows_written=written,
                     detail=f"не удалось собрать {contract}: {error}",
                     unfinished=(f"{contract}/{session_date}",),
+                    evidence=tuple(evidence),
                 ) from error
             raise
         except BaseException:
@@ -237,7 +251,18 @@ async def sync_positions(
             raise
 
         if isinstance(fetched, PositionFetchResult):
-            if fetched.kind is not PositionFetchKind.VALUE:
+            if fetched.kind is PositionFetchKind.UNKNOWN:
+                unknown.append(f"{contract}/{session_date}:{fetched.reason_code}")
+                continue
+            if fetched.kind is PositionFetchKind.CONFIRMED_ABSENCE:
+                evidence.append(
+                    WorkEvidence(
+                        session_date,
+                        work_key,
+                        RESULT_CONFIRMED_ABSENCE,
+                        fetched.reason_code,
+                    )
+                )
                 continue
             snapshot = fetched.snapshot
             if snapshot is None:  # pragma: no cover - защита контракта типа
@@ -246,6 +271,7 @@ async def sync_positions(
             # Тестовые клиенты переходного этапа ещё возвращают снимок/None.
             snapshot = fetched
             if snapshot is None:
+                unknown.append(f"{contract}/{session_date}:legacy_empty_result")
                 continue
 
         row = PositionRow(
@@ -263,6 +289,9 @@ async def sync_positions(
         # считать сессию закрытой.
         if _has_values(row):
             pending.append(row)
+            evidence.append(WorkEvidence(session_date, work_key, RESULT_VALUE, "exact_date_values"))
+        else:
+            unknown.append(f"{contract}/{session_date}:legacy_empty_result")
         if len(pending) >= SAVE_BATCH_ROWS:
             await flush()
 
@@ -271,9 +300,15 @@ async def sync_positions(
     if lost:
         # Собранное записано выше: видимость расхождения не оплачивается
         # потерей данных по остальным бумагам (FR-020a).
-        raise EmptyPositionsError(
-            "бумаги с историей позиций потеряли связь с контрактом: "
-            + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
+        return VerificationResult(
+            rows_written=written,
+            evidence=tuple(evidence),
+            complete=False,
+            detail=(
+                "бумаги с историей позиций потеряли связь с контрактом: "
+                + ", ".join(asset_id.removeprefix("EQ_AST_") for asset_id in lost)
+            ),
+            counts_as_unavailable=False,
         )
 
     if stopped:
@@ -284,15 +319,16 @@ async def sync_positions(
         raise SourceStoppedError(
             written,
             f"спрошено {requested} бумаг из {len(wanted)}",
+            evidence=tuple(evidence),
         )
 
-    if requested and not written:
-        # Ровно то различие, ради которого FR-018 существует: настоящая
-        # частичность даёт значения хотя бы по части инструментов, дефект —
-        # ноль. Ноль записывается как неуспех, а не как успешная пустота.
-        raise EmptyPositionsError(
-            f"позиции за {session_date}: выполнено {requested} обращений, "
-            "ни одного значения не получено"
+    if unknown:
+        return VerificationResult(
+            rows_written=written,
+            evidence=tuple(evidence),
+            complete=False,
+            detail="не проверены пары: " + ", ".join(unknown),
+            counts_as_unavailable=False,
         )
 
     logger.info(
@@ -302,7 +338,21 @@ async def sync_positions(
         written,
         skipped_collected,
     )
-    return written
+    result_kinds = {
+        item.result_kind for item in stored_evidence if item.work_key.startswith("pair:")
+    }
+    result_kinds.update(item.result_kind for item in evidence if item.work_key.startswith("pair:"))
+    if RESULT_VALUE in result_kinds:
+        source_kind = RESULT_VALUE
+        reason_code = "all_applicable_pairs_verified"
+    elif result_kinds:
+        source_kind = RESULT_CONFIRMED_ABSENCE
+        reason_code = "all_applicable_pairs_confirmed_absent"
+    else:
+        source_kind = RESULT_NOT_APPLICABLE
+        reason_code = "no_applicable_pairs"
+    evidence.append(WorkEvidence(session_date, "applicable_links", source_kind, reason_code))
+    return VerificationResult(rows_written=written, evidence=tuple(evidence))
 
 
 # **Проверки «существовал ли инструмент тогда» здесь больше нет, и это не
@@ -325,6 +375,11 @@ async def sync_positions(
 # `first_available_date()` остаётся у клиента — он отвечает на вопрос аудита
 # «с какой даты данные вообще есть», — но работу сбора больше не сокращает и
 # из этого пути убран вместе со своими пробами.
+
+
+def _pair_work_key(asset_id: str, contract: str) -> str:
+    """Стабильная единица продолжения для пары «актив — семейство контракта»."""
+    return f"pair:{asset_id}:{contract}"
 
 
 def _has_values(row: PositionRow) -> bool:

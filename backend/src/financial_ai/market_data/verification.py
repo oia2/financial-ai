@@ -28,6 +28,7 @@ class VerificationResult:
     evidence: tuple[WorkEvidence, ...]
     complete: bool = True
     detail: str | None = None
+    counts_as_unavailable: bool = False
 
 
 def one_session(

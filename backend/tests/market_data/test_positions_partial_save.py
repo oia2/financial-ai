@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from financial_ai.market_data import ingest
 from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
 from financial_ai.market_data.models import FuturesPosition
 from financial_ai.market_data.repository import MarketDataRepository
@@ -125,14 +126,20 @@ async def test_retry_asks_only_the_missing_pair(db_session: AsyncSession) -> Non
     repository = MarketDataRepository(db_session)
 
     first = FailingAfter("SBRF_F", PositionsSourceError("источник недоступен"))
-    with pytest.raises(SourcePartialError):
-        await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
+
+    async def first_run() -> object:
+        return await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
+
+    outcome = await ingest.run_source(
+        repository, "partial-first", positions.SOURCE_ID, SESSION, first_run
+    )
+    assert outcome.status == "failed"
 
     second = FailingAfter("НЕТ_ТАКОГО", RuntimeError("не должно случиться"))
     written = await positions.sync_positions(second, repository, SESSION)  # type: ignore[arg-type]
 
     assert second.calls == [("SBRF_F", SESSION)]
-    assert written == 1
+    assert written.rows_written == 1
 
 
 async def test_other_family_does_not_prove_the_current_one_collected(
@@ -166,7 +173,7 @@ async def test_other_family_does_not_prove_the_current_one_collected(
     written = await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
 
     assert client.calls == [("SBRM_F", SESSION)]
-    assert written == 1
+    assert written.rows_written == 1
     stored = list(await db_session.scalars(select(FuturesPosition)))
     assert sorted(row.contract_code for row in stored) == ["SBRF_F", "SBRM_F"]
 

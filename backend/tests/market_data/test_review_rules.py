@@ -234,7 +234,7 @@ async def test_торговавшаяся_бумага_со_связью_спр�
     client = FakePositionsClient(available={("SBRF", SESSION): FakeSnapshot()})
     written = await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
 
-    assert written == 1
+    assert written.rows_written == 1
 
 
 # --- FR-050: прерванный источник — не успех ----------------------------------
@@ -503,10 +503,7 @@ async def test_добранная_сессия_работой_быть_пере�
     client = FakePositionsClient(available={("SBRF", SESSION): FakeSnapshot()})
 
     async def verified_positions() -> object:
-        from financial_ai.market_data.verification import one_session
-
-        written = await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
-        return one_session(written, SESSION, "applicable_links", has_value=written > 0)
+        return await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
 
     await ingest.run_source(
         repository,
@@ -1609,10 +1606,15 @@ async def test_после_паузы_позиции_не_спрашивают_с
         seen["n"] += 1
         return seen["n"] > 1
 
-    with pytest.raises(SourceStoppedError):
-        await positions.sync_positions(  # type: ignore[arg-type]
+    async def stopped_run() -> object:
+        return await positions.sync_positions(  # type: ignore[arg-type]
             first, repository, SESSION, should_stop=should_stop
         )
+
+    outcome = await ingest.run_source(
+        repository, "stopped-positions", positions.SOURCE_ID, SESSION, stopped_run
+    )
+    assert outcome.status == "stopped"
     await db_session.commit()
 
     asked_first = [code for code, _ in first.calls]
@@ -1664,8 +1666,9 @@ async def test_счётчик_не_шагает_по_собранным(db_sessi
         on_progress=lambda done, total: seen.append((done, total)),
     )
 
-    # Спросить предстоит двоих из трёх — собранного в счёт не берём.
-    assert seen == [(1, 2), (2, 2)]
+    # Старая строка без доказательства v2 не закрывает пару: её происхождение
+    # и полнота неизвестны, поэтому проверяются все три.
+    assert seen == [(1, 3), (2, 3), (3, 3)]
 
 
 # --- FR-058l: известное объявляется в начале сессии --------------------------

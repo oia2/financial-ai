@@ -18,12 +18,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import links
+from financial_ai.market_data import ingest, links
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import positions
 from financial_ai.market_data.sources import positions_client as module
 from financial_ai.market_data.sources.positions_client import (
     PositionFetchKind,
+    PositionFetchResult,
     PositionsClient,
     PositionsSourceError,
     parse_page_state,
@@ -35,6 +36,19 @@ SESSION = dt.date(2026, 8, 28)
 OTHER = dt.date(2026, 8, 27)
 
 NBSP = " "
+
+
+class TypedPositionsClient:
+    """Источник с явными исходами пары для проверок оркестрации."""
+
+    def __init__(self, results: dict[tuple[str, dt.date], PositionFetchResult]) -> None:
+        self.results = results
+        self.calls: list[tuple[str, dt.date]] = []
+
+    async def fetch(self, contract_code: str, day: dt.date) -> PositionFetchResult:
+        self.calls.append((contract_code, day))
+        return self.results[(contract_code, day)]
+
 
 # Живой ответ по SBRF_F: строка открытых позиций идёт ПЕРВОЙ.
 LIVE_TABLE = f"""
@@ -479,17 +493,19 @@ async def test_empty_response_is_a_failure_not_a_partial_success(
     await _seed_assets(db_session, ["SBER"])
     client = FakePositionsClient(empty=True)
 
-    with pytest.raises(positions.EmptyPositionsError, match="ни одного значения"):
-        await positions.sync_positions(
-            client,  # type: ignore[arg-type]
-            MarketDataRepository(db_session),
-            SESSION,
-        )
+    result = await positions.sync_positions(
+        client,  # type: ignore[arg-type]
+        MarketDataRepository(db_session),
+        SESSION,
+    )
+
+    assert result.complete is False
+    assert result.evidence == ()
 
 
 @pytest.mark.db
-async def test_real_partial_coverage_is_still_a_success(db_session: AsyncSession) -> None:
-    """Настоящая частичность — норма: значения есть хотя бы по части бумаг."""
+async def test_value_and_unknown_pair_remain_incomplete(db_session: AsyncSession) -> None:
+    """Одна полученная пара не доказывает неизвестный ответ по другой."""
     await _seed_assets(db_session, ["SBER", "GAZP"], {"SBER": "SBRF_F", "GAZP": "GAZR_F"})
     client = FakePositionsClient(available={("SBRF_F", SESSION): FakeSnapshot()})
 
@@ -499,7 +515,9 @@ async def test_real_partial_coverage_is_still_a_success(db_session: AsyncSession
         SESSION,
     )
 
-    assert written == 1
+    assert written.rows_written == 1
+    assert written.complete is False
+    assert [item.work_key for item in written.evidence] == ["pair:EQ_AST_SBER:SBRF_F"]
 
 
 @pytest.mark.db
@@ -508,7 +526,11 @@ async def test_collected_pair_is_not_asked_again(db_session: AsyncSession) -> No
     await _seed_assets(db_session, ["SBER"])
     repository = MarketDataRepository(db_session)
     first = FakePositionsClient()
-    await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
+
+    async def first_run() -> object:
+        return await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
+
+    await ingest.run_source(repository, "first", positions.SOURCE_ID, SESSION, first_run)
     await db_session.commit()
 
     second = FakePositionsClient()
@@ -520,7 +542,39 @@ async def test_collected_pair_is_not_asked_again(db_session: AsyncSession) -> No
 
     assert first.calls == [("SBRF_F", SESSION)]
     assert second.calls == []
-    assert written == 0
+    assert written.rows_written == 0
+
+
+@pytest.mark.db
+async def test_confirmed_absence_is_proof_and_is_not_asked_again(
+    db_session: AsyncSession,
+) -> None:
+    """Подтверждённая пустая строка закрывает ровно проверенную пару."""
+    await _seed_assets(db_session, ["SBER"])
+    repository = MarketDataRepository(db_session)
+    first = TypedPositionsClient(
+        {
+            ("SBRF_F", SESSION): PositionFetchResult.confirmed_absence(
+                "exact_date_empty_position_row"
+            )
+        }
+    )
+
+    async def first_run() -> object:
+        return await positions.sync_positions(first, repository, SESSION)  # type: ignore[arg-type]
+
+    outcome = await ingest.run_source(
+        repository, "absence-first", positions.SOURCE_ID, SESSION, first_run
+    )
+    await db_session.commit()
+
+    second = TypedPositionsClient({})
+    result = await positions.sync_positions(second, repository, SESSION)  # type: ignore[arg-type]
+
+    assert outcome.status == "ok"
+    assert first.calls == [("SBRF_F", SESSION)]
+    assert second.calls == []
+    assert result.complete is True
 
 
 @pytest.mark.db
@@ -567,7 +621,7 @@ async def test_date_before_the_found_lower_bound_is_still_asked(
     # Обращение выполнено — и принесло значения. Ровно их прежнее правило и
     # теряло, не спросив ни разу.
     assert client.calls == [("SBRF_F", SESSION)]
-    assert written == 1
+    assert written.rows_written == 1
 
 
 @pytest.mark.db
@@ -629,7 +683,7 @@ async def test_sessions_older_than_collected_are_still_requested(
     )
 
     assert ("SBRF_F", earlier) in client.calls
-    assert written == 1
+    assert written.rows_written == 1
 
 
 @pytest.mark.db
@@ -649,15 +703,15 @@ async def test_contract_without_probe_hits_is_still_asked(
     await _seed_assets(db_session, ["SBER"])
     client = FakePositionsClient(available={})
 
-    with pytest.raises(positions.EmptyPositionsError):
-        await positions.sync_positions(
-            client,  # type: ignore[arg-type]
-            MarketDataRepository(db_session),
-            SESSION,
-            sessions=[SESSION],
-        )
+    result = await positions.sync_positions(
+        client,  # type: ignore[arg-type]
+        MarketDataRepository(db_session),
+        SESSION,
+        sessions=[SESSION],
+    )
 
     assert client.calls == [("SBRF_F", SESSION)]
+    assert result.complete is False
 
 
 @pytest.mark.db
@@ -673,11 +727,11 @@ async def test_empty_rows_are_never_written(db_session: AsyncSession) -> None:
     )
     repository = MarketDataRepository(db_session)
 
-    with pytest.raises(positions.EmptyPositionsError):
-        await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
+    result = await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
 
     await db_session.rollback()
     assert await repository.positions_for_window([SESSION]) == []
+    assert result.complete is False
 
 
 async def _seed_assets(

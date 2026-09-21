@@ -42,7 +42,6 @@ from financial_ai.market_data.sources.positions_client import PositionsClient
 from financial_ai.market_data.verification import (
     VerificationResult,
     WorkEvidence,
-    one_session,
     required_work_keys,
 )
 
@@ -80,6 +79,7 @@ class SourceOutcome:
     # успеха — что он принёс: «243 бумаги». Прежде переносилась только
     # причина, и в обычном прогоне лента стояла без единой подписи (FR-058f).
     detail: str | None = None
+    counts_as_unavailable: bool = False
 
     @property
     def shown(self) -> str | None:
@@ -827,7 +827,10 @@ async def _catch_up_session(
             trigger=TRIGGER_CATCHUP,
             on_source=on_source,
         )
-        health.record(source_id, outcome.status != STATUS_FAILED)
+        if outcome.status == STATUS_OK:
+            health.record(source_id, True)
+        elif outcome.counts_as_unavailable:
+            health.record(source_id, False)
         outcomes.append(outcome)
 
     return outcomes
@@ -1183,11 +1186,21 @@ async def run_source(
     except SourceStoppedError as stop:
         # Собранное уже записано источником: остановка не отменяет запись, она
         # отменяет утверждение «этот день по источнику собран» (FR-050).
+        for evidence in stop.evidence:
+            await repository.record_work_evidence(
+                source_id=source_id,
+                session_date=evidence.session_date,
+                work_key=evidence.work_key,
+                result_kind=evidence.result_kind,
+                reason_code=evidence.reason_code,
+                origin_run_id=run_id,
+            )
         outcome = SourceOutcome(
             source_id,
             STATUS_STOPPED,
             rows_written=stop.rows_written,
             failure_reason=stop.detail,
+            counts_as_unavailable=False,
         )
         logger.info("сбор: источник %s прерван: %s", source_id, stop.detail)
     except SourcePartialError as partial:
@@ -1195,11 +1208,21 @@ async def run_source(
         # исход называется не поэтому, а потому что применимая работа сделана
         # не вся: один собранный ряд из пяти не говорит ничего про остальные
         # четыре, и «ок» здесь закрыл бы сессию всем пяти (FR-032).
+        for evidence in partial.evidence:
+            await repository.record_work_evidence(
+                source_id=source_id,
+                session_date=evidence.session_date,
+                work_key=evidence.work_key,
+                result_kind=evidence.result_kind,
+                reason_code=evidence.reason_code,
+                origin_run_id=run_id,
+            )
         outcome = SourceOutcome(
             source_id,
             STATUS_FAILED,
             rows_written=partial.rows_written,
             failure_reason=partial.detail,
+            counts_as_unavailable=partial.counts_as_unavailable,
         )
         logger.warning(
             "сбор: источник %s отработал не всю работу (%s), сохранено строк: %d",
@@ -1208,10 +1231,14 @@ async def run_source(
             partial.rows_written,
         )
     except IssError as error:
-        outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=str(error))
+        outcome = SourceOutcome(
+            source_id, STATUS_FAILED, failure_reason=str(error), counts_as_unavailable=True
+        )
         logger.warning("сбор: источник %s не удался: %s", source_id, error)
     except Exception as error:
-        outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=repr(error))
+        outcome = SourceOutcome(
+            source_id, STATUS_FAILED, failure_reason=repr(error), counts_as_unavailable=True
+        )
         logger.exception("сбор: источник %s завершился ошибкой", source_id)
     else:
         if isinstance(verification, VerificationResult):
@@ -1238,6 +1265,9 @@ async def run_source(
                 rows_written=verification.rows_written,
                 failure_reason=(None if complete else verification.detail or "работа не доказана"),
                 detail=(plan.describe(source_id, verification.rows_written) if complete else None),
+                counts_as_unavailable=(
+                    verification.counts_as_unavailable if not complete else False
+                ),
             )
         elif source_id in {
             reference.SECTORS_SOURCE_ID,
@@ -1452,17 +1482,11 @@ async def _sync_positions(
                 ),
             )
 
-    written = await positions.sync_positions(
+    return await positions.sync_positions(
         client,
         repository,
         session_date,
         sessions=sessions,
         should_stop=should_stop,
         on_progress=progress,
-    )
-    return one_session(
-        written,
-        session_date,
-        "applicable_links",
-        has_value=written > 0,
     )

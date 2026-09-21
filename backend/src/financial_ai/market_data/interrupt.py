@@ -13,14 +13,22 @@
 
 from __future__ import annotations
 
+from financial_ai.market_data.verification import WorkEvidence
+
 
 class SourceStoppedError(RuntimeError):
     """Источник прерван командой остановки, не доработав до конца."""
 
-    def __init__(self, rows_written: int = 0, detail: str | None = None) -> None:
+    def __init__(
+        self,
+        rows_written: int = 0,
+        detail: str | None = None,
+        evidence: tuple[WorkEvidence, ...] = (),
+    ) -> None:
         super().__init__(detail or "сбор прерван по команде")
         self.rows_written = rows_written
         self.detail = detail or "сбор прерван по команде"
+        self.evidence = evidence
 
 
 class SourcePartialError(RuntimeError):
@@ -45,8 +53,12 @@ class SourcePartialError(RuntimeError):
         rows_written: int = 0,
         detail: str | None = None,
         unfinished: tuple[str, ...] = (),
+        counts_as_unavailable: bool = True,
+        evidence: tuple[WorkEvidence, ...] = (),
     ) -> None:
         super().__init__(detail or "источник отработал не всю применимую работу")
         self.rows_written = rows_written
         self.unfinished = unfinished
         self.detail = detail or "источник отработал не всю применимую работу"
+        self.counts_as_unavailable = counts_as_unavailable
+        self.evidence = evidence
