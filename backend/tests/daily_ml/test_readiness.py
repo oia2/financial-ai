@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.daily_ml import readiness
 from financial_ai.daily_ml import reconcile as reconcile_module
+from tests.market_data.verified import record_verified_run
 
 from .conftest import ASOF, SESSIONS, seed
 
@@ -211,15 +212,17 @@ async def test_range_source_is_complete_after_verified_range_runs(
             )
     moment = dt.datetime.now(dt.UTC)
     for source_id in global_group.source_ids:
-        await repository.record_run(
+        await record_verified_run(
+            repository,
             run_id=f"range-run-{source_id}",
             source_id=source_id,
-            status="ok",
             started_at=moment,
             finished_at=moment,
+            session_date=SESSIONS[-1],
             period_from=SESSIONS[0],
             period_till=SESSIONS[-1],
             rows_written=len(SESSIONS),
+            evidence_dates=list(SESSIONS),
         )
     await db_session.commit()
 
@@ -277,11 +280,12 @@ async def test_empty_exchange_answer_still_closes_the_session(
 
     now = dt.datetime.now(dt.UTC)
     for day in SESSIONS:
-        await repository.record_run(
+        await record_verified_run(
+            repository,
             run_id=f"empty-{day.isoformat()}",
             source_id="equity_d1",
-            status="ok",
             started_at=now,
+            finished_at=now,
             session_date=day,
             rows_written=0,
         )

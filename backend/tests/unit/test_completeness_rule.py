@@ -16,6 +16,7 @@ import datetime as dt
 import pytest
 
 from financial_ai.market_data import completeness, groups
+from financial_ai.market_data.verification import required_work_keys
 
 pytestmark = pytest.mark.asyncio
 
@@ -74,6 +75,18 @@ class FakeRepository:
             if day in self._stopped.get(source_id, set())
             or day in self._failed.get(source_id, set())
         }
+
+    async def work_evidence_for_sessions(
+        self, source_id: str, sessions: list[dt.date]
+    ) -> list[object]:
+        from types import SimpleNamespace
+
+        return [
+            SimpleNamespace(session_date=day, work_key=work_key)
+            for day in sessions
+            if day in self._runs.get(source_id, set())
+            for work_key in required_work_keys(source_id)
+        ]
 
     async def coverage_boundary(self) -> dt.date | None:
         return self._boundary

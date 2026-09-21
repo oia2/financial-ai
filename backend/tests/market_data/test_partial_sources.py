@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from financial_ai.market_data import ingest
-from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.sources import cbr, global_series
 from financial_ai.market_data.sources.global_series import SeriesSpec
@@ -69,15 +69,14 @@ async def test_one_series_of_five_saves_value_but_does_not_close_source() -> Non
     )
     repository = _repository()
 
-    with pytest.raises(SourcePartialError) as raised:
-        await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
+    result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
 
     # Полученное сохранено: остановка записи не отменяет.
-    assert raised.value.rows_written == 1
+    assert result.rows_written == 1
+    assert result.complete is False
     repository.upsert_global_values.assert_awaited_once()
     # И названо, что именно осталось работой, — а не «данных нет».
-    assert raised.value.unfinished == ("RTSI", "RGBI", "RVI", "USD_ISS")
-    assert "RTSI" in raised.value.detail
+    assert "RTSI" in (result.detail or "")
 
 
 async def test_all_series_failing_is_a_failure_with_nothing_written() -> None:
@@ -85,11 +84,10 @@ async def test_all_series_failing_is_a_failure_with_nothing_written() -> None:
     client = _client(IssError("нет ответа"))
     repository = _repository()
 
-    with pytest.raises(SourcePartialError) as raised:
-        await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
+    result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
 
-    assert raised.value.rows_written == 0
-    assert len(raised.value.unfinished) == len(SPECS)
+    assert result.rows_written == 0
+    assert result.complete is False
     repository.upsert_global_values.assert_not_awaited()
 
 
@@ -98,9 +96,10 @@ async def test_all_series_succeeding_closes_the_source() -> None:
     client = _client([[_row(DAY)] for _ in SPECS])
     repository = _repository()
 
-    written = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
+    result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
 
-    assert written == len(SPECS)
+    assert result.rows_written == len(SPECS)
+    assert result.complete is True
 
 
 async def test_correct_empty_answer_is_not_a_failure() -> None:
@@ -112,9 +111,10 @@ async def test_correct_empty_answer_is_not_a_failure() -> None:
     client = _client([[] for _ in SPECS])
     repository = _repository()
 
-    written = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
+    result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
 
-    assert written == 0
+    assert result.rows_written == 0
+    assert result.complete is True
     repository.upsert_global_values.assert_not_awaited()
 
 
@@ -140,14 +140,14 @@ async def test_key_rate_survives_a_broken_curve(monkeypatch: pytest.MonkeyPatch)
     )
     repository = _repository()
 
-    with pytest.raises(SourcePartialError) as raised:
-        await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
+    result = await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
 
-    assert raised.value.rows_written == 1
+    assert result.rows_written == 1
+    assert result.complete is False
     repository.upsert_global_values.assert_awaited_once_with(
         cbr.KEY_RATE_SERIES_ID, {DAY: Decimal("16.5")}
     )
-    assert "кривая" in raised.value.detail
+    assert "кривая" in (result.detail or "")
 
 
 async def test_curve_survives_a_broken_key_rate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,11 +160,11 @@ async def test_curve_survives_a_broken_key_rate(monkeypatch: pytest.MonkeyPatch)
     )
     repository = _repository()
 
-    with pytest.raises(SourcePartialError) as raised:
-        await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
+    result = await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
 
-    assert raised.value.rows_written == 1
-    assert cbr.KEY_RATE_SERIES_ID in raised.value.unfinished
+    assert result.rows_written == 1
+    assert result.complete is False
+    assert cbr.KEY_RATE_SERIES_ID in (result.detail or "")
 
 
 async def test_both_parts_collected_closes_cbr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,10 +172,34 @@ async def test_both_parts_collected_closes_cbr(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         cbr,
         "fetch_zcyc",
-        AsyncMock(return_value={"CBR_ZCYC_yield_1y": {DAY: Decimal("15.1")}}),
+        AsyncMock(
+            return_value={
+                f"CBR_ZCYC_{term}": {DAY: Decimal("15.1")} for term in cbr.REQUIRED_ZCYC_TERMS
+            }
+        ),
     )
     repository = _repository()
 
-    written = await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
+    result = await ingest._sync_cbr_range(repository, DAY, DAY, client=None, should_stop=None)
 
-    assert written == 2
+    assert result.rows_written == 1 + len(cbr.REQUIRED_ZCYC_TERMS)
+    assert result.complete is True
+
+
+async def test_missing_date_inside_range_remains_unproved() -> None:
+    next_day = DAY + dt.timedelta(days=3)
+    client = _client([[_row(DAY)] for _ in SPECS])
+    repository = _repository()
+
+    result = await global_series.sync_iss_series_range(
+        client,
+        repository,
+        DAY,
+        next_day,
+        SPECS,
+        required_dates=(DAY, next_day),
+    )
+
+    assert result.complete is False
+    assert next_day.isoformat() in (result.detail or "")
+    assert {item.session_date for item in result.evidence} == {DAY}

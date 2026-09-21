@@ -17,6 +17,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import advance, groups
 from financial_ai.market_data.calendar import MOSCOW
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -85,14 +86,24 @@ async def _seed(
         for group in required:
             for source_id in group.source_ids:
                 status = "failed" if broken.get(day) == source_id else "ok"
-                await repository.record_run(
-                    run_id=f"seed-{day}",
-                    source_id=source_id,
-                    status=status,
-                    started_at=moment,
-                    finished_at=moment,
-                    session_date=day,
-                )
+                if status == "ok":
+                    await record_verified_run(
+                        repository,
+                        run_id=f"seed-{day}",
+                        source_id=source_id,
+                        started_at=moment,
+                        finished_at=moment,
+                        session_date=day,
+                    )
+                else:
+                    await repository.record_run(
+                        run_id=f"seed-{day}",
+                        source_id=source_id,
+                        status=status,
+                        started_at=moment,
+                        finished_at=moment,
+                        session_date=day,
+                    )
 
     await session.commit()
     return repository

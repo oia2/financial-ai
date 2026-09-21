@@ -24,6 +24,7 @@ from financial_ai.market_data import advance, groups, ingest
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.scheduler import MarketDataScheduler
 from financial_ai.market_data.sources import trading_calendar
+from tests.market_data.verified import record_verified_run
 
 SESSIONS = [dt.date(2026, 8, 27), dt.date(2026, 8, 28)]
 ASOF = SESSIONS[-1]
@@ -73,10 +74,10 @@ async def _seed(
     for day in collected:
         for group in groups.required(settings or Settings()):
             for source_id in group.source_ids:
-                await repository.record_run(
+                await record_verified_run(
+                    repository,
                     run_id=f"seed-{day}",
                     source_id=source_id,
-                    status="ok",
                     started_at=moment,
                     finished_at=moment,
                     session_date=day,

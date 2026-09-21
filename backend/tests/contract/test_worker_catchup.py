@@ -18,6 +18,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import ingest
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.runner import CatchupRunner
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -99,10 +100,10 @@ async def _mark_collected(repository: MarketDataRepository, days: list[dt.date])
     for day in days:
         for group in group_registry.GROUPS:
             for source_id in group.source_ids:
-                await repository.record_run(
+                await record_verified_run(
+                    repository,
                     run_id=f"seed-{day}-{source_id}",
                     source_id=source_id,
-                    status="ok",
                     started_at=moment,
                     finished_at=moment,
                     session_date=day,

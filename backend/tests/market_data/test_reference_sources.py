@@ -164,10 +164,11 @@ async def test_weights_are_collected_with_values(db_session: AsyncSession) -> No
     repository = await _seed(db_session, ["SBER"])
     iss = FakeIss({"IMOEX": [("SBER", "13.87")]})
 
-    written = await reference.sync_index_constituents(iss, repository, SESSION)  # type: ignore[arg-type]
+    result = await reference.sync_index_constituents(iss, repository, SESSION)  # type: ignore[arg-type]
     await db_session.commit()
 
-    assert written == 1
+    assert result.rows_written == 1
+    assert result.complete is True
     stored = await repository.global_values_for_window([SESSION])
     assert [(row.series_id, row.value) for row in stored] == [
         ("IDX_WEIGHT_IMOEX_SBER", Decimal("13.87"))
@@ -199,9 +200,10 @@ async def test_empty_composition_is_not_a_failure(db_session: AsyncSession) -> N
     """Состава за дату нет вовсе — это отсутствие данных, а не сбой разбора."""
     repository = await _seed(db_session, ["SBER"])
 
-    written = await reference.sync_index_constituents(FakeIss(), repository, SESSION)  # type: ignore[arg-type]
+    result = await reference.sync_index_constituents(FakeIss(), repository, SESSION)  # type: ignore[arg-type]
 
-    assert written == 0
+    assert result.rows_written == 0
+    assert result.complete is True
 
 
 async def test_no_empty_weight_rows_are_written(db_session: AsyncSession) -> None:

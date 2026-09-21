@@ -1413,7 +1413,6 @@ class MarketDataRepository:
             select(func.max(IngestRun.started_at)).where(
                 IngestRun.source_id == source_id,
                 IngestRun.status == "ok",
-                IngestRun.coverage_version == CURRENT_COVERAGE_VERSION,
             )
         )
 

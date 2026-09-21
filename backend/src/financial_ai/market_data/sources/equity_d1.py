@@ -20,6 +20,7 @@ from decimal import Decimal, InvalidOperation
 
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
+from financial_ai.market_data.verification import VerificationResult, one_session
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ async def sync_equity_daily(
     client: IssClient,
     repository: MarketDataRepository,
     session_date: dt.date,
-) -> int:
+) -> VerificationResult:
     """Собрать котировки всех бумаг за одну торговую сессию.
 
     Одно обращение к бирже, а не одно на бумагу.
@@ -65,7 +66,7 @@ async def sync_equity_daily(
 
     written = await repository.upsert_daily_bars(bars)
     logger.info("котировки за %s: получено строк %d, записано %d", session_date, len(rows), written)
-    return written
+    return one_session(written, session_date, "board:TQBR", has_value=bool(rows))
 
 
 def rows_to_bars(

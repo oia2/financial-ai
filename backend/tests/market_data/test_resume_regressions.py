@@ -18,6 +18,11 @@ from financial_ai.market_data.iss.client import IssClient, IssConfig
 from financial_ai.market_data.models import IngestRun
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import cbr, equity_agg, equity_d1, global_series, positions
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    WorkEvidence,
+    required_work_keys,
+)
 from tests.market_data.test_cbr import KEY_RATE_HTML
 
 pytestmark = pytest.mark.db
@@ -43,6 +48,29 @@ async def record(
         finished_at=moment,
         period_from=period[0] if period else None,
         period_till=period[1] if period else None,
+        coverage_version=2 if status == "ok" else None,
+        coverage_reason="test_verified_work" if status == "ok" else None,
+    )
+    if status == "ok":
+        days = [value for value in WINDOW if period and period[0] <= value <= period[1]] or [day]
+        for value in days:
+            for work_key in required_work_keys(source):
+                await repository.record_work_evidence(
+                    source_id=source,
+                    session_date=value,
+                    work_key=work_key,
+                    result_kind="value",
+                    reason_code="test_verified_work",
+                    origin_run_id=None,
+                )
+
+
+def verified(source: str, days: list[dt.date], rows: int = 0) -> VerificationResult:
+    return VerificationResult(
+        rows_written=rows,
+        evidence=tuple(
+            WorkEvidence(day, work_key) for day in days for work_key in required_work_keys(source)
+        ),
     )
 
 
@@ -61,7 +89,11 @@ async def test_stop_does_not_reopen_collected_or_unselected_source(
         if source == equity_d1.SOURCE_ID and status == "ok":
             stop = True
 
-    monkeypatch.setattr(equity_d1, "sync_equity_daily", AsyncMock(return_value=1))
+    monkeypatch.setattr(
+        equity_d1,
+        "sync_equity_daily",
+        AsyncMock(return_value=verified(equity_d1.SOURCE_ID, [DAY], 1)),
+    )
     selected = {equity_d1.SOURCE_ID}
     if select_collected:
         selected.add(equity_agg.SOURCE_ID)
@@ -92,8 +124,8 @@ async def test_resume_keeps_successful_range_including_empty_days(
     repository = MarketDataRepository(db_session)
     await repository.add_trading_sessions(WINDOW)
     await repository.commit()
-    iss_action = AsyncMock(return_value=0)
-    cbr_action = AsyncMock(return_value=0)
+    iss_action = AsyncMock(return_value=verified(global_series.SOURCE_ID, WINDOW))
+    cbr_action = AsyncMock(return_value=verified(cbr.SOURCE_ID, WINDOW))
     monkeypatch.setattr(global_series, "sync_iss_series_range", iss_action)
     monkeypatch.setattr(ingest, "_sync_cbr_range", cbr_action)
 
@@ -195,8 +227,8 @@ async def test_daily_uses_same_completeness_as_report_and_skips_positions(
         await record(repository, cbr.SOURCE_ID, period=(WINDOW[0], DAY))
         await record(repository, cbr.SOURCE_ID, "failed")
     await repository.commit()
-    cbr_action = AsyncMock(return_value=0)
-    positions_action = AsyncMock(return_value=0)
+    cbr_action = AsyncMock(return_value=verified(cbr.SOURCE_ID, [DAY]))
+    positions_action = AsyncMock(return_value=verified(positions.SOURCE_ID, [DAY]))
     links_action = AsyncMock()
     monkeypatch.setattr(advance, "calendar_is_due", AsyncMock(return_value=False))
     monkeypatch.setattr(ingest, "reference_is_due", AsyncMock(return_value=False))

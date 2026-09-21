@@ -22,6 +22,7 @@ from financial_ai.market_data.models import IngestRun
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
 from tests.market_data.conftest import NoInstrumentChanges
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -115,10 +116,10 @@ async def _seed(session: AsyncSession, collected: list[dt.date]) -> MarketDataRe
         moment = dt.datetime.now(dt.UTC)
         for day in collected:
             for source_id in groups.source_ids_for(groups.GROUPS):
-                await repository.record_run(
+                await record_verified_run(
+                    repository,
                     run_id=f"seed-{source_id}-{day}",
                     source_id=source_id,
-                    status="ok",
                     started_at=moment,
                     finished_at=moment,
                     session_date=day,

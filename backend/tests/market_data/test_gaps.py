@@ -17,6 +17,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import gaps
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -59,10 +60,10 @@ async def _seed(session: AsyncSession, collected: list[dt.date]) -> MarketDataRe
         await repository.upsert_daily_bars([_bar(day) for day in collected])
         moment = dt.datetime.now(dt.UTC)
         for day in collected:
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"seed-quotes-{day}",
                 source_id=equity_d1.SOURCE_ID,
-                status="ok",
                 started_at=moment,
                 finished_at=moment,
                 session_date=day,
@@ -103,10 +104,10 @@ async def test_successful_run_without_rows_is_not_a_gap(
     """Биржа ответила, данных за день нет — сессия собрана, повторять незачем."""
     repository = await _seed(db_session, [SESSIONS[0], SESSIONS[1], SESSIONS[4]])
     moment = dt.datetime.now(dt.UTC)
-    await repository.record_run(
+    await record_verified_run(
+        repository,
         run_id="run-1",
         source_id=equity_d1.SOURCE_ID,
-        status="ok",
         started_at=moment,
         finished_at=moment,
         session_date=SESSIONS[2],

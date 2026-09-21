@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.market_data import groups
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
+from tests.market_data.verified import record_verified_run
 
 SESSIONS = [
     dt.date(2026, 8, 26),
@@ -87,10 +88,10 @@ async def seed(
     now = dt.datetime.now(dt.UTC)
     for day in days:
         for source_id in quotes.source_ids:
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"seed-{day.isoformat()}",
                 source_id=source_id,
-                status="ok",
                 started_at=now,
                 finished_at=now,
                 session_date=day,

@@ -16,11 +16,16 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
+from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
+from financial_ai.market_data.verification import (
+    RESULT_CONFIRMED_ABSENCE,
+    VerificationResult,
+    WorkEvidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +63,11 @@ async def sync_iss_series(
     repository: MarketDataRepository,
     session_date: dt.date,
     specs: tuple[SeriesSpec, ...] = ISS_SERIES,
-) -> int:
+) -> VerificationResult:
     """Собрать значения глобальных рядов за одну торговую сессию."""
-    return await sync_iss_series_range(client, repository, session_date, session_date, specs)
+    return await sync_iss_series_range(
+        client, repository, session_date, session_date, specs, required_dates=(session_date,)
+    )
 
 
 async def sync_iss_series_range(
@@ -69,7 +76,8 @@ async def sync_iss_series_range(
     date_from: dt.date,
     date_till: dt.date,
     specs: tuple[SeriesSpec, ...] = ISS_SERIES,
-) -> int:
+    required_dates: tuple[dt.date, ...] | None = None,
+) -> VerificationResult:
     """Собрать значения глобальных рядов за период.
 
     Биржа отдаёт историю ряда диапазоном, и для догона это принципиально:
@@ -89,6 +97,8 @@ async def sync_iss_series_range(
     """
     written = 0
     unfinished: list[str] = []
+    evidence: list[WorkEvidence] = []
+    required = set(required_dates or ((date_from,) if date_from == date_till else ()))
     for spec in specs:
         should_stop = getattr(client, "should_stop", None)
         if should_stop is not None and should_stop():
@@ -105,17 +115,41 @@ async def sync_iss_series_range(
             continue
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
+            for day in sorted(set(values) & required if required else set(values)):
+                evidence.append(WorkEvidence(day, spec.series_id))
+        elif required:
+            # Корректный полностью пустой ответ — проверенное отсутствие. Если
+            # ответ частичный, отсутствующая внутри диапазона дата остаётся
+            # неизвестной и доказательства не получает.
+            evidence.extend(
+                WorkEvidence(
+                    day,
+                    spec.series_id,
+                    result_kind=RESULT_CONFIRMED_ABSENCE,
+                    reason_code="verified_empty_history",
+                )
+                for day in sorted(required)
+            )
 
-    if unfinished:
-        raise SourcePartialError(
-            rows_written=written,
-            detail=(
-                f"не собраны ряды: {', '.join(unfinished)}"
-                f" (получено {len(specs) - len(unfinished)} из {len(specs)})"
-            ),
-            unfinished=tuple(unfinished),
+    proved = {(item.session_date, item.work_key) for item in evidence}
+    missing_dates = [
+        f"{spec.series_id}:{day.isoformat()}"
+        for spec in specs
+        for day in sorted(required)
+        if (day, spec.series_id) not in proved
+    ]
+    missing = [*unfinished, *missing_dates]
+    return VerificationResult(
+        rows_written=written,
+        evidence=tuple(evidence),
+        complete=not missing,
+        detail=(
+            f"не собраны ряды: {', '.join(unfinished)}"
+            f" (получено {len(specs) - len(unfinished)} из {len(specs)})"
         )
-    return written
+        if unfinished
+        else (f"не доказаны даты: {', '.join(missing_dates)}" if missing_dates else None),
+    )
 
 
 class SeriesFetchError(RuntimeError):

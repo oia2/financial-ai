@@ -26,7 +26,7 @@ from financial_ai.market_data import completeness, gaps, groups, links, plan
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_today
 from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient, IssConfig, IssError
-from financial_ai.market_data.repository import MarketDataRepository
+from financial_ai.market_data.repository import CURRENT_COVERAGE_VERSION, MarketDataRepository
 from financial_ai.market_data.sources import (
     brent,
     cbr,
@@ -39,6 +39,12 @@ from financial_ai.market_data.sources import (
     trading_calendar,
 )
 from financial_ai.market_data.sources.positions_client import PositionsClient
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    WorkEvidence,
+    one_session,
+    required_work_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +367,7 @@ async def ingest_session(
         # ни спросили, и ручной догон их поэтому не запрашивает вовсе. При
         # отставании в восемьдесят сессий прежний порядок платил за них сто
         # шестьдесят обращений, переписывая одни и те же строки (FR-055).
-        for source_id, action in (
+        for source_id, reference_action in (
             (
                 reference.SECTORS_SOURCE_ID,
                 lambda: reference.sync_sectors(iss, repository, session_date),
@@ -382,7 +388,12 @@ async def ingest_session(
                 await session.commit()
                 return result
             outcome = await run_source(
-                repository, run_id, source_id, session_date, action, on_source=on_source
+                repository,
+                run_id,
+                source_id,
+                session_date,
+                reference_action,
+                on_source=on_source,
             )
             result.outcomes.append(outcome)
             await session.commit()
@@ -846,11 +857,20 @@ async def _catch_up_ranges(
     for source_id, action in (
         (
             global_series.SOURCE_ID,
-            lambda: global_series.sync_iss_series_range(iss, repository, date_from, date_till),
+            lambda: global_series.sync_iss_series_range(
+                iss, repository, date_from, date_till, required_dates=tuple(window)
+            ),
         ),
         (
             cbr.SOURCE_ID,
-            lambda: _sync_cbr_range(repository, date_from, date_till, cbr_client, should_stop),
+            lambda: _sync_cbr_range(
+                repository,
+                date_from,
+                date_till,
+                cbr_client,
+                should_stop,
+                required_dates=tuple(window),
+            ),
         ),
     ):
         if source_ids is not None and source_id not in source_ids:
@@ -928,14 +948,21 @@ async def _sync_cbr(
     session_date: dt.date,
     client: httpx.AsyncClient | None = None,
     should_stop: Callable[[], bool] | None = None,
-) -> int:
+) -> VerificationResult:
     """Дневные макроряды ЦБ за сессию.
 
     Режим доступности у них иной: по time_semantics.md они публикуются ДО
     закрытия сессии и уже относятся к дню `t`. Поэтому запрашиваются за ту же
     дату, а не за предыдущую.
     """
-    return await _sync_cbr_range(repository, session_date, session_date, client, should_stop)
+    return await _sync_cbr_range(
+        repository,
+        session_date,
+        session_date,
+        client,
+        should_stop,
+        required_dates=(session_date,),
+    )
 
 
 async def _sync_cbr_range(
@@ -944,7 +971,8 @@ async def _sync_cbr_range(
     date_till: dt.date,
     client: httpx.AsyncClient | None = None,
     should_stop: Callable[[], bool] | None = None,
-) -> int:
+    required_dates: tuple[dt.date, ...] | None = None,
+) -> VerificationResult:
     """Макроряды ЦБ за период.
 
     Страницы Банка России уже принимают границы периода, поэтому дыра любой
@@ -960,6 +988,8 @@ async def _sync_cbr_range(
     config = cbr.CbrConfig()
     written = 0
     unfinished: list[str] = []
+    evidence: list[WorkEvidence] = []
+    required = set(required_dates or ((date_from,) if date_from == date_till else ()))
 
     try:
         key_rate = await cbr.fetch_key_rate(config, date_from, date_till, client, should_stop)
@@ -970,6 +1000,18 @@ async def _sync_cbr_range(
         unfinished.append(cbr.KEY_RATE_SERIES_ID)
     else:
         written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
+        proved_dates = set(key_rate) & required if required else set(key_rate)
+        evidence.extend(WorkEvidence(day, cbr.KEY_RATE_SERIES_ID) for day in sorted(proved_dates))
+        if required and not key_rate:
+            evidence.extend(
+                WorkEvidence(
+                    day,
+                    cbr.KEY_RATE_SERIES_ID,
+                    result_kind="confirmed_absence",
+                    reason_code="verified_empty_cbr_table",
+                )
+                for day in sorted(required)
+            )
 
     if should_stop is not None and should_stop():
         raise SourceStoppedError(written)
@@ -984,14 +1026,29 @@ async def _sync_cbr_range(
     else:
         for series_id, values in zcyc.items():
             written += await repository.upsert_global_values(series_id, values)
-
-    if unfinished:
-        raise SourcePartialError(
-            rows_written=written,
-            detail=f"не собрано: {', '.join(unfinished)}",
-            unfinished=tuple(unfinished),
+        required_series = {f"{cbr.ZCYC_SERIES_PREFIX}{term}" for term in cbr.REQUIRED_ZCYC_TERMS}
+        curve_dates = (
+            set.intersection(*(set(zcyc.get(series_id, {})) for series_id in required_series))
+            if required_series
+            else set()
         )
-    return written
+        curve_dates = curve_dates & required if required else curve_dates
+        evidence.extend(WorkEvidence(day, "CBR_ZCYC_CURVE") for day in sorted(curve_dates))
+
+    proved = {(item.session_date, item.work_key) for item in evidence}
+    missing_dates = [
+        f"{work_key}:{day.isoformat()}"
+        for work_key in (cbr.KEY_RATE_SERIES_ID, "CBR_ZCYC_CURVE")
+        for day in sorted(required)
+        if (day, work_key) not in proved
+    ]
+    missing = [*unfinished, *missing_dates]
+    return VerificationResult(
+        rows_written=written,
+        evidence=tuple(evidence),
+        complete=not missing,
+        detail=f"не собрано: {', '.join(missing)}" if missing else None,
+    )
 
 
 async def _run_delayed_source(
@@ -1120,8 +1177,9 @@ async def run_source(
     )
     await repository.commit()
 
+    verification: object | None = None
     try:
-        written = await action()  # type: ignore[operator]
+        verification = await action()  # type: ignore[operator]
     except SourceStoppedError as stop:
         # Собранное уже записано источником: остановка не отменяет запись, она
         # отменяет утверждение «этот день по источнику собран» (FR-050).
@@ -1156,13 +1214,50 @@ async def run_source(
         outcome = SourceOutcome(source_id, STATUS_FAILED, failure_reason=repr(error))
         logger.exception("сбор: источник %s завершился ошибкой", source_id)
     else:
-        rows = int(written)
-        outcome = SourceOutcome(
-            source_id,
-            STATUS_OK,
-            rows_written=rows,
-            detail=plan.describe(source_id, rows),
-        )
+        if isinstance(verification, VerificationResult):
+            for evidence in verification.evidence:
+                await repository.record_work_evidence(
+                    source_id=source_id,
+                    session_date=evidence.session_date,
+                    work_key=evidence.work_key,
+                    result_kind=evidence.result_kind,
+                    reason_code=evidence.reason_code,
+                    origin_run_id=run_id,
+                )
+            complete = verification.complete
+            if complete and session_date is not None and period is None:
+                proved_keys = {
+                    item.work_key
+                    for item in verification.evidence
+                    if item.session_date == session_date
+                }
+                complete = required_work_keys(source_id) <= proved_keys
+            outcome = SourceOutcome(
+                source_id,
+                STATUS_OK if complete else STATUS_FAILED,
+                rows_written=verification.rows_written,
+                failure_reason=(None if complete else verification.detail or "работа не доказана"),
+                detail=(plan.describe(source_id, verification.rows_written) if complete else None),
+            )
+        elif source_id in {
+            reference.SECTORS_SOURCE_ID,
+            securities.SOURCE_ID,
+            trading_calendar.SOURCE_ID,
+        }:
+            # У суточных справочников нет оси сессий и покрытия окна.
+            rows = int(verification)  # type: ignore[arg-type]
+            outcome = SourceOutcome(
+                source_id,
+                STATUS_OK,
+                rows_written=rows,
+                detail=plan.describe(source_id, rows),
+            )
+        else:
+            outcome = SourceOutcome(
+                source_id,
+                STATUS_FAILED,
+                failure_reason="источник не вернул явный результат проверки",
+            )
 
     await repository.record_run(
         run_id=run_id,
@@ -1176,6 +1271,16 @@ async def run_source(
         trigger=trigger,
         period_from=period[0] if period else None,
         period_till=period[1] if period else None,
+        coverage_version=(
+            CURRENT_COVERAGE_VERSION
+            if outcome.status == STATUS_OK and isinstance(verification, VerificationResult)
+            else None
+        ),
+        coverage_reason=(
+            "verified_work_evidence"
+            if outcome.status == STATUS_OK and isinstance(verification, VerificationResult)
+            else None
+        ),
     )
 
     if on_source is not None:
@@ -1313,7 +1418,7 @@ async def _sync_positions(
     sessions: list[dt.date] | None,
     should_stop: Callable[[], bool] | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
-) -> int:
+) -> VerificationResult:
     """Позиции по фьючерсам за одну сессию.
 
     Чем спрашивать — знает связь бумаги, приведённая в соответствие с составом
@@ -1347,11 +1452,17 @@ async def _sync_positions(
                 ),
             )
 
-    return await positions.sync_positions(
+    written = await positions.sync_positions(
         client,
         repository,
         session_date,
         sessions=sessions,
         should_stop=should_stop,
         on_progress=progress,
+    )
+    return one_session(
+        written,
+        session_date,
+        "applicable_links",
+        has_value=written > 0,
     )

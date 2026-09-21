@@ -31,6 +31,7 @@ from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import ASSET_PREFIX, asset_id_for, to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
+from financial_ai.market_data.verification import VerificationResult, one_session
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ async def sync_index_constituents(
     repository: MarketDataRepository,
     session_date: dt.date,
     index_id: str = "IMOEX",
-) -> int:
+) -> VerificationResult:
     """Собрать дневной состав индекса и веса бумаг."""
     rows = await client.fetch_index_analytics(index_id, session_date.isoformat())
     # Имя ряда несёт имя бумаги, а бумагу переименовывают: без канонического
@@ -151,7 +152,12 @@ async def sync_index_constituents(
         len(weights),
         written,
     )
-    return written
+    return one_session(
+        written,
+        session_date,
+        f"index:{index_id}",
+        has_value=bool(weights),
+    )
 
 
 def rows_to_weights(

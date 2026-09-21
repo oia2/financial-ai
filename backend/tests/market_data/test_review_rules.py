@@ -24,6 +24,7 @@ from financial_ai.market_data.repository import DailyBar, MarketDataRepository, 
 from financial_ai.market_data.sources import equity_agg, positions, reference, securities
 from financial_ai.ranking.dataset import _serialize_positions
 from tests.market_data.conftest import FakePositionsClient, FakeSnapshot, NoInstrumentChanges
+from tests.market_data.verified import record_verified_run
 
 SESSION = dt.date(2026, 8, 28)
 EARLIER = dt.date(2026, 8, 27)
@@ -311,10 +312,10 @@ async def test_успешный_исход_сессию_по_прежнему_з
     """Обратная форма: новый исход не должен обесценить настоящий успех."""
     repository = MarketDataRepository(db_session)
     now = dt.datetime.now(dt.UTC)
-    await repository.record_run(
+    await record_verified_run(
+        repository,
         run_id="run-ok",
         source_id=positions.SOURCE_ID,
-        status=ingest.STATUS_OK,
         started_at=now,
         finished_at=now,
         session_date=SESSION,
@@ -500,12 +501,19 @@ async def test_добранная_сессия_работой_быть_пере�
     await db_session.commit()
 
     client = FakePositionsClient(available={("SBRF", SESSION): FakeSnapshot()})
+
+    async def verified_positions() -> object:
+        from financial_ai.market_data.verification import one_session
+
+        written = await positions.sync_positions(client, repository, SESSION)  # type: ignore[arg-type]
+        return one_session(written, SESSION, "applicable_links", has_value=written > 0)
+
     await ingest.run_source(
         repository,
         "run-stop",
         positions.SOURCE_ID,
         SESSION,
-        lambda: positions.sync_positions(client, repository, SESSION),  # type: ignore[arg-type]
+        verified_positions,
     )
     await db_session.commit()
 
@@ -592,10 +600,12 @@ async def test_начатое_обращение_оставляет_след(db_
     repository = MarketDataRepository(db_session)
     seen: list[str] = []
 
-    async def action() -> int:
+    async def action() -> object:
+        from financial_ai.market_data.verification import one_session
+
         runs = await _runs_of(db_session, "run-trace")
         seen.extend(f"{row.source_id}:{row.status}" for row in runs)
-        return 1
+        return one_session(1, SESSION, "board:TQBR", has_value=True)
 
     await ingest.run_source(repository, "run-trace", "equity_d1", SESSION, action)
     await db_session.commit()
@@ -604,6 +614,25 @@ async def test_начатое_обращение_оставляет_след(db_
     done = await _runs_of(db_session, "run-trace")
     assert [row.status for row in done] == [ingest.STATUS_OK]
     assert done[0].finished_at is not None
+
+
+@pytest.mark.db
+async def test_число_строк_не_является_доказательством_покрытия(
+    db_session: AsyncSession,
+) -> None:
+    """Старый контракт ``int`` не может случайно получить coverage v2."""
+    repository = MarketDataRepository(db_session)
+
+    async def legacy_action() -> int:
+        return 7
+
+    outcome = await ingest.run_source(repository, "legacy-int", "equity_d1", SESSION, legacy_action)
+    await db_session.commit()
+
+    assert outcome.status == ingest.STATUS_FAILED
+    run = (await _runs_of(db_session, "legacy-int"))[0]
+    assert run.coverage_version is None
+    assert await repository.work_evidence_for_sessions("equity_d1", [SESSION]) == []
 
 
 # --- FR-048: опознание по ISIN не зависит от выбора источников ---------------
@@ -1752,10 +1781,10 @@ async def test_счёт_группы_и_её_источника_совпадаю
         ]
     )
     moment = dt.datetime.now(dt.UTC)
-    await repository.record_run(
+    await record_verified_run(
+        repository,
         run_id="пустой-но-успешный",
         source_id=positions.SOURCE_ID,
-        status="ok",
         started_at=moment,
         finished_at=moment,
         session_date=SESSION,

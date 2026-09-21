@@ -31,6 +31,7 @@ from financial_ai.market_data import groups
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
+from financial_ai.market_data.verification import required_work_keys
 
 
 async def closed_sources_for(repository: MarketDataRepository, session_date: dt.date) -> set[str]:
@@ -126,7 +127,14 @@ async def closed_sessions(
     # Закрывает только успешный исход, проверенный текущей версией правила.
     # Наличие строки не доказывает, что источник обработал все свои ряды или
     # все применимые пары «актив — контракт» (FR-032).
-    closed = await repository.sessions_with_successful_run(window, source_id)
+    successful = await repository.sessions_with_successful_run(window, source_id)
+    evidence = await repository.work_evidence_for_sessions(source_id, window)
+    by_day: dict[dt.date, set[str]] = {}
+    for item in evidence:
+        by_day.setdefault(item.session_date, set()).add(item.work_key)
+    required = required_work_keys(source_id)
+    proved = {day for day, keys in by_day.items() if required <= keys}
+    closed = successful & proved
     # Более поздний failed/stopped/running либо старый непроверенный исход
     # перевешивает прежний успех и частичные наблюдения.
     return closed - await repository.sessions_left_unfinished(window, source_id)

@@ -24,6 +24,7 @@ from financial_ai.market_data import completeness, coverage, groups
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.models import CoverageBoundary
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository, PositionRow
+from financial_ai.market_data.verification import required_work_keys
 
 pytestmark = pytest.mark.db
 
@@ -81,7 +82,18 @@ async def _seed(
                 finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
                 session_date=day,
                 rows_written=1,
+                coverage_version=2,
+                coverage_reason="test_verified_work",
             )
+            for work_key in required_work_keys("equity_d1"):
+                await repository.record_work_evidence(
+                    source_id="equity_d1",
+                    session_date=day,
+                    work_key=work_key,
+                    result_kind="value",
+                    reason_code="test_verified_work",
+                    origin_run_id=None,
+                )
     if positions:
         await repository.upsert_positions(positions)
     if sectors:
@@ -133,7 +145,7 @@ async def test_legacy_coverage_requires_audit_without_automatic_backfill(
     await repository.upsert_asset("EQ_AST_SBER", "SBER", ASOF)
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
     await repository.upsert_daily_bars([_bar(day) for day in SESSIONS[:2]])
-    db_session.add(CoverageBoundary(coverage_version=1, boundary_session=SESSIONS[2]))
+    db_session.add(CoverageBoundary(coverage_version=2, boundary_session=SESSIONS[2]))
     # A legacy `ok` must not become proof merely because it has zero failures.
     await repository.record_run(
         run_id="legacy-ok",
@@ -143,6 +155,16 @@ async def test_legacy_coverage_requires_audit_without_automatic_backfill(
         finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
         session_date=SESSIONS[0],
         rows_written=1,
+        coverage_version=2,
+        coverage_reason="test_verified_work",
+    )
+    await repository.record_work_evidence(
+        source_id="equity_d1",
+        session_date=SESSIONS[0],
+        work_key="board:TQBR",
+        result_kind="value",
+        reason_code="test_verified_work",
+        origin_run_id="repair-one-date",
     )
     await db_session.flush()
     from financial_ai.market_data.models import IngestRun
@@ -177,6 +199,16 @@ async def test_legacy_coverage_requires_audit_without_automatic_backfill(
         finished_at=dt.datetime(2026, 9, 4, 19, tzinfo=dt.UTC),
         session_date=SESSIONS[0],
         rows_written=1,
+        coverage_version=2,
+        coverage_reason="test_verified_work",
+    )
+    await repository.record_work_evidence(
+        source_id="equity_d1",
+        session_date=SESSIONS[0],
+        work_key="board:TQBR",
+        result_kind="value",
+        reason_code="test_verified_work",
+        origin_run_id="repair-one-date",
     )
     await db_session.commit()
     closed = await completeness.closed_sessions(
@@ -237,6 +269,16 @@ async def test_collected_but_empty_is_distinguishable_from_collected(
             finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
             session_date=day,
             rows_written=1,
+            coverage_version=2,
+            coverage_reason="test_verified_work",
+        )
+        await repository.record_work_evidence(
+            source_id="futures_positions",
+            session_date=day,
+            work_key="applicable_links",
+            result_kind="confirmed_absence",
+            reason_code="test_verified_empty",
+            origin_run_id=f"seed-positions-{day}",
         )
     await db_session.commit()
 
@@ -393,6 +435,16 @@ async def test_report_is_computed_not_stored(db_session: AsyncSession, settings:
         finished_at=dt.datetime(2026, 9, 3, 19, tzinfo=dt.UTC),
         session_date=SESSIONS[1],
         rows_written=1,
+        coverage_version=2,
+        coverage_reason="test_verified_work",
+    )
+    await repository.record_work_evidence(
+        source_id="equity_d1",
+        session_date=SESSIONS[1],
+        work_key="board:TQBR",
+        result_kind="value",
+        reason_code="test_verified_work",
+        origin_run_id="computed-report-second-session",
     )
     await db_session.commit()
     after = _group(await coverage.build_report(db_session, settings, ASOF), "quotes")

@@ -15,6 +15,7 @@ import pytest
 from financial_ai.config import Settings
 from financial_ai.market_data import coverage
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -260,10 +261,10 @@ async def test_числа_строки_группы_и_её_источников
     repository = await seed(db_session, ["SBER"])
     # Сессия без наблюдений, но с успешным прогоном: биржа ответила, данных за
     # день нет. Для правила полноты она закрыта.
-    await repository.record_run(
+    await record_verified_run(
+        repository,
         run_id="run-quotes",
         source_id="equity_d1",
-        status="ok",
         started_at=dt.datetime(2026, 9, 16, 19, 40, tzinfo=dt.UTC),
         finished_at=dt.datetime(2026, 9, 16, 19, 41, tzinfo=dt.UTC),
         session_date=ASOF,
@@ -349,10 +350,10 @@ async def test_когда_свежая_собрана_следующей_идё�
 
     for group in group_registry.GROUPS:
         for source_id in group.source_ids:
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"свежая-{source_id}",
                 source_id=source_id,
-                status="ok",
                 started_at=moment,
                 finished_at=moment,
                 session_date=later,
@@ -439,10 +440,10 @@ async def test_когда_всё_собрано_дата_не_называетс
 
     for group in group_registry.GROUPS:
         for source_id in group.source_ids:
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"всё-собрано-{source_id}",
                 source_id=source_id,
-                status="ok",
                 started_at=moment,
                 finished_at=moment,
                 session_date=ASOF,

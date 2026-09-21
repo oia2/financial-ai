@@ -20,6 +20,7 @@ from financial_ai.market_data.sources.equity_d1 import (
     price_series_id_for,
     to_decimal,
 )
+from financial_ai.market_data.verification import VerificationResult, one_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +30,14 @@ COLUMNS = ("SECID", "TRADEDATE", "VALUE", "NUMTRADES", "WAPRICE")
 
 async def sync_equity_aggregates(
     client: IssClient, repository: MarketDataRepository, session_date: dt.date
-) -> int:
+) -> VerificationResult:
     """Собрать агрегаты всех бумаг за одну торговую сессию."""
     rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
     aliases = await repository.aliases_on(session_date)
     aggregates = rows_to_aggregates(rows, session_date, aliases)
     written = await repository.upsert_aggregates(aggregates)
     logger.info("агрегаты за %s: получено %d, записано %d", session_date, len(rows), written)
-    return written
+    return one_session(written, session_date, "board:TQBR", has_value=bool(rows))
 
 
 def rows_to_aggregates(

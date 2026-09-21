@@ -18,6 +18,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import groups
 from financial_ai.market_data.repository import AggregateRow, DailyBar, MarketDataRepository
 from financial_ai.ranking.dataset import DatasetError, build_dataset, prune_datasets
+from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
 
@@ -60,10 +61,10 @@ async def _seed(session: AsyncSession, close: str = "314.22") -> None:
     moment = dt.datetime.now(dt.UTC)
     for day in SESSIONS:
         for source_id in groups.source_ids_for(groups.GROUPS):
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"seed-{source_id}-{day}",
                 source_id=source_id,
-                status="ok",
                 started_at=moment,
                 finished_at=moment,
                 session_date=day,
@@ -336,10 +337,10 @@ async def test_missing_session_reaches_the_manifest(
         for source_id in groups.source_ids_for(groups.GROUPS):
             if day == SESSIONS[1] and source_id == "equity_d1":
                 continue
-            await repository.record_run(
+            await record_verified_run(
+                repository,
                 run_id=f"miss-{source_id[:10]}-{day:%Y%m%d}",
                 source_id=source_id,
-                status="ok",
                 started_at=moment,
                 finished_at=moment,
                 session_date=day,

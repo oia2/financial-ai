@@ -28,6 +28,7 @@ from decimal import Decimal
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
+from financial_ai.market_data.verification import VerificationResult, one_session
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class Contract:
 
 async def sync_brent(
     client: IssClient, repository: MarketDataRepository, session_date: dt.date
-) -> int:
+) -> VerificationResult:
     """Собрать цену фронтального контракта за одну торговую сессию."""
     rows = await client.fetch_session_rows_for(
         session_date.isoformat(), COLUMNS, engine=ENGINE, market=MARKET
@@ -62,7 +63,7 @@ async def sync_brent(
     contract = select_front_contract(rows, session_date)
     if contract is None:
         logger.warning("Brent за %s: подходящего контракта не нашлось", session_date)
-        return 0
+        return one_session(0, session_date, SERIES_ID, has_value=False)
 
     logger.info(
         "Brent за %s: фронтальный контракт %s (срок %s)",
@@ -70,7 +71,8 @@ async def sync_brent(
         contract.secid,
         contract.expiry,
     )
-    return await repository.upsert_global_values(SERIES_ID, {session_date: contract.close})
+    written = await repository.upsert_global_values(SERIES_ID, {session_date: contract.close})
+    return one_session(written, session_date, SERIES_ID, has_value=True)
 
 
 def select_front_contract(rows: list[dict[str, object]], session_date: dt.date) -> Contract | None:
