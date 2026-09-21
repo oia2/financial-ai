@@ -10,6 +10,7 @@ HTTP-библиотека здесь не нужна. Поведение пов�
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
 import time
@@ -101,6 +102,9 @@ class IssClient:
             lambda start: urls.history_by_date_params(
                 session_date, start, self._config.page_limit, columns
             ),
+            required_columns=columns,
+            date_from=session_date,
+            date_till=session_date,
         )
 
     async def fetch_session_rows_for(
@@ -127,6 +131,9 @@ class IssClient:
             lambda start: urls.history_by_date_params(
                 session_date, start, self._config.page_limit, columns
             ),
+            required_columns=columns,
+            date_from=session_date,
+            date_till=session_date,
         )
 
     async def fetch_security_history(
@@ -160,6 +167,9 @@ class IssClient:
             lambda start: urls.history_by_security_params(
                 date_from, date_till, start, self._config.page_limit, columns
             ),
+            required_columns=columns,
+            date_from=date_from,
+            date_till=date_till,
         )
 
     async def fetch_futures_series(self) -> list[dict[str, Any]]:
@@ -171,8 +181,12 @@ class IssClient:
         payload = await self._get_json(
             urls.futures_series_url(self._config.base_url), {"iss.meta": "off"}
         )
-        block = payload.get("series") or {}
-        return _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(
+            payload,
+            "series",
+            required_columns=("underlying_asset", "asset_code", "secid"),
+        )
+        return _rows_to_dicts(columns, data)
 
     async def fetch_futures_open_interest(self) -> dict[str, int]:
         """Открытый интерес по кодам базовых активов срочного рынка.
@@ -184,8 +198,12 @@ class IssClient:
             urls.futures_securities_url(self._config.base_url),
             {"iss.meta": "off", "iss.only": "securities"},
         )
-        block = payload.get("securities") or {}
-        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(
+            payload,
+            "securities",
+            required_columns=("ASSETCODE", "PREVOPENPOSITION"),
+        )
+        rows = _rows_to_dicts(columns, data)
 
         totals: dict[str, int] = {}
         for row in rows:
@@ -207,8 +225,10 @@ class IssClient:
             urls.equity_securities_url(self._config.base_url, self._config.board),
             {"iss.meta": "off", "iss.only": "securities"},
         )
-        block = payload.get("securities") or {}
-        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(
+            payload, "securities", required_columns=("SECID", "LOTSIZE")
+        )
+        rows = _rows_to_dicts(columns, data)
 
         lots: dict[str, int] = {}
         for row in rows:
@@ -242,8 +262,8 @@ class IssClient:
             urls.equity_securities_url(self._config.base_url, self._config.board),
             {"iss.meta": "off", "iss.only": "securities"},
         )
-        block = payload.get("securities") or {}
-        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(payload, "securities", required_columns=("SECID", "ISIN"))
+        rows = _rows_to_dicts(columns, data)
 
         isins: dict[str, str] = {}
         for row in rows:
@@ -270,8 +290,8 @@ class IssClient:
             urls.security_description_url(self._config.base_url, secid),
             {"iss.meta": "off", "iss.only": "description"},
         )
-        block = payload.get("description") or {}
-        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(payload, "description", required_columns=("name", "value"))
+        rows = _rows_to_dicts(columns, data)
 
         for row in rows:
             if row.get("name") == "EMITTER_ID":
@@ -309,12 +329,18 @@ class IssClient:
                 params["date"] = session_date
 
             payload = await self._get_json(url, params)
-            block = payload.get("analytics") or {}
-            data = block.get("data") or []
+            columns, data = _validated_block(
+                payload,
+                "analytics",
+                required_columns=("ticker", "weight", "tradedate"),
+            )
             if not data:
                 break
 
-            rows.extend(_rows_to_dicts(block.get("columns") or [], data))
+            page = _rows_to_dicts(columns, data)
+            if session_date is not None:
+                _validate_trade_dates(page, session_date, session_date, "analytics")
+            rows.extend(page)
             if len(data) < self._config.page_limit:
                 break
             start += len(data)
@@ -331,8 +357,10 @@ class IssClient:
             urls.index_titles_url(self._config.base_url),
             {"iss.meta": "off", "iss.only": "indices"},
         )
-        block = payload.get("indices") or {}
-        rows = _rows_to_dicts(block.get("columns") or [], block.get("data") or [])
+        columns, data = _validated_block(
+            payload, "indices", required_columns=("indexid", "shortname")
+        )
+        rows = _rows_to_dicts(columns, data)
 
         titles: dict[str, str] = {}
         for row in rows:
@@ -363,16 +391,25 @@ class IssClient:
         ) == self._config.market
         return self._config.board if same_section else None
 
-    async def _paginate(self, url: str, params_for: Any) -> list[dict[str, Any]]:
+    async def _paginate(
+        self,
+        url: str,
+        params_for: Any,
+        *,
+        required_columns: tuple[str, ...],
+        date_from: str,
+        date_till: str,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         start = 0
         while True:
             payload = await self._get_json(url, params_for(start))
-            block = payload.get("history") or {}
-            data = block.get("data") or []
+            columns, data = _validated_block(payload, "history", required_columns=required_columns)
             if not data:
                 break
-            rows.extend(_rows_to_dicts(block.get("columns") or [], data))
+            page = _rows_to_dicts(columns, data)
+            _validate_trade_dates(page, date_from, date_till, "history")
+            rows.extend(page)
             if len(data) < self._config.page_limit:
                 break
             start += self._config.page_limit
@@ -409,9 +446,11 @@ class IssClient:
                 if response.status_code == httpx.codes.OK:
                     self.metrics.record_success()
                     try:
-                        payload: dict[str, Any] = _loads(response.content)
+                        payload = _loads(response.content)
                     except ValueError as error:
                         raise IssError(f"ответ MOEX ISS не является JSON: {error}") from error
+                    if not isinstance(payload, dict):
+                        raise IssError("ответ MOEX ISS: корень JSON должен быть объектом")
                     return payload
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise IssError(
@@ -438,7 +477,7 @@ class IssClient:
         )
 
 
-def _loads(body: bytes) -> dict[str, Any]:
+def _loads(body: bytes) -> object:
     """Разобрать ответ биржи, переводя дробные числа сразу в ``Decimal``.
 
     ``response.json()`` разбирает их в ``float``, и на этом значение биржи уже
@@ -448,8 +487,67 @@ def _loads(body: bytes) -> dict[str, Any]:
 
     Целые числа `json` разбирает в ``int`` и без нас: там теряться нечему.
     """
-    return json.loads(body, parse_float=Decimal)
+    parsed: object = json.loads(body, parse_float=Decimal)
+    return parsed
 
 
 def _rows_to_dicts(columns: list[str], data: list[list[Any]]) -> list[dict[str, Any]]:
-    return [dict(zip(columns, row, strict=False)) for row in data]
+    return [dict(zip(columns, row, strict=True)) for row in data]
+
+
+def _validated_block(
+    payload: dict[str, Any], block_name: str, *, required_columns: tuple[str, ...]
+) -> tuple[list[str], list[list[Any]]]:
+    """Проверить форму блока до того, как пустота получит бизнес-смысл."""
+    if block_name not in payload:
+        raise IssError(f"ответ MOEX ISS не содержит блок {block_name!r}")
+    block = payload[block_name]
+    if not isinstance(block, dict):
+        raise IssError(f"блок {block_name!r} должен быть объектом")
+
+    columns = block.get("columns")
+    data = block.get("data")
+    if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
+        raise IssError(f"блок {block_name!r}: columns должен быть списком строк")
+    if len(columns) != len(set(columns)):
+        raise IssError(f"блок {block_name!r}: имена колонок не должны повторяться")
+    missing = [column for column in required_columns if column not in columns]
+    if missing:
+        raise IssError(
+            f"блок {block_name!r}: отсутствуют обязательные колонки {', '.join(missing)}"
+        )
+    if not isinstance(data, list):
+        raise IssError(f"блок {block_name!r}: data должен быть списком строк")
+    for position, row in enumerate(data):
+        if not isinstance(row, list):
+            raise IssError(f"блок {block_name!r}: строка {position} должна быть списком")
+        if len(row) != len(columns):
+            raise IssError(
+                f"блок {block_name!r}: строка {position} содержит {len(row)} значений "
+                f"для {len(columns)} колонок"
+            )
+    return columns, data
+
+
+def _validate_trade_dates(
+    rows: list[dict[str, Any]], date_from: str, date_till: str, block_name: str
+) -> None:
+    """Не позволить записать ответ за чужой день под запрошенной датой."""
+    if not rows or ("TRADEDATE" not in rows[0] and "tradedate" not in rows[0]):
+        return
+    lower = dt.date.fromisoformat(date_from)
+    upper = dt.date.fromisoformat(date_till)
+    key = "TRADEDATE" if "TRADEDATE" in rows[0] else "tradedate"
+    for position, row in enumerate(rows):
+        raw = row.get(key)
+        try:
+            day = dt.date.fromisoformat(str(raw)[:10])
+        except (TypeError, ValueError) as error:
+            raise IssError(
+                f"блок {block_name!r}: строка {position} содержит некорректную дату {raw!r}"
+            ) from error
+        if not lower <= day <= upper:
+            raise IssError(
+                f"блок {block_name!r}: строка {position} относится к чужой дате {day}; "
+                f"запрошено {lower}..{upper}"
+            )

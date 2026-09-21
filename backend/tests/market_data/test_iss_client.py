@@ -66,6 +66,99 @@ async def test_empty_response_stops_pagination(config: IssConfig) -> None:
 
 
 @respx.mock
+async def test_unexpected_block_is_not_treated_as_empty(config: IssConfig) -> None:
+    respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json={"unexpected_block": {"message": "not history"}})
+    )
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="не содержит блок 'history'"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+async def test_missing_requested_column_is_contract_error(config: IssConfig) -> None:
+    columns = [column for column in COLUMNS if column != "CLOSE"]
+    row = [value for position, value in enumerate(_row("SBER")) if COLUMNS[position] != "CLOSE"]
+    payload = {"history": {"columns": columns, "data": [row]}}
+    respx.get(url__startswith=BASE).mock(return_value=httpx.Response(200, json=payload))
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="обязательные колонки CLOSE"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+async def test_null_value_in_present_column_is_valid(config: IssConfig) -> None:
+    row = _row("SBER")
+    row[COLUMNS.index("CLOSE")] = None
+    respx.get(url__startswith=BASE).mock(return_value=httpx.Response(200, json=_page([row])))
+    async with IssClient(config) as client:
+        rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert rows[0]["CLOSE"] is None
+
+
+@respx.mock
+async def test_malformed_row_is_contract_error(config: IssConfig) -> None:
+    respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json=_page([_row("SBER")[:-1]]))
+    )
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="6 значений для 7 колонок"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+async def test_foreign_session_date_is_contract_error(config: IssConfig) -> None:
+    respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json=_page([_row("SBER", "2026-08-27")]))
+    )
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="чужой дате 2026-08-27"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("method", "args", "block", "columns", "missing"),
+    [
+        (
+            "fetch_futures_series",
+            (),
+            "series",
+            ["underlying_asset", "asset_code"],
+            "secid",
+        ),
+        (
+            "fetch_futures_open_interest",
+            (),
+            "securities",
+            ["ASSETCODE"],
+            "PREVOPENPOSITION",
+        ),
+        ("fetch_equity_lot_sizes", (), "securities", ["SECID"], "LOTSIZE"),
+        ("fetch_equity_isins", (), "securities", ["SECID"], "ISIN"),
+        ("fetch_emitter_id", ("SBER",), "description", ["name"], "value"),
+        ("fetch_index_analytics", ("IMOEX",), "analytics", ["ticker", "weight"], "tradedate"),
+        ("fetch_index_titles", (), "indices", ["indexid"], "shortname"),
+    ],
+)
+async def test_reference_blocks_require_consumer_columns(
+    config: IssConfig,
+    method: str,
+    args: tuple[str, ...],
+    block: str,
+    columns: list[str],
+    missing: str,
+) -> None:
+    respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json={block: {"columns": columns, "data": []}})
+    )
+    async with IssClient(config) as client:
+        call = getattr(client, method)
+        with pytest.raises(IssError, match=f"обязательные колонки {missing}"):
+            await call(*args)
+
+
+@respx.mock
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
 async def test_retries_on_retryable_status(config: IssConfig, status: int) -> None:
     """429 в списке повторяемых не случайно: биржа ограничивает частоту."""
