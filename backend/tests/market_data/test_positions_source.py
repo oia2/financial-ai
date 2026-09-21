@@ -23,6 +23,7 @@ from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import positions
 from financial_ai.market_data.sources import positions_client as module
 from financial_ai.market_data.sources.positions_client import (
+    PositionFetchKind,
     PositionsClient,
     PositionsSourceError,
     parse_page_state,
@@ -344,7 +345,10 @@ async def test_snapshot_for_another_date_is_not_returned() -> None:
     """Биржа отдаёт последний доступный снимок — записывать его нельзя."""
     recorder = Recorder()
     async with PositionsClient(_settings(), client=recorder.client()) as client:
-        assert await client.fetch("SBRF_F", OTHER) is None
+        result = await client.fetch("SBRF_F", OTHER)
+
+    assert result.kind is PositionFetchKind.UNKNOWN
+    assert result.reason_code == "foreign_trade_date"
 
 
 async def test_unknown_contract_costs_no_request() -> None:
@@ -354,8 +358,56 @@ async def test_unknown_contract_costs_no_request() -> None:
         await client.known_contracts(SESSION)
         before = len(recorder.requests)
 
-        assert await client.fetch("НЕТТАКОГО_F", SESSION) is None
+        result = await client.fetch("НЕТТАКОГО_F", SESSION)
+        assert result.kind is PositionFetchKind.UNKNOWN
+        assert result.reason_code == "not_in_current_list"
         assert len(recorder.requests) == before
+
+
+async def test_missing_table_is_unknown_and_cached() -> None:
+    recorder = Recorder()
+    recorder.body = LIVE_STATE
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        first = await client.fetch("SBRF_F", SESSION)
+        spent = len(recorder.requests)
+        again = await client.fetch("SBRF_F", SESSION)
+
+    assert first.kind is PositionFetchKind.UNKNOWN
+    assert first.reason_code == "positions_table_missing"
+    assert again == first
+    assert len(recorder.requests) == spent
+
+
+async def test_exact_date_empty_row_confirms_absence() -> None:
+    recorder = Recorder()
+    recorder.body = (
+        LIVE_STATE
+        + """
+    <span class="text-center"><b> Данные на 28 августа 2026 </b></span>
+    <table class="table1 _full-width table1">
+      <tr><td>Количество договоров (контрактов), шт.</td>
+      <td></td><td></td><td></td><td></td><td></td></tr>
+    </table>
+    """
+    )
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await client.fetch("SBRF_F", SESSION)
+
+    assert result.kind is PositionFetchKind.CONFIRMED_ABSENCE
+    assert result.reason_code == "exact_date_empty_position_row"
+
+
+async def test_zero_positions_are_values() -> None:
+    recorder = Recorder()
+    recorder.body = LIVE_STATE + LIVE_TABLE.replace(f"125{NBSP}484", "0").replace(
+        f"88{NBSP}768", "0"
+    ).replace(f"388{NBSP}054", "0").replace(f"424{NBSP}770", "0")
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await client.fetch("SBRF_F", SESSION)
+
+    assert result.kind is PositionFetchKind.VALUE
+    assert result.snapshot is not None
+    assert result.snapshot.fiz_long == Decimal("0")
 
 
 async def test_retries_are_bounded_and_reported() -> None:
@@ -804,9 +856,10 @@ async def test_found_snapshot_is_not_requested_twice() -> None:
         spent = len(recorder.requests)
 
         # Ровно та пара «контракт — дата», которую только что принёс поиск.
-        snapshot = await client.fetch("SBRF_F", SESSION)
+        result = await client.fetch("SBRF_F", SESSION)
 
-        assert snapshot is not None
+        assert result.kind is PositionFetchKind.VALUE
+        assert result.snapshot is not None
         assert len(recorder.requests) == spent
 
 

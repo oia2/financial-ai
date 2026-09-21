@@ -37,6 +37,8 @@ from financial_ai.market_data.interrupt import SourcePartialError, SourceStopped
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.positions_client import (
+    PositionFetchKind,
+    PositionFetchResult,
     PositionsClient,
     PositionsSourceError,
 )
@@ -204,7 +206,7 @@ async def sync_positions(
             on_progress(requested, todo)
 
         try:
-            snapshot = await client.fetch(contract, session_date)
+            fetched = await client.fetch(contract, session_date)
         except SourceStoppedError as error:
             # Если клиент сообщил остановку внутри обращения, прибавить уже
             # закреплённые пачки к числу строк исхода.
@@ -234,8 +236,17 @@ async def sync_positions(
             await flush()
             raise
 
-        if snapshot is None:
-            continue
+        if isinstance(fetched, PositionFetchResult):
+            if fetched.kind is not PositionFetchKind.VALUE:
+                continue
+            snapshot = fetched.snapshot
+            if snapshot is None:  # pragma: no cover - защита контракта типа
+                raise PositionsSourceError("результат value не содержит снимок")
+        else:
+            # Тестовые клиенты переходного этапа ещё возвращают снимок/None.
+            snapshot = fetched
+            if snapshot is None:
+                continue
 
         row = PositionRow(
             asset_id=asset_id,

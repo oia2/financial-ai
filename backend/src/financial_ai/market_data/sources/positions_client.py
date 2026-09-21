@@ -39,6 +39,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
+from enum import StrEnum
 
 import httpx
 from bs4 import BeautifulSoup
@@ -124,6 +125,35 @@ class PositionSnapshot:
         )
 
 
+class PositionFetchKind(StrEnum):
+    """Смысл ответа по одной паре «контракт — дата»."""
+
+    VALUE = "value"
+    CONFIRMED_ABSENCE = "confirmed_absence"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class PositionFetchResult:
+    """Различимый результат формы без перегруженного ``None``."""
+
+    kind: PositionFetchKind
+    reason_code: str
+    snapshot: PositionSnapshot | None = None
+
+    @classmethod
+    def value(cls, snapshot: PositionSnapshot) -> PositionFetchResult:
+        return cls(PositionFetchKind.VALUE, "exact_date_values", snapshot)
+
+    @classmethod
+    def confirmed_absence(cls, reason_code: str) -> PositionFetchResult:
+        return cls(PositionFetchKind.CONFIRMED_ABSENCE, reason_code)
+
+    @classmethod
+    def unknown(cls, reason_code: str) -> PositionFetchResult:
+        return cls(PositionFetchKind.UNKNOWN, reason_code)
+
+
 @dataclass(frozen=True, slots=True)
 class Instrument:
     """Как попросить у страницы конкретный контракт."""
@@ -184,7 +214,7 @@ class PositionsClient:
         #
         # Живёт ровно столько, сколько клиент, то есть один прогон, и ограничен
         # по числу: долговременным хранилищем HTTP-ответов это быть не должно.
-        self._snapshots: dict[tuple[str, dt.date], PositionSnapshot | None] = {}
+        self._snapshots: dict[tuple[str, dt.date], PositionFetchResult] = {}
 
     async def __aenter__(self) -> PositionsClient:
         if self._client is None:
@@ -217,36 +247,34 @@ class PositionsClient:
         await self._ensure_state(day)
         return set(self._state.instruments)
 
-    async def fetch(self, contract_code: str, day: dt.date) -> PositionSnapshot | None:
+    async def fetch(self, contract_code: str, day: dt.date) -> PositionFetchResult:
         """Позиции по одному контракту за одну сессию.
 
-        ``None`` означает «данных за эту дату нет»: либо таблицы в ответе не
-        оказалось, либо биржа ответила снимком за другую дату. Второе —
-        не ошибка обмена, а отсутствие торгов, и записывать такой ответ как
-        наблюдение о запрошенной сессии значило бы передатировать его.
+        Отсутствующая таблица, чужая дата и отсутствие кода в сегодняшнем
+        списке не доказывают историческое отсутствие и возвращают ``unknown``.
         """
         code = contract_code.strip().upper()
 
         # Снимок этой пары мог прийти при поиске первой доступной даты. Второй
         # раз он не спрашивается: обращения, заведомо не приносящие нового,
         # не выполняются (FR-022, FR-058e).
-        cached = self._snapshots.get((code, day))
-        if cached is not None:
-            return cached
+        key = (code, day)
+        if key in self._snapshots:
+            return self._snapshots[key]
 
         await self._ensure_state(day)
 
         instrument = self._state.instruments.get(code)
         if instrument is None:
             logger.debug("контракта %s нет в списке инструментов на %s", code, day)
-            return None
+            return self._remember(code, day, PositionFetchResult.unknown("not_in_current_list"))
 
         html = await self._post(self._data_fields(instrument, day), day)
         snapshot = parse_snapshot(html)
         self._absorb_state(html)
 
         if snapshot is None:
-            return None
+            return self._remember(code, day, PositionFetchResult.unknown("positions_table_missing"))
         if snapshot.trade_date != day:
             # Биржа отдаёт последний доступный снимок, если за дату данных нет.
             logger.debug(
@@ -255,16 +283,24 @@ class PositionsClient:
                 day,
                 snapshot.trade_date,
             )
-            return None
+            return self._remember(code, day, PositionFetchResult.unknown("foreign_trade_date"))
 
-        self._remember(code, day, snapshot)
-        return snapshot
+        if not snapshot.has_values:
+            return self._remember(
+                code,
+                day,
+                PositionFetchResult.confirmed_absence("exact_date_empty_position_row"),
+            )
+        return self._remember(code, day, PositionFetchResult.value(snapshot))
 
-    def _remember(self, code: str, day: dt.date, snapshot: PositionSnapshot) -> None:
-        """Запомнить полученный снимок на время прогона."""
+    def _remember(
+        self, code: str, day: dt.date, result: PositionFetchResult
+    ) -> PositionFetchResult:
+        """Запомнить различимый результат на время прогона."""
         if len(self._snapshots) >= SNAPSHOT_CACHE_LIMIT:
-            return
-        self._snapshots[(code, day)] = snapshot
+            return result
+        self._snapshots[(code, day)] = result
+        return result
 
     def searched_for_first_date(self, contract_code: str) -> bool:
         """Выполнялся ли уже поиск первой доступной даты по этому контракту.
@@ -344,10 +380,10 @@ class PositionsClient:
         а источник заканчивался исходом «ок» с нулём строк (FR-032).
         """
         before = self.metrics.attempts
-        snapshot = await self.fetch(contract_code, day)
+        result = await self.fetch(contract_code, day)
         if self.metrics.attempts > before:
             self.metrics.search_probes += 1
-        return snapshot is not None and snapshot.has_values
+        return result.kind is PositionFetchKind.VALUE
 
     # --- внутреннее ---------------------------------------------------------
 
