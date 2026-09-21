@@ -62,7 +62,7 @@ def history_by_date_params(
         "date": session_date,
         "start": start,
         "limit": limit,
-        "iss.only": "history",
+        "iss.only": "history,history.cursor",
         "iss.meta": "off",
         "history.columns": ",".join(columns),
     }
@@ -77,7 +77,7 @@ def history_by_security_params(
         "till": date_till,
         "start": start,
         "limit": limit,
-        "iss.only": "history",
+        "iss.only": "history,history.cursor",
         "iss.meta": "off",
         "history.columns": ",".join(columns),
     }

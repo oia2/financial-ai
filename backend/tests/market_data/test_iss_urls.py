@@ -23,7 +23,7 @@ def test_daily_params_carry_the_date() -> None:
         "2026-08-28", start=0, limit=100, columns=("SECID", "CLOSE")
     )
     assert params["date"] == "2026-08-28"
-    assert params["iss.only"] == "history"
+    assert params["iss.only"] == "history,history.cursor"
     assert params["history.columns"] == "SECID,CLOSE"
 
 
@@ -46,6 +46,7 @@ def test_backfill_params_carry_the_range() -> None:
     assert params["from"] == "1990-01-01"
     assert params["till"] == "2026-08-28"
     assert params["start"] == 200
+    assert params["iss.only"] == "history,history.cursor"
 
 
 def test_two_forms_are_different() -> None:

@@ -16,8 +16,21 @@ BASE = "https://iss.moex.com/iss"
 COLUMNS = ("SECID", "TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME")
 
 
-def _page(rows: list[list[object]]) -> dict[str, object]:
-    return {"history": {"columns": list(COLUMNS), "data": rows}}
+def _page(
+    rows: list[list[object]],
+    *,
+    index: int = 0,
+    total: int | None = None,
+    page_size: int = 2,
+    cursor: bool = True,
+) -> dict[str, object]:
+    payload: dict[str, object] = {"history": {"columns": list(COLUMNS), "data": rows}}
+    if cursor:
+        payload["history.cursor"] = {
+            "columns": ["INDEX", "TOTAL", "PAGESIZE"],
+            "data": [[index, index + len(rows) if total is None else total, page_size]],
+        }
+    return payload
 
 
 def _row(secid: str, date: str = "2026-08-28") -> list[object]:
@@ -48,8 +61,8 @@ async def test_pagination_walks_all_pages(config: IssConfig) -> None:
     """Пока страница полная, клиент запрашивает следующую."""
     route = respx.get(url__startswith=BASE)
     route.side_effect = [
-        httpx.Response(200, json=_page([_row("SBER"), _row("GAZP")])),
-        httpx.Response(200, json=_page([_row("LKOH")])),
+        httpx.Response(200, json=_page([_row("SBER"), _row("GAZP")], total=3)),
+        httpx.Response(200, json=_page([_row("LKOH")], index=2, total=3)),
     ]
     async with IssClient(config) as client:
         rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
@@ -63,6 +76,164 @@ async def test_empty_response_stops_pagination(config: IssConfig) -> None:
     async with IssClient(config) as client:
         rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
     assert rows == []
+
+
+@respx.mock
+async def test_server_page_cap_does_not_truncate_requested_limit() -> None:
+    config = IssConfig(
+        base_url=BASE,
+        page_limit=1000,
+        retries=1,
+        timeout_seconds=1.0,
+        initial_retry_delay_seconds=0.0,
+    )
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json=_page([_row("SBER"), _row("GAZP")], total=3, page_size=2),
+        ),
+        httpx.Response(
+            200,
+            json=_page([_row("LKOH")], index=2, total=3, page_size=2),
+        ),
+    ]
+    async with IssClient(config) as client:
+        rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert [row["SECID"] for row in rows] == ["SBER", "GAZP", "LKOH"]
+    assert [call.request.url.params["start"] for call in route.calls] == ["0", "2"]
+
+
+@respx.mock
+async def test_analytics_uses_its_cursor_when_server_caps_page() -> None:
+    config = IssConfig(
+        base_url=BASE,
+        page_limit=1000,
+        retries=1,
+        timeout_seconds=1.0,
+        initial_retry_delay_seconds=0.0,
+    )
+
+    def analytics_page(rows: list[list[object]], index: int, total: int) -> dict[str, object]:
+        return {
+            "analytics": {
+                "columns": ["ticker", "weight", "tradedate"],
+                "data": rows,
+            },
+            "analytics.cursor": {
+                "columns": ["INDEX", "TOTAL", "PAGESIZE"],
+                "data": [[index, total, 2]],
+            },
+        }
+
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(
+            200,
+            json=analytics_page(
+                [["SBER", "30.1", "2026-08-28"], ["GAZP", "20.2", "2026-08-28"]],
+                0,
+                3,
+            ),
+        ),
+        httpx.Response(
+            200,
+            json=analytics_page([["LKOH", "10.3", "2026-08-28"]], 2, 3),
+        ),
+    ]
+    async with IssClient(config) as client:
+        rows = await client.fetch_index_analytics("IMOEX", "2026-08-28")
+    assert [row["ticker"] for row in rows] == ["SBER", "GAZP", "LKOH"]
+    assert [call.request.url.params["start"] for call in route.calls] == ["0", "2"]
+
+
+@respx.mock
+async def test_full_last_page_finishes_by_cursor_total(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(200, json=_page([_row("SBER"), _row("GAZP")], total=4)),
+        httpx.Response(
+            200,
+            json=_page([_row("LKOH"), _row("ROSN")], index=2, total=4),
+        ),
+    ]
+    async with IssClient(config) as client:
+        rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert len(rows) == 4
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_without_cursor_walks_until_empty_page(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(200, json=_page([_row("SBER")], cursor=False)),
+        httpx.Response(200, json=_page([], cursor=False)),
+    ]
+    async with IssClient(config) as client:
+        rows = await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert [row["SECID"] for row in rows] == ["SBER"]
+    assert [call.request.url.params["start"] for call in route.calls] == ["0", "1"]
+
+
+@respx.mock
+async def test_repeated_page_without_cursor_is_error(config: IssConfig) -> None:
+    repeated = _page([_row("SBER")], cursor=False)
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [httpx.Response(200, json=repeated), httpx.Response(200, json=repeated)]
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="повторил страницу"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+async def test_late_page_error_does_not_return_partial_result(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(200, json=_page([_row("SBER"), _row("GAZP")], total=3)),
+        httpx.Response(404),
+    ]
+    async with IssClient(config) as client:
+        with pytest.raises(IssError, match="404"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+
+
+@respx.mock
+async def test_budget_is_checked_between_pages(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json=_page([_row("SBER")], total=2))
+    )
+    permits = 0
+
+    async def permit() -> None:
+        nonlocal permits
+        permits += 1
+        if permits > 1:
+            raise SourceStoppedError(detail="request_budget_exhausted")
+
+    async with IssClient(config, request_permit=permit) as client:
+        with pytest.raises(SourceStoppedError, match="request_budget_exhausted"):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_stop_is_checked_between_pages(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE).mock(
+        return_value=httpx.Response(200, json=_page([_row("SBER")], total=2))
+    )
+    stop = False
+
+    def should_stop() -> bool:
+        nonlocal stop
+        if route.call_count:
+            stop = True
+        return stop
+
+    async with IssClient(config, should_stop=should_stop) as client:
+        with pytest.raises(SourceStoppedError):
+            await client.fetch_session_rows("2026-08-28", COLUMNS)
+    assert route.call_count == 1
 
 
 @respx.mock

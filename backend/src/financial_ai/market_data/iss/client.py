@@ -317,6 +317,7 @@ class IssClient:
         url = urls.index_analytics_url(self._config.base_url, index_id)
         rows: list[dict[str, Any]] = []
         start = 0
+        seen_pages: set[str] = set()
 
         while True:
             params: dict[str, Any] = {
@@ -334,16 +335,19 @@ class IssClient:
                 "analytics",
                 required_columns=("ticker", "weight", "tradedate"),
             )
-            if not data:
-                break
-
             page = _rows_to_dicts(columns, data)
             if session_date is not None:
                 _validate_trade_dates(page, session_date, session_date, "analytics")
             rows.extend(page)
-            if len(data) < self._config.page_limit:
+            start, complete = _page_progress(
+                payload,
+                "analytics",
+                requested_start=start,
+                data=data,
+                seen_pages=seen_pages,
+            )
+            if complete:
                 break
-            start += len(data)
 
         return rows
 
@@ -402,17 +406,22 @@ class IssClient:
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         start = 0
+        seen_pages: set[str] = set()
         while True:
             payload = await self._get_json(url, params_for(start))
             columns, data = _validated_block(payload, "history", required_columns=required_columns)
-            if not data:
-                break
             page = _rows_to_dicts(columns, data)
             _validate_trade_dates(page, date_from, date_till, "history")
             rows.extend(page)
-            if len(data) < self._config.page_limit:
+            start, complete = _page_progress(
+                payload,
+                "history",
+                requested_start=start,
+                data=data,
+                seen_pages=seen_pages,
+            )
+            if complete:
                 break
-            start += self._config.page_limit
         return rows
 
     async def _get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -551,3 +560,69 @@ def _validate_trade_dates(
                 f"блок {block_name!r}: строка {position} относится к чужой дате {day}; "
                 f"запрошено {lower}..{upper}"
             )
+
+
+def _page_progress(
+    payload: dict[str, Any],
+    block_name: str,
+    *,
+    requested_start: int,
+    data: list[list[Any]],
+    seen_pages: set[str],
+) -> tuple[int, bool]:
+    """Определить следующий start по курсору или фактической странице.
+
+    Сервер вправе ограничить страницу сильнее запрошенного ``limit``. Поэтому
+    короткая непустая страница не означает конец, а шаг всегда равен числу
+    реально полученных строк.
+    """
+    if data:
+        fingerprint = repr(data)
+        if fingerprint in seen_pages:
+            raise IssError(f"блок {block_name!r}: сервер повторил страницу без продвижения")
+        seen_pages.add(fingerprint)
+
+    cursor_name = f"{block_name}.cursor"
+    if cursor_name not in payload:
+        if not data:
+            return requested_start, True
+        next_start = requested_start + len(data)
+        if next_start <= requested_start:
+            raise IssError(f"блок {block_name!r}: пагинация не продвинулась")
+        return next_start, False
+
+    cursor_columns, cursor_data = _validated_block(
+        payload,
+        cursor_name,
+        required_columns=("INDEX", "TOTAL", "PAGESIZE"),
+    )
+    if len(cursor_data) != 1:
+        raise IssError(f"блок {cursor_name!r}: ожидается ровно одна строка курсора")
+    cursor = _rows_to_dicts(cursor_columns, cursor_data)[0]
+    index = _cursor_integer(cursor.get("INDEX"), cursor_name, "INDEX", minimum=0)
+    total = _cursor_integer(cursor.get("TOTAL"), cursor_name, "TOTAL", minimum=0)
+    page_size = _cursor_integer(cursor.get("PAGESIZE"), cursor_name, "PAGESIZE", minimum=1)
+    if index != requested_start:
+        raise IssError(
+            f"блок {cursor_name!r}: INDEX={index}, хотя запрошен start={requested_start}"
+        )
+    if len(data) > page_size:
+        raise IssError(f"блок {cursor_name!r}: пришло {len(data)} строк при PAGESIZE={page_size}")
+    next_start = index + len(data)
+    if next_start > total:
+        raise IssError(
+            f"блок {cursor_name!r}: страница заканчивается на {next_start}, TOTAL={total}"
+        )
+    if not data and next_start < total:
+        raise IssError(
+            f"блок {cursor_name!r}: пустая страница до конца диапазона ({next_start} из {total})"
+        )
+    return next_start, next_start >= total
+
+
+def _cursor_integer(raw: object, block_name: str, column: str, *, minimum: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < minimum:
+        raise IssError(
+            f"блок {block_name!r}: {column} должен быть целым числом не меньше {minimum}"
+        )
+    return raw

@@ -100,10 +100,18 @@ def test_no_float_on_the_parsing_path() -> None:
 # ни один из них не проходил (T204).
 
 
+def _with_single_page_cursor(body: bytes) -> bytes:
+    return (
+        body[:-1]
+        + b', "history.cursor": {"columns": ["INDEX", "TOTAL", "PAGESIZE"],'
+        + b' "data": [[0, 1, 100]]}}'
+    )
+
+
 @respx.mock
 async def test_json_numbers_survive_http_response() -> None:
     """Число JSON без кавычек доходит из ответа биржи точным."""
-    body = (
+    body = _with_single_page_cursor(
         b'{"history": {"columns": ["SECID", "OPEN", "CLOSE", "VOLUME"],'
         b' "data": [["SBER", 123456789.123456789, 1e-9, 0]]}}'
     )
@@ -121,7 +129,9 @@ async def test_json_numbers_survive_http_response() -> None:
 @respx.mock
 async def test_json_numbers_are_not_float_after_parsing() -> None:
     """Сторожевой тест пути: дробное число ответа — Decimal, а не float."""
-    body = b'{"history": {"columns": ["SECID", "CLOSE"], "data": [["SBER", 314.22]]}}'
+    body = _with_single_page_cursor(
+        b'{"history": {"columns": ["SECID", "CLOSE"], "data": [["SBER", 314.22]]}}'
+    )
     respx.get(url__startswith=PRECISION_BASE).mock(
         return_value=httpx.Response(200, content=body, headers={"content-type": "application/json"})
     )
@@ -135,7 +145,9 @@ async def test_json_numbers_are_not_float_after_parsing() -> None:
 @respx.mock
 async def test_json_null_stays_missing_not_zero() -> None:
     """`null` ответа остаётся отсутствием наблюдения и нулём не становится."""
-    body = b'{"history": {"columns": ["SECID", "OPEN", "CLOSE"], "data": [["SBER", null, 314.22]]}}'
+    body = _with_single_page_cursor(
+        b'{"history": {"columns": ["SECID", "OPEN", "CLOSE"], "data": [["SBER", null, 314.22]]}}'
+    )
     respx.get(url__startswith=PRECISION_BASE).mock(
         return_value=httpx.Response(200, content=body, headers={"content-type": "application/json"})
     )
@@ -150,7 +162,7 @@ async def test_json_null_stays_missing_not_zero() -> None:
 @respx.mock
 async def test_exact_value_reaches_the_bar_from_http() -> None:
     """Путь «ответ HTTP → домен» целиком: значение доходит без искажения."""
-    body = (
+    body = _with_single_page_cursor(
         b'{"history": {"columns": ["SECID", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"],'
         b' "data": [["SBER", 312.400000001, 315.1, 311.05, 123456789.123456789, 12345678]]}}'
     )
