@@ -13,6 +13,7 @@ import datetime as dt
 from decimal import Decimal
 
 from sqlalchemy import (
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -382,6 +383,30 @@ class CoverageBoundary(Base):
     recorded_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class SourceWorkEvidence(Base):
+    """Проверенный исход одной объявленной единицы работы источника."""
+
+    __tablename__ = "market_source_work_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "result_kind IN ('value', 'confirmed_absence', 'not_applicable')",
+            name="ck_source_work_evidence_result_kind",
+        ),
+        Index("ix_source_work_evidence_session", "session_date"),
+    )
+
+    source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    work_key: Mapped[str] = mapped_column(String(192), primary_key=True)
+    coverage_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    result_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    verified_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    origin_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
 class RepairPlan(Base):

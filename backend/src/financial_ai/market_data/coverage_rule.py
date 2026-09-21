@@ -1,3 +1,3 @@
 """Идентификатор действующего доказуемого правила полноты данных."""
 
-CURRENT_COVERAGE_VERSION = 1
+CURRENT_COVERAGE_VERSION = 2

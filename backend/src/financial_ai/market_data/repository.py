@@ -37,6 +37,7 @@ from financial_ai.market_data.models import (
     RepairItem,
     RepairPlan,
     SessionSkip,
+    SourceWorkEvidence,
     TradingSession,
 )
 
@@ -642,6 +643,8 @@ class MarketDataRepository:
         trigger: str = "daily",
         period_from: dt.date | None = None,
         period_till: dt.date | None = None,
+        coverage_version: int | None = None,
+        coverage_reason: str | None = None,
     ) -> None:
         # Период по умолчанию — одна сессия: так ведёт себя всякий посессионный
         # источник. Источник с выборкой за диапазон передаёт период явно, иначе
@@ -649,16 +652,12 @@ class MarketDataRepository:
         if period_from is None and period_till is None and session_date is not None:
             period_from = period_till = session_date
 
-        # Только нормально завершившийся прогон подтверждается текущим
-        # правилом. Запущенный, упавший или остановленный останется непроверенным.
-        coverage_version = CURRENT_COVERAGE_VERSION if status == "ok" else None
-        coverage_reason = (
-            "completed_with_values"
-            if status == "ok" and rows_written > 0
-            else "completed_no_new_rows"
-            if status == "ok"
-            else None
-        )
+        # Версия приходит только от явной проверки всех единиц работы. Сам по
+        # себе `ok` и даже ненулевое число строк полноту не доказывают.
+        if status != "ok" and (coverage_version is not None or coverage_reason is not None):
+            raise ValueError("неуспешный исход не может подтверждать покрытие")
+        if (coverage_version is None) != (coverage_reason is None):
+            raise ValueError("версия и причина покрытия задаются вместе")
 
         statement = (
             insert(IngestRun)
@@ -693,6 +692,74 @@ class MarketDataRepository:
             )
         )
         await self._session.execute(statement)
+
+    async def record_work_evidence(
+        self,
+        *,
+        source_id: str,
+        session_date: dt.date,
+        work_key: str,
+        result_kind: str,
+        reason_code: str,
+        origin_run_id: str | None,
+        verified_at: dt.datetime | None = None,
+        coverage_version: int = CURRENT_COVERAGE_VERSION,
+    ) -> bool:
+        """Сохранить доказательство один раз, не меняя его происхождение повтором."""
+        values: dict[str, object] = {
+            "source_id": source_id,
+            "session_date": session_date,
+            "work_key": work_key,
+            "coverage_version": coverage_version,
+            "result_kind": result_kind,
+            "reason_code": reason_code,
+            "origin_run_id": origin_run_id,
+        }
+        if verified_at is not None:
+            values["verified_at"] = verified_at
+        statement = (
+            insert(SourceWorkEvidence)
+            .values(**values)
+            .on_conflict_do_nothing(
+                index_elements=["source_id", "session_date", "work_key", "coverage_version"]
+            )
+            .returning(SourceWorkEvidence.source_id)
+        )
+        return await self._session.scalar(statement) is not None
+
+    async def work_evidence(
+        self,
+        *,
+        source_id: str,
+        session_date: dt.date,
+        work_key: str,
+        coverage_version: int = CURRENT_COVERAGE_VERSION,
+    ) -> SourceWorkEvidence | None:
+        return await self._session.scalar(
+            select(SourceWorkEvidence).where(
+                SourceWorkEvidence.source_id == source_id,
+                SourceWorkEvidence.session_date == session_date,
+                SourceWorkEvidence.work_key == work_key,
+                SourceWorkEvidence.coverage_version == coverage_version,
+            )
+        )
+
+    async def work_evidence_for_sessions(
+        self,
+        source_id: str,
+        sessions: list[dt.date],
+        coverage_version: int = CURRENT_COVERAGE_VERSION,
+    ) -> list[SourceWorkEvidence]:
+        if not sessions:
+            return []
+        rows = await self._session.scalars(
+            select(SourceWorkEvidence).where(
+                SourceWorkEvidence.source_id == source_id,
+                SourceWorkEvidence.session_date.in_(sessions),
+                SourceWorkEvidence.coverage_version == coverage_version,
+            )
+        )
+        return list(rows.all())
 
     # --- покрытие по группам (spec 005) ------------------------------------
 
