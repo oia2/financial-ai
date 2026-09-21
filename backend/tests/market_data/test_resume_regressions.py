@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import advance, completeness, coverage, groups, ingest
+from financial_ai.market_data import advance, completeness, coverage, groups, ingest, journal, plan
 from financial_ai.market_data.iss.client import IssClient, IssConfig
 from financial_ai.market_data.models import IngestRun
 from financial_ai.market_data.repository import MarketDataRepository
@@ -29,6 +29,44 @@ pytestmark = pytest.mark.db
 WINDOW = [dt.date(2026, 8, day) for day in (26, 27, 28)]
 DAY = WINDOW[-1]
 GLOBAL = next(group for group in groups.GROUPS if cbr.SOURCE_ID in group.source_ids)
+
+
+async def test_saved_session_outcome_survives_a_new_connection(
+    db_session: AsyncSession,
+) -> None:
+    repository = MarketDataRepository(db_session)
+    now = dt.datetime.now(dt.UTC)
+    run_id = "persisted-session-outcome"
+    selected = frozenset({equity_d1.SOURCE_ID, positions.SOURCE_ID})
+    statuses = {equity_d1.SOURCE_ID: "ok", positions.SOURCE_ID: "failed"}
+    folded = plan.fold_session_outcome(selected, statuses)
+
+    for source_id, status in statuses.items():
+        await repository.record_run(
+            run_id,
+            source_id,
+            status,
+            now,
+            finished_at=now,
+            session_date=DAY,
+            trigger="catchup",
+        )
+    await repository.record_session_outcome(
+        run_id=run_id,
+        session_date=DAY,
+        outcome=folded.outcome,
+        selected_sources=selected,
+    )
+    await db_session.commit()
+
+    async with AsyncSession(bind=db_session.bind) as restarted:
+        summary = (await journal.recent_runs(restarted, limit=1))[0]
+
+    assert summary.requested == 1
+    assert summary.collected == 0
+    assert summary.partial == 1
+    assert summary.failed == 0
+    assert summary.history_limited is False
 
 
 async def record(

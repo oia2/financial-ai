@@ -32,6 +32,7 @@ from financial_ai.market_data.models import (
     FuturesPosition,
     GlobalDailySeries,
     IngestRun,
+    IngestSessionOutcome,
     MarketAsset,
     PriceSeries,
     RepairItem,
@@ -692,6 +693,35 @@ class MarketDataRepository:
             )
         )
         await self._session.execute(statement)
+
+    async def record_session_outcome(
+        self,
+        *,
+        run_id: str,
+        session_date: dt.date,
+        outcome: str,
+        selected_sources: frozenset[str],
+        interrupted: bool = False,
+    ) -> None:
+        """Сохранить итог точного плана сессии для одинакового чтения после рестарта."""
+        statement = insert(IngestSessionOutcome).values(
+            run_id=run_id,
+            session_date=session_date,
+            outcome=outcome,
+            selected_sources=sorted(selected_sources),
+            interrupted=interrupted,
+        )
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["run_id", "session_date"],
+                set_={
+                    "outcome": statement.excluded.outcome,
+                    "selected_sources": statement.excluded.selected_sources,
+                    "interrupted": statement.excluded.interrupted,
+                    "recorded_at": func.now(),
+                },
+            )
+        )
 
     async def record_work_evidence(
         self,

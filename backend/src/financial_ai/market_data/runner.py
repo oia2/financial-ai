@@ -255,6 +255,18 @@ class CatchupState:
         self.skips.append((day, reason, detail))
         self.note_event(f"Сессия {day:%d.%m} пропущена: {detail or reason}")
 
+    def note_session_outcome(self, day: dt.date, outcome: str) -> None:
+        """Применить уже вычисленный единый итог без повторной эвристики."""
+        if outcome == ingest.INTERRUPTED:
+            self.failed.append(day)
+            self.outcomes[day] = plan_module.OUTCOME_PARTIAL
+        elif outcome == plan_module.OUTCOME_COLLECTED:
+            self.closed.append(day)
+            self.outcomes[day] = outcome
+        else:
+            self.failed.append(day)
+            self.outcomes[day] = outcome
+
     def _session_plan(self) -> list[dict[str, object]]:
         """План источников текущей сессии с состоянием каждого."""
         rows: list[dict[str, object]] = []
@@ -662,15 +674,14 @@ class CatchupRunner:
         повторов, и тащить её в продолжение значило бы перевыбирать её вечно
         (FR-058).
         """
-        if closed == ingest.INTERRUPTED:
-            self._state.failed.append(day)
-            self._state.outcomes[day] = "partial"
-        elif closed:
-            self._state.closed.append(day)
-            self._state.outcomes[day] = "collected"
-        else:
-            self._state.failed.append(day)
-            self._state.outcomes[day] = "failed"
+        outcome = (
+            plan_module.OUTCOME_COLLECTED
+            if closed is True
+            else plan_module.OUTCOME_FAILED
+            if closed is False
+            else closed
+        )
+        self._state.note_session_outcome(day, outcome)
 
     def _on_source(self, source_id: str, status: str, outcome: object) -> None:
         """Ход по источникам внутри сессии.

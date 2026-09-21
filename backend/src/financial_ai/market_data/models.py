@@ -13,6 +13,7 @@ import datetime as dt
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     Date,
     DateTime,
@@ -371,6 +372,28 @@ class IngestRun(Base):
 
     started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class IngestSessionOutcome(Base):
+    """Сохранённая свёртка точного плана одной сессии прогона."""
+
+    __tablename__ = "market_ingest_session_outcome"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('collected', 'partial', 'failed', 'skipped', 'pending')",
+            name="ck_ingest_session_outcome_value",
+        ),
+        Index("ix_ingest_session_outcome_run", "run_id"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    selected_sources: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    interrupted: Mapped[bool] = mapped_column(nullable=False, default=False)
+    recorded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class CoverageBoundary(Base):

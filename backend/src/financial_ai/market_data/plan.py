@@ -24,6 +24,12 @@ SESSION = "session"
 PERIOD = "period"
 DAILY = "daily"
 
+OUTCOME_COLLECTED = "collected"
+OUTCOME_PARTIAL = "partial"
+OUTCOME_FAILED = "failed"
+OUTCOME_SKIPPED = "skipped"
+OUTCOME_PENDING = "pending"
+
 
 @dataclass(frozen=True, slots=True)
 class SourceSpec:
@@ -32,6 +38,43 @@ class SourceSpec:
     source_id: str
     title: str
     scope: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionOutcome:
+    """Единый итог выбранных единиц работы одной сессии."""
+
+    outcome: str
+    interrupted: bool = False
+
+
+def fold_session_outcome(
+    selected_sources: frozenset[str], statuses: dict[str, str]
+) -> SessionOutcome:
+    """Свернуть исходы точного плана сессии без выделения особого источника."""
+    if not selected_sources:
+        return SessionOutcome(OUTCOME_SKIPPED)
+
+    selected = [statuses.get(source_id, OUTCOME_PENDING) for source_id in selected_sources]
+    interrupted = "stopped" in selected
+    closed = sum(status == "ok" for status in selected)
+    failed = sum(status == "failed" for status in selected)
+    skipped = sum(status == "skipped" for status in selected)
+    pending = sum(status in {OUTCOME_PENDING, "stopped"} for status in selected)
+
+    if closed == len(selected):
+        outcome = OUTCOME_COLLECTED
+    elif closed:
+        outcome = OUTCOME_PARTIAL
+    elif pending:
+        outcome = OUTCOME_PENDING if not failed and not skipped else OUTCOME_PARTIAL
+    elif failed:
+        outcome = OUTCOME_FAILED
+    elif skipped == len(selected):
+        outcome = OUTCOME_SKIPPED
+    else:
+        outcome = OUTCOME_PENDING
+    return SessionOutcome(outcome, interrupted)
 
 
 # Ежедневный прогон. Календарь идёт первым: пока он не ответил, неизвестно,

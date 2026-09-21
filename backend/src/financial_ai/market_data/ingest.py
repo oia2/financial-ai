@@ -137,6 +137,7 @@ class CatchupResult:
 
     # Сессии, чей план прерван командой: их доделывает продолжение.
     interrupted: list[dt.date] = field(default_factory=list)
+    outcomes: dict[dt.date, str] = field(default_factory=dict)
 
     # Хранилище пусто: это не дыра, а отсутствие истории. Догон намеренно не
     # выполнялся — нужна первичная загрузка.
@@ -598,11 +599,33 @@ async def catch_up(
     # Недоступный источник перестаёт опрашиваться в пределах прогона: при
     # длинной дыре он иначе стоит по семь обращений на каждую сессию.
     health = _SourceHealth(settings.market_data_source_failure_streak)
+    selected_sources = frozenset(
+        spec.source_id
+        for spec in plan.for_mode(plan.MODE_MANUAL)
+        if source_ids is None or spec.source_id in source_ids
+    )
+
+    async def persist_interrupted_plan(statuses: dict[str, str]) -> None:
+        """Сохранить остановленный план для журнала и будущего продолжения."""
+        folded = plan.fold_session_outcome(selected_sources, statuses)
+        for day in result.requested:
+            if day in result.outcomes:
+                continue
+            result.outcomes[day] = folded.outcome
+            result.interrupted.append(day)
+            await repository.record_session_outcome(
+                run_id=run_id,
+                session_date=day,
+                outcome=folded.outcome,
+                selected_sources=selected_sources,
+                interrupted=True,
+            )
+        await session.commit()
 
     try:
         # ПЕРВЫМИ — диапазонные источники: одно обращение на ряд независимо от
         # длины дыры. После них прерывание уже ничего не теряет.
-        await _catch_up_ranges(
+        range_outcomes = await _catch_up_ranges(
             repository,
             run_id,
             iss,
@@ -616,6 +639,8 @@ async def catch_up(
 
         if should_stop is not None and should_stop():
             logger.info("догон остановлен до опознания бумаг")
+            statuses = {outcome.source_id: outcome.status for outcome in range_outcomes.values()}
+            await persist_interrupted_plan(statuses)
             return result
 
         # Опознание бумаг — ДО сессий и НЕЗАВИСИМО от выбора источников.
@@ -644,7 +669,9 @@ async def catch_up(
         # выглядела зависшей (FR-058h).
         if should_stop is not None and should_stop():
             logger.info("догон остановлен до сверки связей")
-            await session.commit()
+            await persist_interrupted_plan(
+                {outcome.source_id: outcome.status for outcome in range_outcomes.values()}
+            )
             return result
 
         if prepare_assets and (source_ids is None or positions.SOURCE_ID in source_ids):
@@ -663,10 +690,21 @@ async def catch_up(
 
         await session.commit()
 
-        for day in result.requested:
+        for day_index, day in enumerate(result.requested):
             # Проверка МЕЖДУ сессиями: начатую доводим до конца.
             if should_stop is not None and should_stop():
                 logger.info("догон остановлен перед сессией %s", day)
+                for pending_day in result.requested[day_index:]:
+                    result.outcomes[pending_day] = plan.OUTCOME_PENDING
+                    result.interrupted.append(pending_day)
+                    await repository.record_session_outcome(
+                        run_id=run_id,
+                        session_date=pending_day,
+                        outcome=plan.OUTCOME_PENDING,
+                        selected_sources=selected_sources,
+                        interrupted=True,
+                    )
+                await session.commit()
                 break
 
             if on_session_start is not None:
@@ -685,33 +723,30 @@ async def catch_up(
                 on_source=on_source,
                 should_stop=should_stop,
             )
+            statuses = {
+                outcome.source_id: outcome.status
+                for outcome in (*range_outcomes.values(), *outcomes)
+            }
+            folded = plan.fold_session_outcome(selected_sources, statuses)
+            result.outcomes[day] = folded.outcome
+            await repository.record_session_outcome(
+                run_id=run_id,
+                session_date=day,
+                outcome=folded.outcome,
+                selected_sources=selected_sources,
+                interrupted=folded.interrupted,
+            )
             await session.commit()
 
-            # Три исхода сессии, а не два, и различие здесь существенное.
-            #
-            # **Прерванная** — та, чей план не доработан по команде человека.
-            # Прежде судили по одним котировкам, и остановка после них, но до
-            # агрегатов, оставляла сессию с исходом «собрана»: продолжение
-            # брало следующую, а недобранные агрегаты не добирало никогда
-            # (FR-058).
-            #
-            # **Незакрытая** — та, где упали котировки: на них держится
-            # пространство строк. Недоступность задержанной модальности за
-            # старую дату незакрытостью не является — это нормальное явление,
-            # и объявлять её работой значило бы перевыбирать такой день вечно.
-            interrupted = any(outcome.status == STATUS_STOPPED for outcome in outcomes)
-            quotes = next((o for o in outcomes if o.source_id == equity_d1.SOURCE_ID), None)
-            closed = quotes is None or quotes.status not in _UNFINISHED
-
-            if interrupted:
+            if folded.interrupted:
                 result.interrupted.append(day)
-            elif closed:
+            elif folded.outcome == plan.OUTCOME_COLLECTED:
                 result.closed.append(day)
             else:
                 result.failed.append(day)
 
             if on_session_done is not None:
-                on_session_done(day, INTERRUPTED if interrupted else closed)
+                on_session_done(day, INTERRUPTED if folded.interrupted else folded.outcome)
     finally:
         if owns_positions:
             await pos_client.__aexit__(None, None, None)
@@ -846,7 +881,7 @@ async def _catch_up_ranges(
     source_ids: frozenset[str] | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
-) -> None:
+) -> dict[str, SourceOutcome]:
     """Закрыть дыру источниками, умеющими выборку за период.
 
     Число обращений здесь не зависит от длины дыры. Прогон записывается на
@@ -855,6 +890,7 @@ async def _catch_up_ranges(
     Идентификатор прогона — общий с посессионной частью: это один прогон, а не
     два соседних (FR-052).
     """
+    outcomes: dict[str, SourceOutcome] = {}
     window = await repository.sessions_between(date_from, date_till)
     group = next(group for group in groups.GROUPS if global_series.SOURCE_ID in group.source_ids)
     for source_id, action in (
@@ -880,13 +916,14 @@ async def _catch_up_ranges(
             continue
         closed = await completeness.closed_sessions(repository, group, source_id, window)
         if window and set(window) <= closed:
+            outcomes[source_id] = _already_collected(source_id)
             if on_source is not None:
                 done = _already_collected(source_id)
                 on_source(source_id, done.status, done)
             continue
         if should_stop is not None and should_stop():
             break
-        await run_source(
+        outcomes[source_id] = await run_source(
             repository,
             run_id,
             source_id,
@@ -898,6 +935,7 @@ async def _catch_up_ranges(
         )
         # Остановка может завершить догон сразу после диапазонной части.
         await repository.commit()
+    return outcomes
 
 
 async def ingest_and_rank(

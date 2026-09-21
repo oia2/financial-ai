@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import ingest
+from financial_ai.market_data import plan as collection_plan
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.runner import (
@@ -39,6 +40,29 @@ SESSIONS = [
     dt.date(2026, 9, 1),
 ]
 ASOF = SESSIONS[-1]
+
+
+@pytest.mark.parametrize(
+    ("selected", "statuses", "expected"),
+    [
+        ({"futures_positions"}, {"futures_positions": "failed"}, "failed"),
+        (
+            {"equity_d1", "futures_positions"},
+            {"equity_d1": "ok", "futures_positions": "failed"},
+            "partial",
+        ),
+        (
+            {"global_series", "equity_d1"},
+            {"global_series": "failed", "equity_d1": "ok"},
+            "partial",
+        ),
+        ({"equity_d1"}, {"equity_d1": "ok"}, "collected"),
+    ],
+)
+def test_session_outcome_uses_every_selected_source(
+    selected: set[str], statuses: dict[str, str], expected: str
+) -> None:
+    assert collection_plan.fold_session_outcome(frozenset(selected), statuses).outcome == expected
 
 
 @pytest.fixture

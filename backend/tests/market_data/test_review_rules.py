@@ -742,7 +742,9 @@ async def test_журнал_не_называет_остановленную_с�
     runs = await journal.recent_runs(db_session)
 
     assert [run.collected for run in runs] == [0]
-    assert [run.failed for run in runs] == [1]
+    assert [run.failed for run in runs] == [0]
+    assert [run.pending for run in runs] == [1]
+    assert [run.history_limited for run in runs] == [True]
 
 
 @pytest.mark.db
@@ -767,8 +769,10 @@ async def test_журнал_по_прежнему_считает_собранн�
 
     runs = await journal.recent_runs(db_session)
 
-    assert [run.collected for run in runs] == [1]
+    assert [run.collected for run in runs] == [0]
     assert [run.status for run in runs] == [journal.STATUS_FINISHED]
+    assert [run.pending for run in runs] == [1]
+    assert [run.history_limited for run in runs] == [True]
 
 
 # --- FR-048: имя действует на всё окно прогона -------------------------------
@@ -1264,7 +1268,9 @@ async def test_обычная_неудача_прерванным_прогоно
 
     runs = await journal.recent_runs(db_session)
 
-    assert [run.status for run in runs] == [journal.STATUS_FAILED]
+    assert [run.status for run in runs] == [journal.STATUS_FINISHED]
+    assert [run.pending for run in runs] == [1]
+    assert [run.history_limited for run in runs] == [True]
 
 
 # --- FR-048: справочники ключуются сущностью, а не именем --------------------

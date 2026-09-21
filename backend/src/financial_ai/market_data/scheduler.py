@@ -26,7 +26,7 @@ import logging
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import advance, groups, ingest, journal, plan, runner
+from financial_ai.market_data import advance, groups, journal, plan, runner
 from financial_ai.market_data.calendar import moscow_now
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
@@ -198,12 +198,14 @@ class MarketDataScheduler:
             по правилам повторов. Прежде автоматический путь помечал прерванную
             несобранной, и продолжение её не брало (FR-058).
             """
-            if succeeded == ingest.INTERRUPTED:
-                self._state.failed.append(day)
-                self._state.outcomes[day] = "partial"
-            else:
-                (self._state.closed if succeeded else self._state.failed).append(day)
-                self._state.outcomes[day] = "collected" if succeeded else "failed"
+            outcome = (
+                plan.OUTCOME_COLLECTED
+                if succeeded is True
+                else plan.OUTCOME_FAILED
+                if succeeded is False
+                else succeeded
+            )
+            self._state.note_session_outcome(day, outcome)
             # Сессия остаётся названной: следующая переназовёт её сама, а
             # обнуление стирало с экрана всю ленту источников вместе с ответом
             # на вопрос «на чём прогон стоял» (FR-021, FR-025).

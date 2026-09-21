@@ -20,7 +20,12 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.market_data import plan
-from financial_ai.market_data.models import AssetFuturesLink, IngestRun, SessionSkip
+from financial_ai.market_data.models import (
+    AssetFuturesLink,
+    IngestRun,
+    IngestSessionOutcome,
+    SessionSkip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +75,11 @@ class RunSummary:
     status: str
     requested: int = 0
     collected: int = 0
+    partial: int = 0
     failed: int = 0
     skipped: int = 0
+    pending: int = 0
+    history_limited: bool = False
     failures: list[RunFailure] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -84,9 +92,12 @@ class RunSummary:
             "sessions": {
                 "requested": self.requested,
                 "collected": self.collected,
+                "partial": self.partial,
                 "failed": self.failed,
                 "skipped": self.skipped,
+                "pending": self.pending,
             },
+            "history_limited": self.history_limited,
             "failures": [failure.to_dict() for failure in self.failures],
         }
 
@@ -294,30 +305,56 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
     # собрана. Прежде учитывались только неудачи, и остановленный прогон
     # показывался завершённым с собранной сессией — при том что спрошены были
     # три бумаги из ста двадцати (FR-050).
-    failed_sessions: dict[str, set[dt.date]] = {}
     failures: dict[str, list[RunFailure]] = {}
     for run_id, source_id, session_date, reason in failures_rows:
         failures.setdefault(run_id, []).append(RunFailure(source_id, session_date, reason))
-        if session_date is not None:
-            failed_sessions.setdefault(run_id, set()).add(session_date)
 
-    skips_rows = (
+    saved_rows = (
         await session.execute(
-            select(SessionSkip.run_id, func.count())
-            .where(SessionSkip.run_id.in_(run_ids))
-            .group_by(SessionSkip.run_id)
+            select(
+                IngestSessionOutcome.run_id,
+                IngestSessionOutcome.outcome,
+                IngestSessionOutcome.interrupted,
+            ).where(IngestSessionOutcome.run_id.in_(run_ids))
         )
     ).all()
-    skips: dict[str | None, int] = {row[0]: int(row[1]) for row in skips_rows}
+    saved: dict[str, list[tuple[str, bool]]] = {}
+    for saved_run_id, outcome, interrupted in saved_rows:
+        saved.setdefault(saved_run_id, []).append((outcome, interrupted))
 
     summaries: list[RunSummary] = []
     for row in rows:
-        failed = len(failed_sessions.get(row.run_id, set()))
-        interrupted = bool(row.unfinished or row.interrupted)
+        exact = saved.get(row.run_id, [])
+        history_limited = not exact
+        if exact:
+            counts = {
+                outcome: sum(item_outcome == outcome for item_outcome, _ in exact)
+                for outcome in (
+                    plan.OUTCOME_COLLECTED,
+                    plan.OUTCOME_PARTIAL,
+                    plan.OUTCOME_FAILED,
+                    plan.OUTCOME_SKIPPED,
+                    plan.OUTCOME_PENDING,
+                )
+            }
+            requested = len(exact)
+            collected = counts[plan.OUTCOME_COLLECTED]
+            partial = counts[plan.OUTCOME_PARTIAL]
+            failed = counts[plan.OUTCOME_FAILED]
+            skipped = counts[plan.OUTCOME_SKIPPED]
+            pending = counts[plan.OUTCOME_PENDING]
+        else:
+            requested = row.sessions
+            collected = 0
+            partial = 0
+            failed = 0
+            skipped = 0
+            pending = requested
+        interrupted = bool(row.unfinished or row.interrupted or any(flag for _, flag in exact))
         status = (
             STATUS_INTERRUPTED
             if interrupted
-            else (STATUS_FAILED if failed and failed == row.sessions else STATUS_FINISHED)
+            else (STATUS_FAILED if failed and failed == requested else STATUS_FINISHED)
         )
         summaries.append(
             RunSummary(
@@ -326,10 +363,13 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
                 started_at=row.started_at,
                 finished_at=None if row.unfinished else row.finished_at,
                 status=status,
-                requested=row.sessions,
-                collected=max(row.sessions - failed, 0),
+                requested=requested,
+                collected=collected,
+                partial=partial,
                 failed=failed,
-                skipped=int(skips.get(row.run_id, 0)),
+                skipped=skipped,
+                pending=pending,
+                history_limited=history_limited,
                 failures=failures.get(row.run_id, []),
             )
         )

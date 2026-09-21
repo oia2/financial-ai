@@ -123,8 +123,17 @@ async def test_журнал_переживает_перезапуск_сборщ
     assert len(runs) == 1
     summary = runs[0].to_dict()
     assert summary["mode"] == plan.MODE_DAILY
-    assert summary["status"] == journal.STATUS_FAILED
-    assert summary["sessions"] == {"requested": 1, "collected": 0, "failed": 1, "skipped": 1}
+    assert summary["status"] == journal.STATUS_FINISHED
+    assert summary["history_limited"] is True
+    assert summary["sessions"]["pending"] == 1  # type: ignore[index]
+    assert summary["sessions"] == {
+        "requested": 1,
+        "collected": 0,
+        "partial": 0,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 1,
+    }
     assert summary["failures"][0]["source_id"] == "brent"
     assert summary["failures"][0]["title"] == "Brent"
 

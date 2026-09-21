@@ -141,8 +141,9 @@ async def test_catchup_closes_the_gap(
     result = await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
 
     assert result.requested == [SESSIONS[2], SESSIONS[3]]
-    assert result.closed == [SESSIONS[2], SESSIONS[3]]
-    assert result.failed == []
+    assert result.closed == []
+    assert result.failed == [SESSIONS[2], SESSIONS[3]]
+    assert set(result.outcomes.values()) == {"partial"}
 
     repository = MarketDataRepository(db_session)
     assert await repository.sessions_with_daily_bars(SESSIONS) == set(SESSIONS)
@@ -253,8 +254,9 @@ async def test_interrupted_catchup_resumes(
     first = await ingest.catch_up(
         db_session, settings, ASOF, FakeIss(fail_quotes_on={SESSIONS[2], SESSIONS[3]}), cbr_client
     )
-    assert first.closed == [SESSIONS[0], SESSIONS[1]]
-    assert first.failed == [SESSIONS[2], SESSIONS[3]]
+    assert first.closed == []
+    assert first.failed == SESSIONS[:4]
+    assert set(first.outcomes.values()) == {"partial"}
 
     iss = FakeIss()
     second = await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
@@ -274,8 +276,9 @@ async def test_one_failed_session_does_not_stop_the_rest(
 
     result = await ingest.catch_up(db_session, settings, ASOF, iss, cbr_client)
 
-    assert result.failed == [SESSIONS[1]]
-    assert result.closed == [SESSIONS[0], SESSIONS[2], SESSIONS[3]]
+    assert result.failed == SESSIONS[:4]
+    assert result.closed == []
+    assert set(result.outcomes.values()) == {"partial"}
 
 
 async def test_failed_session_does_not_lose_collected_data(
@@ -362,7 +365,9 @@ async def test_long_gap_is_caught_up_entirely(
 
     result = await ingest.catch_up(db_session, settings, ASOF, FakeIss(), cbr_client)
 
-    assert len(result.closed) == 4
+    assert result.closed == []
+    assert result.failed == SESSIONS[1:]
+    assert set(result.outcomes.values()) == {"partial"}
 
 
 # --- выключение (настройка) --------------------------------------------------
