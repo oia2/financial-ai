@@ -73,6 +73,19 @@ async def _seed(session: AsyncSession, close: str = "314.22") -> None:
     await session.commit()
 
 
+async def test_relative_dataset_root_produces_absolute_reference(
+    db_session: AsyncSession, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(db_session)
+    monkeypatch.chdir(tmp_path)
+    settings.market_data_dataset_root = "datasets"
+
+    built = await build_dataset(db_session, settings, ASOF)
+
+    assert built.path.is_absolute()
+    assert built.ref == built.path.as_uri()
+
+
 async def test_dataset_is_built(db_session: AsyncSession, settings: Settings) -> None:
     await _seed(db_session)
     dataset = await build_dataset(db_session, settings, ASOF)

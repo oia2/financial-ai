@@ -156,8 +156,7 @@ async def _run_plan_owned(
     pending = [
         item
         for item in items
-        if item.status == "pending"
-        and getattr(item, "reason", None) != ISS_CURSOR_INCONSISTENCY
+        if item.status == "pending" and getattr(item, "reason", None) != ISS_CURSOR_INCONSISTENCY
     ]
     # A data transaction can commit immediately before the marker above.  A
     # cold restart discovers that fact from the exact pair, preserving both

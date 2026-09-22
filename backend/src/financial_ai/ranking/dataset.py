@@ -163,7 +163,10 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         sector_map,
         incomplete,
     )
-    root = Path(settings.market_data_dataset_root)
+    # ``Path.as_uri`` accepts only absolute paths.  Local CLI configuration
+    # commonly uses ``./datasets`` while the container uses ``/datasets``;
+    # both are valid storage roots and must produce the same dataset content.
+    root = Path(settings.market_data_dataset_root).resolve()
     path = root / f"{asof_date.isoformat()}-{digest[:16]}"
 
     if path.exists():
@@ -466,7 +469,7 @@ def prune_datasets(settings: Settings, now: dt.datetime | None = None) -> int:
 
     Неизменяемость означает накопление: без правила очистки место закончится.
     """
-    root = Path(settings.market_data_dataset_root)
+    root = Path(settings.market_data_dataset_root).resolve()
     if not root.exists():
         return 0
 
