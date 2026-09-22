@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -103,18 +104,28 @@ async def create_plan(
     return plan_id, rows
 
 
-async def run_plan(session: AsyncSession, settings: Settings, plan_id: str) -> tuple[str, int, int]:
+async def run_plan(
+    session: AsyncSession,
+    settings: Settings,
+    plan_id: str,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[str, int, int]:
     """Run a persisted repair plan only while this process owns collection."""
     ownership = MarketDataRunLock()
     await ownership.acquire()
     try:
-        return await _run_plan_owned(session, settings, plan_id)
+        return await _run_plan_owned(session, settings, plan_id, should_stop=should_stop)
     finally:
         await ownership.release()
 
 
 async def _run_plan_owned(
-    session: AsyncSession, settings: Settings, plan_id: str
+    session: AsyncSession,
+    settings: Settings,
+    plan_id: str,
+    *,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[str, int, int]:
     """Run exactly one explicit repair plan, preserving its HTTP budget.
 
@@ -171,11 +182,21 @@ async def _run_plan_owned(
     if plan.requests_spent >= plan.request_budget:
         await repository.finish_repair_plan(plan_id, "stopped", "request_budget_exhausted")
         return "stopped", plan.requests_spent, len(pending)
+    if should_stop is not None and should_stop():
+        await repository.finish_repair_plan(plan_id, "stopped", "operator_stopped")
+        return "stopped", plan.requests_spent, len(pending)
 
     exhausted = False
+    stopped = False
+
+    def stopping() -> bool:
+        return exhausted or (should_stop is not None and should_stop())
 
     async def permit() -> None:
         nonlocal exhausted
+        if stopping():
+            detail = "request_budget_exhausted" if exhausted else "operator_stopped"
+            raise SourceStoppedError(detail=detail)
         if not await repository.reserve_repair_attempt(plan_id):
             exhausted = True
             raise SourceStoppedError(detail="request_budget_exhausted")
@@ -187,13 +208,16 @@ async def _run_plan_owned(
     # into their Cartesian product.  One persisted item is one collection
     # request scope; range sources may consequently choose a one-day range.
     async with (
-        IssClient(ingest.build_iss_config(settings), request_permit=permit) as iss,
-        PositionsClient(settings, request_permit=permit) as positions,
+        IssClient(
+            ingest.build_iss_config(settings), should_stop=stopping, request_permit=permit
+        ) as iss,
+        PositionsClient(settings, should_stop=stopping, request_permit=permit) as positions,
         httpx.AsyncClient(event_hooks={"request": [cbr_permit]}) as cbr_client,
     ):
         try:
             for item in pending:
-                if exhausted:
+                if stopping():
+                    stopped = True
                     break
                 await ingest.catch_up(
                     session,
@@ -204,7 +228,7 @@ async def _run_plan_owned(
                     positions_client=positions,
                     sessions=[item.session_date],
                     source_ids=frozenset({item.source_id}),
-                    should_stop=lambda: exhausted,
+                    should_stop=stopping,
                     run_id=plan_id,
                     prepare_assets=item.source_id
                     in {"equity_d1", "equity_agg", "futures_positions"},
@@ -227,7 +251,8 @@ async def _run_plan_owned(
                         plan_id, item.session_date, item.source_id, "closed"
                     )
         except SourceStoppedError:
-            exhausted = True
+            exhausted = not (should_stop is not None and should_stop())
+            stopped = not exhausted
 
     refreshed = await repository.repair_plan(plan_id)
     assert refreshed is not None
@@ -235,6 +260,8 @@ async def _run_plan_owned(
     remaining = sum(item.status == "pending" for item in current_items)
     if exhausted:
         status, reason = "stopped", "request_budget_exhausted"
+    elif stopped:
+        status, reason = "stopped", "operator_stopped"
     elif remaining:
         status, reason = "incomplete", "unresolved_pairs_remain"
     else:

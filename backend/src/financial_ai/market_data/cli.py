@@ -21,7 +21,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import signal
 import sys
+import threading
 
 import httpx
 
@@ -220,12 +222,26 @@ async def _repair_plan(
 
 async def _repair_run(plan_id: str) -> int:
     factory = get_session_factory()
+    stop_requested = threading.Event()
+    previous_handler = signal.getsignal(signal.SIGINT)
+
+    def request_stop(_signum: int, _frame: object) -> None:
+        # SIGINT is deliberately soft for this command: collectors see it
+        # between requests, persist their partial work and leave remaining
+        # plan items pending for an explicit later repair-run.
+        stop_requested.set()
+
+    signal.signal(signal.SIGINT, request_stop)
     try:
         async with factory() as session:
-            status, spent, remaining = await repair_audit.run_plan(session, get_settings(), plan_id)
+            status, spent, remaining = await repair_audit.run_plan(
+                session, get_settings(), plan_id, should_stop=stop_requested.is_set
+            )
     except (ValueError, MarketDataAlreadyRunningError) as error:
         print(str(error))
         return 2
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
     print(f"план {plan_id}: {status}; HTTP-попыток израсходовано {spent}; осталось пар {remaining}")
     return 0 if status == "completed" else 1
 
