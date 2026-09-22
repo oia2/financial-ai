@@ -145,6 +145,60 @@ async def test_у_группы_есть_исход_каждого_источни
     }
 
 
+async def test_справочник_различает_старый_успех_проверку_и_реальный_отказ(
+    db_session: object,
+) -> None:
+    repository = await seed(db_session, ["SBER"])
+    moment = dt.datetime(2026, 9, 16, 18, tzinfo=dt.UTC)
+    await repository.record_run(
+        run_id="legacy-reference",
+        source_id="equity_sectors",
+        status="ok",
+        started_at=moment,
+        finished_at=moment,
+        session_date=ASOF,
+        rows_written=109,
+    )
+    await repository.record_run(
+        run_id="failed-reference",
+        source_id="equity_lot_sizes",
+        status="failed",
+        started_at=moment,
+        finished_at=moment,
+        session_date=ASOF,
+        failure_reason="ISS вернул некорректный справочник",
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    report = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+    reference = next(row for row in report["groups"] if row["group"] == "reference")
+    sources = {row["source_id"]: row for row in reference["sources"]}
+
+    assert sources["equity_sectors"]["status"] == "partial"
+    assert sources["equity_sectors"]["requires_audit"] == 1
+    assert sources["equity_lot_sizes"]["status"] == "failed"
+    assert sources["equity_lot_sizes"]["reason"] == "ISS вернул некорректный справочник"
+    assert reference["requires_audit"] == 1
+    assert "window_sessions" not in reference
+
+    await record_verified_run(
+        repository,
+        run_id="verified-reference",
+        source_id="equity_sectors",
+        session_date=ASOF,
+        started_at=moment + dt.timedelta(minutes=1),
+        finished_at=moment + dt.timedelta(minutes=1),
+        rows_written=109,
+    )
+    await db_session.commit()  # type: ignore[attr-defined]
+
+    refreshed = await coverage.build_report(db_session, Settings(), ASOF)  # type: ignore[arg-type]
+    reference = next(row for row in refreshed["groups"] if row["group"] == "reference")
+    sectors = next(row for row in reference["sources"] if row["source_id"] == "equity_sectors")
+    assert sectors["status"] == "ok"
+    assert sectors["requires_audit"] == 0
+
+
 async def test_состав_считается_по_последней_собранной_сессии(db_session: object) -> None:
     """Несобранная сессия не выглядит отсутствием торгов (T054, FR-019a).
 

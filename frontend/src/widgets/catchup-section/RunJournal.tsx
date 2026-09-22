@@ -34,8 +34,11 @@ const STATUS: Record<string, string> = {
 
 function sessionsLine(run: RunSummaryDto): string {
   const parts = [`${run.sessions.requested} сессий`, `${run.sessions.collected} собрано`];
+  if (run.sessions.partial > 0) parts.push(`${run.sessions.partial} частично`);
   if (run.sessions.failed > 0) parts.push(`${run.sessions.failed} с ошибкой`);
   if (run.sessions.skipped > 0) parts.push(`${run.sessions.skipped} пропущено`);
+  if (run.sessions.pending > 0) parts.push(`${run.sessions.pending} не завершено`);
+  if (run.history_limited) parts.push('точный итог старой записи недоступен');
   return parts.join(' · ');
 }
 

@@ -17,7 +17,7 @@
  */
 
 import type { GroupCoverageDto, SourceCoverageDto, UniverseDto } from '@/entities/market-data';
-import { formatIsoDate } from '@/shared/lib/market-format';
+import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
 import { plural } from '@/shared/lib/plural';
 
 type Badge = readonly [kind: 'complete' | 'partial' | 'error', label: string];
@@ -171,14 +171,48 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
           : 'текущее состояние'}
       </td>
       <td data-label="Примечание">
-        {SCOPE_NOTE[source.scope] ?? ''}
-        <SourceFailures failures={source.failures} total={source.failures_total} />
-        {source.requires_audit > 0 && (
-          <small>Явный аудит старых сессий: {source.requires_audit}</small>
+        {source.scope === 'daily' ? (
+          <DailyReferenceNote source={source} />
+        ) : (
+          <>
+            {SCOPE_NOTE[source.scope] ?? ''}
+            <SourceFailures failures={source.failures} total={source.failures_total} />
+            {source.requires_audit > 0 && (
+              <small>Явный аудит старых сессий: {source.requires_audit}</small>
+            )}
+          </>
         )}
       </td>
     </tr>
   );
+}
+
+function DailyReferenceNote({ source }: { source: SourceCoverageDto }) {
+  if (source.requires_audit > 0) {
+    return <small>Старый ответ не подтверждён новым правилом</small>;
+  }
+  if (source.status === 'failed') {
+    return (
+      <small>
+        Последняя проверка
+        {source.last_checked_at !== null && source.last_checked_at !== undefined
+          ? ` ${formatShortStamp(source.last_checked_at)}`
+          : ''}
+        : {source.reason ?? 'источник не ответил'}
+      </small>
+    );
+  }
+  if (source.status === 'ok') {
+    return (
+      <small>
+        Полный ответ проверен
+        {source.last_checked_at !== null && source.last_checked_at !== undefined
+          ? ` ${formatShortStamp(source.last_checked_at)}`
+          : ''}
+      </small>
+    );
+  }
+  return <small>Проверенного полного ответа ещё нет</small>;
 }
 
 /**
@@ -234,7 +268,7 @@ function groupBadge(group: GroupCoverageDto): Badge {
   // есть записанные неудачи, и они названы днём и причиной.
   if (group.sources.some((source) => source.status === 'failed'))
     return ['error', 'Ошибка источника'];
-  if ((group.requires_audit ?? 0) > 0) return ['partial', 'Нужен аудит'];
+  if ((group.requires_audit ?? 0) > 0) return ['partial', 'Нужна проверка'];
   if (group.sources.some((source) => source.status === 'partial')) return ['partial', 'Частично'];
   if (group.has_history && (group.gaps ?? 0) > 0) return ['partial', 'Частично'];
   return ['complete', 'Собрано'];
@@ -247,8 +281,8 @@ function groupBadge(group: GroupCoverageDto): Badge {
  * сессии окна, и источник с пропусками требуют разных действий.
  */
 function sourceBadge(source: SourceCoverageDto): Badge {
+  if (source.status !== 'failed' && source.requires_audit > 0) return ['partial', 'Нужна проверка'];
   if (source.status === 'ok') return ['complete', 'Собрано'];
-  if (source.status !== 'failed' && source.requires_audit > 0) return ['partial', 'Нужен аудит'];
   if (source.status === 'partial') return ['partial', 'Частично'];
   return ['error', 'Ошибка'];
 }

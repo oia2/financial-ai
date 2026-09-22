@@ -115,4 +115,4 @@ async def test_ушедшая_бумага_с_историей_позиций_н
     client = FakePositionsClient(contracts={"SBER": "SBRF_F"})
     written = await positions.sync_positions(client, repository, DAY)  # type: ignore[arg-type]
 
-    assert written == 1
+    assert written.rows_written == 1

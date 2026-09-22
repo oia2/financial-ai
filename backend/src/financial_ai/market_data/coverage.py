@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.market_data import completeness, groups, plan
 from financial_ai.market_data.calendar import TradingCalendar, moscow_now
-from financial_ai.market_data.repository import MarketDataRepository
+from financial_ai.market_data.repository import CURRENT_COVERAGE_VERSION, MarketDataRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,8 +142,9 @@ async def _source_outcomes(
     ошибка конкретного ряда, а не группы вообще.
 
     У группы без оси сессий окна нет, но источники есть, и молчать о них нельзя:
-    пустой список читался бы как «источников ноль». Их исход берётся по
-    последнему успешному прогону — для справочника это и есть весь его ответ.
+    пустой список читался бы как «источников ноль». Для справочника различаются
+    последний проверенный полный ответ, старый успех без доказательства и
+    реальный отказ. Число строк само по себе ничего из этого не доказывает.
     """
     # Неудачи по дням — один запрос на группу, а не на источник. Берётся
     # ПОСЛЕДНИЙ прогон каждой пары «сессия — источник» и только неуспешный:
@@ -168,6 +169,9 @@ async def _source_outcomes(
         )
         broken = failures.get(source_id, [])
         audit: set[dt.date] = set()
+        requires_audit = 0
+        last_checked_at: str | None = None
+        reason: str | None = None
 
         if window:
             # Тем же правилом, что и счёт группы, и ТЕМ ЖЕ расчётом: два числа
@@ -210,7 +214,20 @@ async def _source_outcomes(
             else:
                 status = "partial"
         else:
-            status = "ok" if await repository.last_successful_run_at(source_id) else "failed"
+            latest = await repository.latest_source_run(source_id)
+            if latest is None:
+                status = "partial"
+            elif latest.status != "ok":
+                status = "failed"
+                reason = latest.failure_reason
+            elif latest.coverage_version == CURRENT_COVERAGE_VERSION:
+                status = "ok"
+            else:
+                status = "partial"
+                requires_audit = 1
+            if latest is not None:
+                checked = latest.finished_at or latest.started_at
+                last_checked_at = checked.isoformat()
             count = 0
 
         outcomes.append(
@@ -220,7 +237,9 @@ async def _source_outcomes(
                 "scope": scope,
                 "status": status,
                 "sessions_covered": count,
-                "requires_audit": len(audit) if window else 0,
+                "requires_audit": len(audit) if window else requires_audit,
+                "last_checked_at": last_checked_at,
+                "reason": reason,
                 # Свежие сверху: «источник с ошибкой» без дня и причины — это
                 # состояние, с которым человеку нечего делать.
                 "failures": sorted(
@@ -309,7 +328,15 @@ async def build_report(
                 # рядом стояли два числа об одном и том же: «11 из 82» сверху и
                 # «13 из 82» внутри (FR-032).
                 sessions_covered=(len(window) - len(missing)) if group.has_history else None,
-                requires_audit=len(requires_audit) if group.has_history else 0,
+                requires_audit=(
+                    len(requires_audit)
+                    if group.has_history
+                    else sum(
+                        value
+                        for source in sources
+                        if isinstance(value := source["requires_audit"], int)
+                    )
+                ),
                 period_from=raw.period_from,
                 period_till=raw.period_till,
                 gaps=len(missing) if group.has_history else None,

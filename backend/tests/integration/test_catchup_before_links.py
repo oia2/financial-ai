@@ -58,7 +58,7 @@ async def test_догон_прошлого_собирает_позиции_до_
 
     # Спрошены обе бумаги тем семейством, которым подтверждена связь.
     assert sorted(code for code, _ in client.calls) == ["GAZR_F", "SBRF_F"]
-    assert written == 2
+    assert written.rows_written == 2
 
 
 async def test_наблюдение_помнит_семейство_которым_собрано(db_session: object) -> None:

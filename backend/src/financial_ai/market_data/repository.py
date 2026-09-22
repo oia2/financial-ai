@@ -1446,6 +1446,15 @@ class MarketDataRepository:
             )
         )
 
+    async def latest_source_run(self, source_id: str) -> IngestRun | None:
+        """Последний фактический исход источника без выдуманной оси сессий."""
+        return await self._session.scalar(
+            select(IngestRun)
+            .where(IngestRun.source_id == source_id, IngestRun.finished_at.is_not(None))
+            .order_by(IngestRun.finished_at.desc(), IngestRun.id.desc())
+            .limit(1)
+        )
+
     async def runs_for_session(self, session_date: dt.date) -> list[IngestRun]:
         rows = await self._session.scalars(
             select(IngestRun)

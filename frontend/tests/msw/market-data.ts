@@ -32,8 +32,8 @@ const SOURCES: Record<GroupCoverageDto['group'], [string, string, string][]> = {
   ],
   positions: [['futures_positions', 'Позиции по фьючерсам', 'session']],
   reference: [
-    ['equity_sectors', 'Секторы бумаг', 'session'],
-    ['equity_lot_sizes', 'Лоты бумаг', 'session'],
+    ['equity_sectors', 'Секторы бумаг', 'daily'],
+    ['equity_lot_sizes', 'Лоты бумаг', 'daily'],
   ],
 };
 
@@ -47,6 +47,8 @@ function sourcesOf(group: GroupCoverageDto['group'], covered: number): SourceCov
     requires_audit: 0,
     failures: [],
     failures_total: 0,
+    last_checked_at: scope === 'daily' ? '2026-09-03T18:00:00Z' : null,
+    reason: null,
   }));
 }
 

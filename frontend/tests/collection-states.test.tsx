@@ -13,7 +13,7 @@
  */
 
 import { QueryClient } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -21,6 +21,7 @@ import { AppShell } from '@/app/App';
 import { AppProviders } from '@/app/providers';
 import { navigate } from '@/app/router';
 import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
+import { catchupQueryKey } from '@/entities/market-data';
 
 import { catchupFixture, coverageFixture } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
@@ -64,7 +65,8 @@ const FINISHED_RUN: RunSummaryDto = {
   started_at: '2026-09-17T14:58:00Z',
   finished_at: '2026-09-17T15:14:00Z',
   status: 'failed',
-  sessions: { requested: 12, collected: 10, failed: 1, skipped: 1 },
+  sessions: { requested: 12, collected: 9, partial: 1, failed: 1, skipped: 1, pending: 0 },
+  history_limited: false,
   failures: [
     {
       source_id: 'brent',
@@ -324,6 +326,77 @@ describe('прогон закончился', () => {
     renderWith(catchupFixture('finished'), [FINISHED_RUN]);
 
     expect(await screen.findByText('Длительность')).toBeInTheDocument();
+  });
+
+  it('журнал не прячет частичную сессию внутри собранных', async () => {
+    renderWith(catchupFixture('finished'), [FINISHED_RUN]);
+
+    const journal = await screen.findByText(/Последние прогоны/);
+    const details = journal.closest('details') as HTMLElement;
+    expect(within(details).getByText(/1 частично/)).toBeInTheDocument();
+    expect(within(details).getByText(/9 собрано/)).toBeInTheDocument();
+  });
+
+  it('после завершения перечитывает сводку, журнал и календарь', async () => {
+    let coverageReads = 0;
+    let runsReads = 0;
+    let calendarReads = 0;
+    const running = catchupFixture('running');
+
+    server.use(
+      http.get('*/api/market-data/catchup', () => HttpResponse.json(running)),
+      http.get('*/api/market-data/coverage', () => {
+        coverageReads += 1;
+        return HttpResponse.json(coverageFixture());
+      }),
+      http.get('*/api/market-data/runs', () => {
+        runsReads += 1;
+        return HttpResponse.json({
+          runs: [FINISHED_RUN],
+          events: [],
+          events_total: 0,
+          skips: [],
+          skips_total: 0,
+        });
+      }),
+      http.get('*/api/market-data/calendar', () => {
+        calendarReads += 1;
+        return HttpResponse.json({
+          earliest_month: '2026-09',
+          month: '2026-09',
+          today: '2026-09-17',
+          days: [],
+        });
+      }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    });
+    window.history.pushState(null, '', '/market-data');
+    navigate('market-data');
+    render(
+      <AppProviders client={client}>
+        <AppShell />
+      </AppProviders>,
+    );
+
+    await waitFor(() => {
+      expect(coverageReads).toBeGreaterThan(0);
+      expect(runsReads).toBeGreaterThan(0);
+      expect(calendarReads).toBeGreaterThan(0);
+    });
+    const before = { coverageReads, runsReads, calendarReads };
+
+    act(() => {
+      client.setQueryData(catchupQueryKey, catchupFixture('finished'));
+    });
+
+    await waitFor(() => {
+      expect(coverageReads).toBeGreaterThan(before.coverageReads);
+      expect(runsReads).toBeGreaterThan(before.runsReads);
+      expect(calendarReads).toBeGreaterThan(before.calendarReads);
+    });
   });
 
   it('связи со сборщиком нет: панель не выглядит идущей', async () => {

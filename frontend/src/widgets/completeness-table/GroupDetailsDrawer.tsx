@@ -69,6 +69,15 @@ export function GroupDetailsDrawer({
                 </>
               )}
 
+              {(group.requires_audit ?? 0) > 0 && (
+                <Metric
+                  label={
+                    group.has_history ? 'Сессий требуют аудита' : 'Источников требуют проверки'
+                  }
+                  value={String(group.requires_audit)}
+                />
+              )}
+
               <Metric label="Строк со значениями" value={formatRatio(group.value_ratio)} />
               <Metric label="Всего строк" value={formatCount(group.rows_total)} />
               <Metric

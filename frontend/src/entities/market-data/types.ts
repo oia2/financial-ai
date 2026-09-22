@@ -51,6 +51,10 @@ export interface SourceCoverageDto {
   failures: { session_date: string; reason: string | null }[];
   /** Сколько неудач всего: список ограничен, и молчать об остатке нельзя. */
   failures_total: number;
+  /** Момент последней проверки справочника текущего состояния. */
+  last_checked_at?: string | null;
+  /** Причина последнего реального отказа справочника. */
+  reason?: string | null;
 }
 
 /**
@@ -237,7 +241,16 @@ export interface RunSummaryDto {
   started_at: string;
   finished_at: string | null;
   status: 'finished' | 'failed' | 'interrupted';
-  sessions: { requested: number; collected: number; failed: number; skipped: number };
+  sessions: {
+    requested: number;
+    collected: number;
+    partial: number;
+    failed: number;
+    skipped: number;
+    pending: number;
+  };
+  /** У старого прогона нет сохранённой точной свёртки по сессиям. */
+  history_limited: boolean;
   failures: {
     source_id: string;
     title: string;

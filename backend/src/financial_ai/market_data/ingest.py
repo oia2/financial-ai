@@ -42,6 +42,7 @@ from financial_ai.market_data.sources.positions_client import PositionsClient
 from financial_ai.market_data.verification import (
     VerificationResult,
     WorkEvidence,
+    one_session,
     required_work_keys,
 )
 
@@ -371,11 +372,11 @@ async def ingest_session(
         for source_id, reference_action in (
             (
                 reference.SECTORS_SOURCE_ID,
-                lambda: reference.sync_sectors(iss, repository, session_date),
+                lambda: _sync_verified_sectors(iss, repository, session_date),
             ),
             (
                 securities.SOURCE_ID,
-                lambda: securities.sync_lot_sizes(iss, repository),
+                lambda: _sync_verified_lot_sizes(iss, repository, session_date),
             ),
         ):
             if not await reference_is_due(repository, source_id, session_date):
@@ -1452,6 +1453,26 @@ async def reference_is_due(
     if last is None:
         return True
     return last.astimezone(MOSCOW).date() < moscow_today()
+
+
+async def _sync_verified_sectors(
+    client: IssClient,
+    repository: MarketDataRepository,
+    session_date: dt.date,
+) -> VerificationResult:
+    """Проверенное текущее чтение справочника отраслей без оси сессий."""
+    written = await reference.sync_sectors(client, repository, session_date)
+    return one_session(written, session_date, "source_complete", has_value=True)
+
+
+async def _sync_verified_lot_sizes(
+    client: IssClient,
+    repository: MarketDataRepository,
+    session_date: dt.date,
+) -> VerificationResult:
+    """Проверенное текущее чтение справочника лотов без оси сессий."""
+    written = await securities.sync_lot_sizes(client, repository)
+    return one_session(written, session_date, "source_complete", has_value=True)
 
 
 async def sync_instrument_links(

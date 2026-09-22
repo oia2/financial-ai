@@ -33,7 +33,10 @@ from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import brent, cbr, reference
-from financial_ai.market_data.sources.positions_client import PositionsClient
+from financial_ai.market_data.sources.positions_client import (
+    PositionFetchKind,
+    PositionsClient,
+)
 
 
 def _parse_date(raw: str) -> dt.date:
@@ -639,11 +642,18 @@ async def _verify_positions(session_date: dt.date, ticker: str) -> int:
             print(f"ОТКАЗ — {contract} страница открытых позиций не знает")
             return 1
 
-        snapshot = await client.fetch(contract, session_date)
+        result = await client.fetch(contract, session_date)
         spent = client.requests_made
 
-    if snapshot is None:
-        print(f"ПУСТО — за {session_date} снимка нет (выходной или данные не опубликованы)")
+    if result.kind is PositionFetchKind.UNKNOWN:
+        print(f"НЕИЗВЕСТНО — ответ за {session_date} не подтверждён ({result.reason_code})")
+        return 1
+    if result.kind is PositionFetchKind.CONFIRMED_ABSENCE:
+        print(f"ПУСТО — за {session_date} подтверждено отсутствие ({result.reason_code})")
+        return 0
+    snapshot = result.snapshot
+    if snapshot is None:  # pragma: no cover - защита контракта типа
+        print(f"ОТКАЗ — результат за {session_date} не содержит снимок")
         return 1
 
     print(f"дата данных: {snapshot.trade_date}")

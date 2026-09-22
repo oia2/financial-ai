@@ -17,7 +17,8 @@ import {
 
 export const coverageQueryKey = ['market-data', 'coverage'] as const;
 export const runsQueryKey = ['market-data', 'runs'] as const;
-export const calendarQueryKey = (month: string) => ['market-data', 'calendar', month] as const;
+export const calendarQueryRoot = ['market-data', 'calendar'] as const;
+export const calendarQueryKey = (month: string) => [...calendarQueryRoot, month] as const;
 export const catchupQueryKey = ['market-data', 'catchup'] as const;
 export const collectionQueryKey = ['market-data', 'settings'] as const;
 

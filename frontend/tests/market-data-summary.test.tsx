@@ -121,6 +121,55 @@ describe('сводка полноты', () => {
     expect(within(global).getByText('HTTP 503 от источника')).toBeInTheDocument();
   });
 
+  it('старый справочник требует проверки без ложной ошибки и покрытия по сессиям', async () => {
+    server.use(
+      http.get('*/api/market-data/coverage', () => {
+        const report = coverageFixture();
+        const reference = report.groups.find((row) => row.group === 'reference');
+        const sectors = reference?.sources.find((source) => source.source_id === 'equity_sectors');
+        if (reference !== undefined && sectors !== undefined) {
+          reference.requires_audit = 1;
+          sectors.status = 'partial';
+          sectors.requires_audit = 1;
+        }
+        return HttpResponse.json(report);
+      }),
+    );
+
+    renderMarketData();
+
+    const reference = await groupBlock('reference');
+    expect(within(reference).getAllByText('Нужна проверка')).toHaveLength(2);
+    expect(within(reference).queryByText('Ошибка источника')).not.toBeInTheDocument();
+    expect(
+      within(reference).getByText('Старый ответ не подтверждён новым правилом'),
+    ).toBeInTheDocument();
+    expect(within(reference).queryByText(/из \d+ сессий/)).not.toBeInTheDocument();
+  });
+
+  it('реальный отказ справочника показан отдельно от отсутствия проверки', async () => {
+    server.use(
+      http.get('*/api/market-data/coverage', () => {
+        const report = coverageFixture();
+        const reference = report.groups.find((row) => row.group === 'reference');
+        const lots = reference?.sources.find((source) => source.source_id === 'equity_lot_sizes');
+        if (lots !== undefined) {
+          lots.status = 'failed';
+          lots.last_checked_at = '2026-09-03T18:00:00Z';
+          lots.reason = 'ISS вернул некорректный справочник';
+        }
+        return HttpResponse.json(report);
+      }),
+    );
+
+    renderMarketData();
+
+    const reference = await groupBlock('reference');
+    expect(within(reference).getByText('Ошибка источника')).toBeInTheDocument();
+    expect(within(reference).getByText('Ошибка')).toBeInTheDocument();
+    expect(within(reference).getByText(/ISS вернул некорректный справочник/)).toBeInTheDocument();
+  });
+
   it('неполнота позиций объяснена числами, а не догадкой', async () => {
     renderMarketData();
 

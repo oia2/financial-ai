@@ -18,8 +18,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import {
   catchupQueryKey,
+  calendarQueryRoot,
   coverageQueryKey,
   isCatchupActive,
+  runsQueryKey,
   useCatchupState,
   useCollectionSettings,
   useCoverage,
@@ -119,6 +121,8 @@ export function MarketDataPage() {
 
     if (wasActive.current && !active) {
       void queryClient.invalidateQueries({ queryKey: coverageQueryKey });
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: calendarQueryRoot });
     }
     wasActive.current = active;
   }, [catchupStatus, queryClient]);
