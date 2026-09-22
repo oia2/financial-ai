@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from decimal import Decimal, InvalidOperation
+from weakref import WeakKeyDictionary
 
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 SOURCE_ID = "equity_d1"
 COLUMNS = ("SECID", "TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME")
+# The aggregates endpoint is the same ISS board traversal.  Fetching this
+# union once and splitting it into two persisted source outcomes avoids paying
+# for a second set of pages while keeping the sources independently visible.
+BOARD_COLUMNS = (*COLUMNS, "VALUE", "NUMTRADES", "WAPRICE")
+_BOARD_ROWS: WeakKeyDictionary[IssClient, dict[str, list[dict[str, object]]]] = WeakKeyDictionary()
 
 # Пока нет реестра непрерывности из исследовательского репозитория,
 # идентификаторы строятся по тикеру — это законная форма якоря
@@ -55,7 +61,7 @@ async def sync_equity_daily(
     именем ложится в ряд, опознанный псевдонимом, а не заводит второй ряд с
     оборванной историей (FR-038).
     """
-    rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
+    rows = await fetch_equity_board_rows(client, session_date)
     aliases = await repository.aliases_on(session_date)
     bars = rows_to_bars(rows, session_date, aliases)
 
@@ -67,6 +73,21 @@ async def sync_equity_daily(
     written = await repository.upsert_daily_bars(bars)
     logger.info("котировки за %s: получено строк %d, записано %d", session_date, len(rows), written)
     return one_session(written, session_date, "board:TQBR", has_value=bool(rows))
+
+
+async def fetch_equity_board_rows(
+    client: IssClient, session_date: dt.date
+) -> list[dict[str, object]]:
+    """Traverse TQBR once per client/date for quotes and aggregates.
+
+    The cache holds parsed source rows only for the life of a collection
+    client; it neither changes retry behaviour nor survives a run.
+    """
+    cache = _BOARD_ROWS.setdefault(client, {})
+    key = session_date.isoformat()
+    if key not in cache:
+        cache[key] = await client.fetch_session_rows(key, BOARD_COLUMNS)
+    return cache[key]
 
 
 def rows_to_bars(

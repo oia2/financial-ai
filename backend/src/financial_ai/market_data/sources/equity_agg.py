@@ -17,6 +17,7 @@ from financial_ai.market_data.repository import AggregateRow, MarketDataReposito
 from financial_ai.market_data.sources.equity_d1 import (
     ASSET_PREFIX,
     asset_id_for,
+    fetch_equity_board_rows,
     price_series_id_for,
     to_decimal,
 )
@@ -32,7 +33,7 @@ async def sync_equity_aggregates(
     client: IssClient, repository: MarketDataRepository, session_date: dt.date
 ) -> VerificationResult:
     """Собрать агрегаты всех бумаг за одну торговую сессию."""
-    rows = await client.fetch_session_rows(session_date.isoformat(), COLUMNS)
+    rows = await fetch_equity_board_rows(client, session_date)
     aliases = await repository.aliases_on(session_date)
     aggregates = rows_to_aggregates(rows, session_date, aliases)
     written = await repository.upsert_aggregates(aggregates)
