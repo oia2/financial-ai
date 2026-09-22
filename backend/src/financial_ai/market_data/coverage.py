@@ -134,6 +134,8 @@ async def _source_outcomes(
     group: groups.SourceGroup,
     window: list[dt.date],
     closed_sources: dict[str, set[dt.date]] | None = None,
+    audit_sources: dict[str, set[dt.date]] | None = None,
+    boundary: dt.date | None = None,
 ) -> list[dict[str, object]]:
     """Исход каждого источника группы за окно.
 
@@ -181,14 +183,18 @@ async def _source_outcomes(
             if closed is None:
                 closed = await completeness.closed_sessions(repository, group, source_id, window)
             count = len(closed)
-            audit = await completeness.requires_audit_sessions(
-                repository,
-                group,
-                source_id,
-                window,
-                closed=closed,
-                boundary=await repository.coverage_boundary(),
-            )
+            cached_audits = audit_sources or {}
+            if source_id in cached_audits:
+                audit = cached_audits[source_id]
+            else:
+                audit = await completeness.requires_audit_sessions(
+                    repository,
+                    group,
+                    source_id,
+                    window,
+                    closed=closed,
+                    boundary=boundary,
+                )
 
             # Неудача за ЗАКРЫТУЮ сессию не показывается: данные получены
             # другим путём — диапазонный запрос приносит триста сессий одним
@@ -284,6 +290,7 @@ async def build_report(
 
         missing: list[dt.date] = []
         closed_sources: dict[str, set[dt.date]] = {}
+        audit_sources: dict[str, set[dt.date]] = {}
         requires_audit: set[dt.date] = set()
         if window:
             # Те же недостающие сессии, что найдёт сбор: правило полноты одно
@@ -292,16 +299,15 @@ async def build_report(
             closed_sources = await completeness.closed_by_source(repository, group, window)
             missing = await completeness.missing_sessions(repository, group, window, closed_sources)
             for source_id in group.source_ids:
-                requires_audit.update(
-                    await completeness.requires_audit_sessions(
-                        repository,
-                        group,
-                        source_id,
-                        window,
-                        closed=closed_sources[source_id],
-                        boundary=boundary,
-                    )
+                audit_sources[source_id] = await completeness.requires_audit_sessions(
+                    repository,
+                    group,
+                    source_id,
+                    window,
+                    closed=closed_sources[source_id],
+                    boundary=boundary,
                 )
+                requires_audit.update(audit_sources[source_id])
             # Сводка показывает старую неполноту как требующую аудита, но
             # предсказание следующего автоматического сбора её не выбирает.
             pending.update(day for day in missing if day not in requires_audit)
@@ -313,7 +319,14 @@ async def build_report(
             window or None,
         )
 
-        sources = await _source_outcomes(repository, group, window, closed_sources)
+        sources = await _source_outcomes(
+            repository,
+            group,
+            window,
+            closed_sources,
+            audit_sources,
+            boundary,
+        )
 
         rows.append(
             GroupCoverage(
