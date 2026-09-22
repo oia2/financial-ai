@@ -326,4 +326,4 @@ async def test_latest_calendar_day_is_already_closed_on_weekend(
     report = await coverage.build_report(db_session, Settings(), day)
     assert report["next_session"] == day.isoformat()
     assert report["next_session_closed"] is True
-    assert report["next_expected_session"] is None
+    assert report["next_expected_session"] == "2026-09-21"

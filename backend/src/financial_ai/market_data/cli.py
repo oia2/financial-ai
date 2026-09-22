@@ -620,6 +620,7 @@ async def _verify_brent(session_date: dt.date) -> int:
             brent.COLUMNS,
             engine=brent.ENGINE,
             market=brent.MARKET,
+            assetcode="BR",
         )
 
     print(f"срочный рынок за {session_date}: строк {len(rows)}")

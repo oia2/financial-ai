@@ -556,6 +556,24 @@ describe('следующий сбор', () => {
     );
   });
 
+  it('старый недобор не заменяет расписание новой сессии', async () => {
+    renderWithCoverage('2026-09-21', false, '2099-01-05');
+    await waitFor(() => {
+      expect(document.querySelector('.run-next b')?.textContent).toContain('05.01.2099');
+      expect(document.querySelector('.schedule-facts li strong')?.textContent).toContain(
+        '05.01.2099',
+      );
+    });
+  });
+
+  it('исчерпанные повторы не отменяют расписание новых сессий', async () => {
+    renderWithCoverage(null, true, '2099-01-05');
+    await waitFor(() => {
+      expect(document.querySelector('.run-next b')?.textContent).toContain('05.01.2099');
+    });
+    expect(document.querySelector('.run-next')?.textContent).toContain('исчерпаны попытки');
+  });
+
   it('дата известна: обещание остаётся обещанием', async () => {
     renderWithCoverage('2026-09-17', false);
 

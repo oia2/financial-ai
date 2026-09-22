@@ -362,6 +362,26 @@ async def test_range_narrows_the_plan(
     assert fake.visited == [SESSIONS[1], SESSIONS[2]]
 
 
+async def test_explicit_manual_range_can_verify_legacy_history(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_ai.market_data.models import CoverageBoundary
+
+    await _seed(db_session, [ASOF])
+    db_session.add(CoverageBoundary(coverage_version=2, boundary_session=ASOF))
+    await db_session.commit()
+    fake = FakeCatchUp()
+    monkeypatch.setattr(ingest, "catch_up", fake)
+    instance = CatchupRunner(settings)
+    with pytest.raises(NothingToCatchUpError):
+        await instance.start(group_ids=["quotes"])
+    state = await instance.start(group_ids=["quotes"], date_from=SESSIONS[1], date_till=SESSIONS[2])
+    await _wait_until_idle(instance)
+    assert state["requested"] == 2
+    assert fake.visited == [SESSIONS[1], SESSIONS[2]]
+    assert fake.source_ids == frozenset({"equity_d1"})
+
+
 async def test_range_wider_than_window_is_clamped_and_visible(
     db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -114,6 +114,7 @@ class IssClient:
         engine: str | None = None,
         market: str | None = None,
         board: str | None = None,
+        assetcode: str | None = None,
     ) -> list[dict[str, Any]]:
         """Данные сессии в указанном разделе торгов.
 
@@ -128,8 +129,9 @@ class IssClient:
         )
         return await self._paginate(
             url,
-            lambda start: urls.history_by_date_params(
-                session_date, start, self._config.page_limit, columns
+            lambda start: (
+                urls.history_by_date_params(session_date, start, self._config.page_limit, columns)
+                | ({"assetcode": assetcode} if assetcode is not None else {})
             ),
             required_columns=columns,
             date_from=session_date,

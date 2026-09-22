@@ -104,8 +104,14 @@ export function LaunchDrawer({
       return;
     }
 
-    let dateFrom: string | null = null;
-    let dateTill: string | null = null;
+    // Даже «всё окно» передаётся явными границами, показанными человеку:
+    // это разрешение проверить выбранную историю, а не фоновый автодогон.
+    let dateFrom: string | null = window_?.date_from ?? null;
+    let dateTill: string | null = window_?.date_till ?? null;
+    if (wholeWindow && (dateFrom === null || dateTill === null)) {
+      setInputError('Дождитесь загрузки доступного диапазона.');
+      return;
+    }
 
     if (!wholeWindow) {
       dateFrom = parseRuDate(from);
@@ -156,7 +162,10 @@ export function LaunchDrawer({
 
       <form onSubmit={submit} style={{ display: 'contents' }} noValidate>
         <div className="drawer-body">
-          <p>Соберём только пропущенные сессии. Уже закрытые сессии повторно не запрашиваются.</p>
+          <p>
+            Проверим и доберём выбранные сессии, включая старую неподтверждённую историю. Уже
+            подтверждённые данные повторно не запрашиваются.
+          </p>
 
           <fieldset className="field-group">
             <legend>Группы данных</legend>

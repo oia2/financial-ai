@@ -24,6 +24,49 @@ DAY = dt.date(2026, 9, 18)
 NOW = dt.datetime(2026, 9, 21, 10, tzinfo=dt.UTC)
 
 
+async def test_latest_outcomes_cover_only_requested_dates_and_keep_newest_failure(
+    db_session: AsyncSession,
+) -> None:
+    days = [DAY + dt.timedelta(days=offset) for offset in range(5)]
+    db_session.add_all(
+        [
+            IngestRun(
+                run_id="range",
+                source_id="brent",
+                session_date=days[4],
+                period_from=days[1],
+                period_till=days[3],
+                status="ok",
+                started_at=NOW,
+                finished_at=NOW,
+            ),
+            IngestRun(
+                run_id="failed",
+                source_id="brent",
+                session_date=days[2],
+                status="failed",
+                started_at=NOW + dt.timedelta(hours=1),
+            ),
+            IngestRun(
+                run_id="other",
+                source_id="cbr",
+                session_date=days[0],
+                status="ok",
+                started_at=NOW,
+            ),
+        ]
+    )
+    await db_session.commit()
+    repository = MarketDataRepository(db_session)
+    requested = [days[4], days[2], days[0], days[1], days[2]]
+    latest = await repository.latest_run_by_session(requested, "brent")
+    assert {key: run.run_id for key, run in latest.items()} == {
+        (days[1], "brent"): "range",
+        (days[2], "brent"): "failed",
+        (days[4], "brent"): "range",
+    }
+
+
 async def test_evidence_is_unique_and_keeps_original_provenance(
     db_session: AsyncSession,
 ) -> None:

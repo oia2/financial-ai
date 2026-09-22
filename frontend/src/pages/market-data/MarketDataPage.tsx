@@ -253,6 +253,11 @@ export function MarketDataPage() {
         />
       ) : disconnected || workerDown ? (
         <Unreachable offline={disconnected} />
+      ) : coverage.isError ? (
+        <div className="empty-summary" role="alert">
+          <h2>Не удалось прочитать состояние данных</h2>
+          <p>Обновите сводку. Если ошибка повторится, проверьте журнал сервера.</p>
+        </div>
       ) : (
         <div className="empty-summary" aria-live="polite">
           <p>Читаем состояние данных…</p>

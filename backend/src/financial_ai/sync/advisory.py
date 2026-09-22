@@ -52,7 +52,8 @@ async def is_held(session: AsyncSession, objid: int = LOCK_OBJECT_ID) -> bool:
             "select exists("
             "  select 1 from pg_locks"
             "  where locktype = 'advisory' and classid = :classid"
-            "    and objid = :objid and granted"
+            "    and objid = :objid and objsubid = 2 and granted"
+            "    and database = (select oid from pg_database where datname = current_database())"
             ")"
         ),
         {"classid": LOCK_CLASS_ID, "objid": objid},

@@ -79,6 +79,34 @@ async def test_latest_ready_finds_the_freshest_complete_date(
     assert await readiness.latest_ready(db_session, settings, ASOF) == ASOF
 
 
+@pytest.mark.parametrize("gap", [None, 0, 2, 4])
+@pytest.mark.parametrize("depth", [1, 3, 5])
+async def test_latest_ready_bulk_scan_matches_individual_windows(
+    db_session: AsyncSession,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    gap: int | None,
+    depth: int,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from financial_ai.market_data import completeness
+
+    await seed(db_session, collected=[day for i, day in enumerate(SESSIONS) if i != gap])
+    settings.market_data_price_window_sessions = 2
+    settings.market_data_catchup_window_sessions = depth
+    expected = None
+    for day in reversed(SESSIONS[-depth:]):
+        if (await readiness.evaluate(db_session, settings, day)).ready:
+            expected = day
+            break
+
+    missing = AsyncMock(wraps=completeness.missing_sessions)
+    monkeypatch.setattr(completeness, "missing_sessions", missing)
+    assert await readiness.latest_ready(db_session, settings, ASOF) == expected
+    assert missing.await_count == 1
+
+
 async def test_incomplete_dataset_declaration_blocks_the_run(settings: Settings) -> None:
     """Окончательное слово — за объявлением полноты набора.
 

@@ -379,10 +379,8 @@ async def build_report(
     # Когда несобранного нет, следующей будет текущая сессия после порога —
     # ближайший известный торговый день. Будущих дат календарь не знает: он
     # строится по СОСТОЯВШИМСЯ торгам.
-    # Когда взять нельзя НИ ОДНУ из недостающих — все исчерпали предел попыток
-    # или ждут выдержки, — дата не называется вовсе. Подставлять вместо неё
-    # ближайший торговый день значит обещать сбор, которого не будет; ближайший
-    # день остаётся ответом только там, где недостающего нет (FR-054).
+    # Дата повтора и расписание новых сессий отдаются раздельно: исчерпание
+    # попыток за прошлый день не отменяет новый вечерний сбор (FR-024a).
     from financial_ai.market_data.advance import selectable, session_is_closed, within_attempt_limit
 
     missing = sorted(pending)
@@ -418,13 +416,11 @@ async def build_report(
         next_session = None
 
     now = moscow_now()
-    expected_session = None
-    if not missing:
-        # Сегодня ещё можно ждать новую сессию: календарь хранит состоявшиеся
-        # торги и утром понедельника обычно заканчивается пятницей.
-        expected_session = max(now.date(), asof_date + dt.timedelta(days=1))
-        while expected_session.weekday() >= 5:
-            expected_session += dt.timedelta(days=1)
+    # Расписание новых сессий не зависит от повторов старых. Календарь хранит
+    # состоявшиеся торги; следующую дату до обновления называем ожидаемой.
+    expected_session = max(now.date(), asof_date + dt.timedelta(days=1))
+    while expected_session.weekday() >= 5:
+        expected_session += dt.timedelta(days=1)
 
     return {
         "asof_date": asof_date.isoformat(),
@@ -437,8 +433,8 @@ async def build_report(
         },
         "next_session": next_session.isoformat() if next_session else None,
         # Оценка по будням, пока биржевой календарь ещё не подтвердил дату.
-        "next_expected_session": expected_session.isoformat() if expected_session else None,
-        # Почему даты нет: сбор не возьмёт ничего, пока человек не вмешается.
+        "next_expected_session": expected_session.isoformat(),
+        # Старые сессии требуют ручного повтора; новые идут по расписанию.
         "next_session_blocked": next_blocked,
         # Названная сессия уже закрыта: ждать её закрытия нечего, сбор возьмёт
         # её ближайшим прогоном. При отставании это обычное дело (FR-054).

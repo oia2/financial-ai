@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import logging
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -926,14 +927,21 @@ class MarketDataRepository:
             )
         )
         latest: dict[tuple[dt.date, str], IngestRun] = {}
+        ordered_days = sorted(set(sessions))
+        day_set = set(ordered_days)
         for run in rows.all():
-            for day in sessions:
-                if day == run.session_date or (
-                    run.period_from is not None
-                    and run.period_till is not None
-                    and run.period_from <= day <= run.period_till
-                ):
-                    latest.setdefault((day, run.source_id), run)
+            # Обычный исход относится к одной дате. Перебор всего окна для
+            # каждой записи делал десятки миллионов ORM-чтений на один экран
+            # и блокировал event loop worker. Диапазону нужны только его даты.
+            day, source = run.session_date, run.source_id
+            lower, upper = run.period_from, run.period_till
+            if day is not None and day in day_set:
+                latest.setdefault((day, source), run)
+            if lower is not None and upper is not None:
+                for covered_day in ordered_days[
+                    bisect_left(ordered_days, lower) : bisect_right(ordered_days, upper)
+                ]:
+                    latest.setdefault((covered_day, source), run)
         return latest
 
     async def coverage_boundary(self) -> dt.date | None:

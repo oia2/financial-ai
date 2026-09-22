@@ -534,6 +534,12 @@ class CatchupRunner:
                     continue
                 window = await calendar.window(asof, depth)
                 group_missing = set(await completeness.missing_sessions(repository, group, window))
+                if date_from is not None and date_till is not None:
+                    # Явно выбранный диапазон — команда проверить и добрать
+                    # историю выбранных групп. Запрет автоматического ремонта
+                    # не должен превращать эту кнопку в «собирать нечего».
+                    missing.update(group_missing)
+                    continue
                 audit: set[dt.date] = set()
                 for source_id in group.source_ids:
                     audit.update(

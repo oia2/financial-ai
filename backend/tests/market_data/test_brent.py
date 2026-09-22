@@ -128,6 +128,7 @@ async def test_brent_asks_the_futures_section_without_a_board() -> None:
     call = iss.calls[0]
     assert call["engine"] == "futures"
     assert call["market"] == "forts"
+    assert call["assetcode"] == "BR"
     assert call.get("board") is None
 
 

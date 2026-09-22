@@ -58,7 +58,7 @@ async def sync_brent(
 ) -> VerificationResult:
     """Собрать цену фронтального контракта за одну торговую сессию."""
     rows = await client.fetch_session_rows_for(
-        session_date.isoformat(), COLUMNS, engine=ENGINE, market=MARKET
+        session_date.isoformat(), COLUMNS, engine=ENGINE, market=MARKET, assetcode="BR"
     )
     contract = select_front_contract(rows, session_date)
     if contract is None:

@@ -67,8 +67,8 @@ describe('форма запуска догона', () => {
 
     await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
 
-    // Пустое тело: умолчания принадлежат серверу и здесь не повторяются.
-    expect(captured.body).toEqual({});
+    // Границы окна с сервера — явный выбор человека для проверки старой истории.
+    expect(captured.body).toEqual({ date_from: '2026-04-20', date_till: '2026-09-03' });
   });
 
   it('предлагает только известные группы с их идентификаторами', async () => {
@@ -102,7 +102,11 @@ describe('форма запуска догона', () => {
     await userEvent.click(within(form).getByRole('checkbox', { name: /Котировки/ }));
     await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
 
-    expect(captured.body).toEqual({ groups: ['quotes'] });
+    expect(captured.body).toEqual({
+      groups: ['quotes'],
+      date_from: '2026-04-20',
+      date_till: '2026-09-03',
+    });
   });
 
   it('предзаполняет диапазон границами окна догона', async () => {

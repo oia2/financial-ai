@@ -102,6 +102,35 @@ async def test_in_progress_is_visible_through_advisory_lock(db_session: AsyncSes
     await _wait_for_lock(db_session, held=False)
 
 
+async def test_lock_in_another_database_does_not_mean_sync_in_progress(
+    db_session: AsyncSession,
+) -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from financial_ai.db.engine import get_engine
+    from financial_ai.sync import advisory
+
+    # pg_locks показывает весь кластер, хотя сами advisory locks изолированы
+    # базой. Работающий стенд не должен подменять состояние тестовой базы.
+    other_engine = create_async_engine(get_engine().url.set(database="postgres"))
+    objid = 991
+    try:
+        async with AsyncSession(other_engine) as other:
+            assert await advisory.try_acquire(other, objid)
+            try:
+                assert not await advisory.is_held(db_session, objid)
+                assert await advisory.try_acquire(db_session, objid)
+                try:
+                    assert await advisory.is_held(db_session, objid)
+                finally:
+                    await advisory.release(db_session, objid)
+                assert not await advisory.is_held(db_session, objid)
+            finally:
+                await advisory.release(other, objid)
+    finally:
+        await other_engine.dispose()
+
+
 async def _wait_for_lock(session: AsyncSession, *, held: bool, timeout: float = 5.0) -> None:
     """Дождаться состояния блокировки и упасть с внятной причиной.
 

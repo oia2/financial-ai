@@ -38,16 +38,18 @@ class CoverageReportFlight:
             if task is None:
                 task = asyncio.create_task(build(), name=f"coverage-report:{key}")
                 self._tasks[key] = task
+                task.add_done_callback(lambda finished: self._forget(key, finished))
 
-        try:
-            # Таймаут API или закрытая вкладка не должны отменять общий проход,
-            # на который уже ждут остальные запросы.
-            return await asyncio.shield(task)
-        finally:
-            if task.done():
-                async with self._lock:
-                    if self._tasks.get(key) is task:
-                        self._tasks.pop(key, None)
+        # Таймаут API или закрытая вкладка не должны отменять общий проход.
+        return await asyncio.shield(task)
+
+    def _forget(self, key: str, task: asyncio.Task[object]) -> None:
+        # Освобождаем результат и когда все ожидавшие клиенты уже отключились:
+        # иначе следующий запрос получал оставшийся в словаре старый отчёт.
+        if self._tasks.get(key) is task:
+            self._tasks.pop(key)
+        if not task.cancelled():
+            task.exception()
 
 
 class CollectionPauseIn(BaseModel):

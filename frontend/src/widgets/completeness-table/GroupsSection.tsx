@@ -17,7 +17,7 @@
  */
 
 import type { GroupCoverageDto, SourceCoverageDto, UniverseDto } from '@/entities/market-data';
-import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
+import { formatCount, formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
 import { plural } from '@/shared/lib/plural';
 
 type Badge = readonly [kind: 'complete' | 'partial' | 'error', label: string];
@@ -64,7 +64,7 @@ export function GroupsSection({
       <div className="group-columns" aria-hidden="true">
         <span>Группа / источники</span>
         <span>Результат</span>
-        <span>Собрано из возможного</span>
+        <span>Подтверждено из возможного</span>
         <span>Последние данные</span>
         <span />
       </div>
@@ -105,7 +105,8 @@ function Group({
         <span className={`badge ${kind}`}>{label}</span>
         <span>
           <span className="volume">{volumeOf(group)}</span>
-          <small>{group.has_history ? 'сессий' : 'источников'}</small>
+          <small>{group.has_history ? 'сессий подтверждено' : 'источников'}</small>
+          <small>{formatCount(group.rows_with_values)} строк со значениями</small>
         </span>
         <span>
           <time dateTime={group.period_till ?? undefined}>
@@ -116,6 +117,14 @@ function Group({
       </summary>
 
       <div className="group-detail">
+        {(group.requires_audit ?? 0) > 0 && group.has_history && (
+          <p className="rule-copy">
+            Сохранённые данные на месте. Полнота {group.requires_audit} старых сессий ещё не
+            подтверждена: прежние отчёты не доказывают, что все данные источника получены. Для
+            проверки выберите эту группу и период в ручном сборе. Новые сессии собираются
+            автоматически.
+          </p>
+        )}
         {rule !== null && <p className="rule-copy">{rule}</p>}
 
         <table className="source-table">
@@ -178,7 +187,7 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
             {SCOPE_NOTE[source.scope] ?? ''}
             <SourceFailures failures={source.failures} total={source.failures_total} />
             {source.requires_audit > 0 && (
-              <small>Явный аудит старых сессий: {source.requires_audit}</small>
+              <small>Полнота старых сессий не подтверждена: {source.requires_audit}</small>
             )}
           </>
         )}
@@ -268,7 +277,8 @@ function groupBadge(group: GroupCoverageDto): Badge {
   // есть записанные неудачи, и они названы днём и причиной.
   if (group.sources.some((source) => source.status === 'failed'))
     return ['error', 'Ошибка источника'];
-  if ((group.requires_audit ?? 0) > 0) return ['partial', 'Нужна проверка'];
+  if ((group.requires_audit ?? 0) > 0)
+    return ['partial', group.has_history ? 'История не проверена' : 'Нужна проверка'];
   if (group.sources.some((source) => source.status === 'partial')) return ['partial', 'Частично'];
   if (group.has_history && (group.gaps ?? 0) > 0) return ['partial', 'Частично'];
   return ['complete', 'Собрано'];

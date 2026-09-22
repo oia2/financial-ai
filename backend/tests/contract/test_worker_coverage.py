@@ -54,6 +54,32 @@ async def test_concurrent_coverage_requests_share_one_report_build() -> None:
     assert await second == {"calls": 1}
 
 
+async def test_disconnected_readers_do_not_cache_a_completed_report() -> None:
+    from financial_ai.worker.routes.coverage import CoverageReportFlight
+
+    flight = CoverageReportFlight()
+    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def build() -> object:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        finished.set()
+        return calls
+
+    reader = asyncio.create_task(flight.run("latest", build))
+    await started.wait()
+    reader.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reader
+    release.set()
+    await finished.wait()
+    await asyncio.sleep(0)
+    assert await flight.run("latest", build) == 2
+
+
 def _bar(day: dt.date) -> DailyBar:
     return DailyBar(
         asset_id="EQ_AST_SBER",

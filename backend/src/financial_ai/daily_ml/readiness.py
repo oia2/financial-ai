@@ -105,12 +105,32 @@ async def latest_ready(
     repository = MarketDataRepository(session)
     calendar = TradingCalendar(repository)
 
-    window = await calendar.window(not_after, settings.catchup_window_sessions)
-    for day in reversed(window):
-        if (await evaluate(session, settings, day)).ready:
-            return day
+    windows = [
+        (group, size)
+        for group in required_groups(settings)
+        if (size := group.window_sessions(settings)) is not None
+    ]
+    # Все окна перекрываются. Их повторная проверка по одной дате делала
+    # сотни одинаковых аудитов и держала блокировку уже завершённого сбора.
+    # Читаем общую историю один раз, сохраняя то же правило полноты источников.
+    depth = settings.catchup_window_sessions
+    history = await calendar.window(not_after, depth + max((n for _, n in windows), default=1) - 1)
+    candidates = set(range(max(0, len(history) - depth), len(history)))
+    for group, size in windows:
+        missing = set(await completeness.missing_sessions(repository, group, history))
+        complete: set[int] = set()
+        last_missing = -1
+        for index, day in enumerate(history):
+            if day in missing:
+                last_missing = index
+            # И полное число сессий, и отсутствие пропуска внутри окна.
+            if index + 1 >= size and index - last_missing >= size:
+                complete.add(index)
+        candidates &= complete
+        if not candidates:
+            return None
 
-    return None
+    return history[max(candidates)] if candidates else None
 
 
 def dataset_is_complete(incomplete: Iterable[Mapping[str, object]], settings: Settings) -> bool:

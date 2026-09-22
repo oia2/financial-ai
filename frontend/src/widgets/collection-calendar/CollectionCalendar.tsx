@@ -123,14 +123,14 @@ export function CollectionCalendar({
             */}
             {paused ? (
               'автосбор на паузе'
-            ) : nextBlocked ? (
+            ) : nextBlocked && !expectedSession ? (
               'нет автосбора — нужен ручной сбор'
-            ) : nextClosed && nextSession ? (
+            ) : nextClosed && nextSession && !expectedSession ? (
               <>{formatCollectionStart(nextSession, null)} — ближайшим прогоном</>
             ) : nextSession || expectedSession ? (
               <>
-                {formatCollectionStart(nextSession ?? expectedSession, threshold.local)}
-                {nextSession === null && (
+                {formatCollectionStart(expectedSession ?? nextSession, threshold.local)}
+                {expectedSession && (
                   <>
                     {' · '}
                     <span className="msk">дата уточняется по календарю биржи</span>
@@ -142,6 +142,16 @@ export function CollectionCalendar({
             )}
           </strong>
         </li>
+        {!paused && expectedSession && (nextClosed || nextBlocked) && (
+          <li>
+            <span>Прошлые сессии</span>
+            <strong>
+              {nextBlocked
+                ? 'исчерпаны попытки — нужен ручной сбор'
+                : `Повтор за ${formatIsoDate(nextSession)} — ближайшим прогоном`}
+            </strong>
+          </li>
+        )}
         <li>
           <span>Последняя закрытая</span>
           <strong className="mono">{formatIsoDate(lastClosed)}</strong>

@@ -54,6 +54,20 @@ async function groupsSection(): Promise<HTMLElement> {
 }
 
 describe('сводка полноты', () => {
+  it('ошибка сводки не оставляет страницу в бесконечном ожидании', async () => {
+    server.use(
+      http.get('/api/market-data/coverage', () =>
+        HttpResponse.json({ detail: 'coverage calculation failed' }, { status: 500 }),
+      ),
+    );
+    renderMarketData();
+
+    expect(
+      await screen.findByRole('heading', { name: 'Не удалось прочитать состояние данных' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Читаем состояние данных…')).not.toBeInTheDocument();
+  });
+
   it('показывает все пять групп с итогом и объёмом собранного', async () => {
     renderMarketData();
 
@@ -145,6 +159,25 @@ describe('сводка полноты', () => {
       within(reference).getByText('Старый ответ не подтверждён новым правилом'),
     ).toBeInTheDocument();
     expect(within(reference).queryByText(/из \d+ сессий/)).not.toBeInTheDocument();
+  });
+
+  it('сохранённая история видна даже без подтверждения полноты', async () => {
+    server.use(
+      http.get('*/api/market-data/coverage', () => {
+        const report = coverageFixture();
+        const quotes = report.groups.find((row) => row.group === 'quotes')!;
+        quotes.requires_audit = 313;
+        quotes.sessions_covered = 1;
+        quotes.rows_with_values = 91465;
+        return HttpResponse.json(report);
+      }),
+    );
+    renderMarketData();
+    const quotes = await groupBlock('quotes');
+    expect(within(quotes).getByText('История не проверена')).toBeInTheDocument();
+    expect(within(quotes).getByText(/91\s465 строк со значениями/)).toBeInTheDocument();
+    expect(within(quotes).getByText(/Сохранённые данные на месте/)).toBeInTheDocument();
+    expect(within(quotes).getByText('1 / 314')).toBeInTheDocument();
   });
 
   it('реальный отказ справочника показан отдельно от отсутствия проверки', async () => {

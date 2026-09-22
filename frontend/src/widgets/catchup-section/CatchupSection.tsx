@@ -252,21 +252,29 @@ export function CatchupSection({
         <p className="run-next">
           Следующий сбор —{' '}
           <b>
-            {paused || nextBlocked
+            {paused || (nextBlocked && !expectedSession)
               ? 'не будет'
-              : nextClosed && nextSession
-                ? `${formatCollectionStart(nextSession, null)} — ближайшим прогоном`
-                : formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}
+              : expectedSession
+                ? formatCollectionStart(expectedSession, nextSessionTime)
+                : nextClosed && nextSession
+                  ? `${formatCollectionStart(nextSession, null)} — ближайшим прогоном`
+                  : formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}
           </b>
           {paused
             ? ', пока автосбор на паузе'
-            : nextBlocked
+            : nextBlocked && !expectedSession
               ? ', нужен ручной сбор'
-              : nextSession === null
+              : expectedSession || nextSession === null
                 ? expectedSession
                   ? ', дата уточняется по календарю биржи'
                   : ', ожидаем обновления календаря биржи'
                 : ''}
+          {!paused && expectedSession && nextClosed && nextSession && (
+            <>. Повтор за {formatIsoDate(nextSession)} — ближайшим прогоном</>
+          )}
+          {!paused && expectedSession && nextBlocked && (
+            <>. Для прошлых сессий исчерпаны попытки — нужен ручной сбор</>
+          )}
         </p>
       )}
 

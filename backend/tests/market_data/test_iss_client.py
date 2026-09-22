@@ -46,6 +46,22 @@ def config() -> IssConfig:
 
 
 @respx.mock
+async def test_futures_family_filter_is_kept_on_every_page(config: IssConfig) -> None:
+    route = respx.get(url__startswith=BASE)
+    route.side_effect = [
+        httpx.Response(200, json=_page([_row("BRV6"), _row("BRX6")], total=3)),
+        httpx.Response(200, json=_page([_row("BRZ6")], index=2, total=3)),
+    ]
+    async with IssClient(config) as client:
+        rows = await client.fetch_session_rows_for(
+            "2026-08-28", COLUMNS, engine="futures", market="forts", assetcode="BR"
+        )
+    assert [row["SECID"] for row in rows] == ["BRV6", "BRX6", "BRZ6"]
+    assert all(call.request.url.params["assetcode"] == "BR" for call in route.calls)
+    assert [call.request.url.params["start"] for call in route.calls] == ["0", "2"]
+
+
+@respx.mock
 async def test_single_page(config: IssConfig) -> None:
     respx.get(url__startswith=BASE).mock(
         return_value=httpx.Response(200, json=_page([_row("SBER")]))
