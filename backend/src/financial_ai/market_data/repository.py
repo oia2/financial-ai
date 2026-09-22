@@ -200,6 +200,21 @@ class MarketDataRepository:
         )
         await self._session.commit()
 
+    async def defer_repair_item(
+        self, plan_id: str, session_date: dt.date, source_id: str, reason: str
+    ) -> None:
+        """Keep an unresolved pair pending with an operator-visible reason."""
+        await self._session.execute(
+            update(RepairItem)
+            .where(
+                RepairItem.plan_id == plan_id,
+                RepairItem.session_date == session_date,
+                RepairItem.source_id == source_id,
+            )
+            .values(status="pending", reason=reason)
+        )
+        await self._session.commit()
+
     async def extend_repair_plan(self, plan_id: str, request_budget: int) -> bool:
         """Raise a stopped plan's absolute limit only by an explicit command."""
         result = await self._session.execute(

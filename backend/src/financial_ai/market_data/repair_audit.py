@@ -23,6 +23,8 @@ from financial_ai.market_data.lock import MarketDataRunLock
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.positions_client import PositionsClient
 
+ISS_CURSOR_INCONSISTENCY = "iss_contract_cursor_inconsistency"
+
 
 @dataclass(frozen=True, slots=True)
 class AuditRow:
@@ -151,7 +153,11 @@ async def _run_plan_owned(
         return plan.status, plan.requests_spent, 0
     if plan.status == "running":
         await repository.finish_repair_plan(plan_id, "stopped", "interrupted")
-    pending = [item for item in items if item.status == "pending"]
+    pending = [
+        item
+        for item in items
+        if item.status == "pending" and item.reason != ISS_CURSOR_INCONSISTENCY
+    ]
     # A data transaction can commit immediately before the marker above.  A
     # cold restart discovers that fact from the exact pair, preserving both
     # idempotence and the original HTTP budget.
