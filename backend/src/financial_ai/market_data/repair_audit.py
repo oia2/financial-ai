@@ -134,9 +134,38 @@ async def _run_plan_owned(
     plan, items = saved
     # A process that died mid-plan leaves no worker to finish it.  Preserve
     # the consumed budget and make the interruption explicit before resuming.
+    # Completed is terminal even if a newer coverage rule would judge its
+    # historical input differently.  Check it before creating any client.
+    if plan.status == "completed":
+        return plan.status, plan.requests_spent, 0
     if plan.status == "running":
         await repository.finish_repair_plan(plan_id, "stopped", "interrupted")
     pending = [item for item in items if item.status == "pending"]
+    # A data transaction can commit immediately before the marker above.  A
+    # cold restart discovers that fact from the exact pair, preserving both
+    # idempotence and the original HTTP budget.
+    still_pending = []
+    for item in pending:
+        row = next(
+            (
+                row
+                for row in await audit(
+                    repository,
+                    item.session_date,
+                    item.session_date,
+                    frozenset({item.source_id}),
+                )
+                if row.source_id == item.source_id and row.session_date == item.session_date
+            ),
+            None,
+        )
+        if row is not None and not row.unknown:
+            await repository.finish_repair_item(
+                plan_id, item.session_date, item.source_id, "already_closed"
+            )
+        else:
+            still_pending.append(item)
+    pending = still_pending
     if not pending:
         return plan.status, plan.requests_spent, 0
     if plan.requests_spent >= plan.request_budget:
@@ -154,38 +183,56 @@ async def _run_plan_owned(
     async def cbr_permit(_: httpx.Request) -> None:
         await permit()
 
-    days = sorted({item.session_date for item in pending})
-    source_ids = frozenset(item.source_id for item in pending)
-    repair_needs_assets = bool(
-        source_ids & frozenset({"equity_d1", "equity_agg", "futures_positions"})
-    )
+    # Do not pass the two sets to catch_up together: that turns a sparse plan
+    # into their Cartesian product.  One persisted item is one collection
+    # request scope; range sources may consequently choose a one-day range.
     async with (
         IssClient(ingest.build_iss_config(settings), request_permit=permit) as iss,
         PositionsClient(settings, request_permit=permit) as positions,
         httpx.AsyncClient(event_hooks={"request": [cbr_permit]}) as cbr_client,
     ):
         try:
-            await ingest.catch_up(
-                session,
-                settings,
-                days[-1],
-                client=iss,
-                cbr_client=cbr_client,
-                positions_client=positions,
-                sessions=days,
-                source_ids=source_ids,
-                should_stop=lambda: exhausted,
-                run_id=plan_id,
-                prepare_assets=repair_needs_assets,
-            )
+            for item in pending:
+                if exhausted:
+                    break
+                await ingest.catch_up(
+                    session,
+                    settings,
+                    item.session_date,
+                    client=iss,
+                    cbr_client=cbr_client,
+                    positions_client=positions,
+                    sessions=[item.session_date],
+                    source_ids=frozenset({item.source_id}),
+                    should_stop=lambda: exhausted,
+                    run_id=plan_id,
+                    prepare_assets=item.source_id
+                    in {"equity_d1", "equity_agg", "futures_positions"},
+                )
+                row = next(
+                    (
+                        row
+                        for row in await audit(
+                            repository,
+                            item.session_date,
+                            item.session_date,
+                            frozenset({item.source_id}),
+                        )
+                        if row.source_id == item.source_id and row.session_date == item.session_date
+                    ),
+                    None,
+                )
+                if row is not None and not row.unknown:
+                    await repository.finish_repair_item(
+                        plan_id, item.session_date, item.source_id, "closed"
+                    )
         except SourceStoppedError:
             exhausted = True
 
     refreshed = await repository.repair_plan(plan_id)
     assert refreshed is not None
-    current, _ = refreshed
-    rows = await audit(repository, days[0], days[-1])
-    remaining = sum(row.unknown for row in rows if row.source_id in source_ids)
+    current, current_items = refreshed
+    remaining = sum(item.status == "pending" for item in current_items)
     if exhausted:
         status, reason = "stopped", "request_budget_exhausted"
     elif remaining:

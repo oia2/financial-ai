@@ -112,11 +112,21 @@ class MarketDataRepository:
         self._session = session
 
     async def create_repair_plan(
-        self, plan_id: str, request_budget: int, items: list[tuple[dt.date, str, int]]
+        self,
+        plan_id: str,
+        request_budget: int,
+        items: list[tuple[dt.date, str, int]],
+        *,
+        coverage_version: int = CURRENT_COVERAGE_VERSION,
     ) -> None:
         """Сохранить план до первого внешнего обращения."""
         self._session.add(
-            RepairPlan(plan_id=plan_id, request_budget=request_budget, status="planned")
+            RepairPlan(
+                plan_id=plan_id,
+                request_budget=request_budget,
+                coverage_version=coverage_version,
+                status="planned",
+            )
         )
         # PostgreSQL проверяет FK сразу; родитель должен быть записан раньше
         # строк плана, даже если идентификатор известен приложению заранее.
@@ -167,6 +177,26 @@ class MarketDataRepository:
             update(RepairPlan)
             .where(RepairPlan.plan_id == plan_id)
             .values(status=status, reason=reason)
+        )
+        await self._session.commit()
+
+    async def finish_repair_item(
+        self, plan_id: str, session_date: dt.date, source_id: str, reason: str | None = None
+    ) -> None:
+        """Record completion of one exact pair after its data commit.
+
+        This deliberately commits separately.  If the process dies between
+        data persistence and this marker, the next run re-audits the pair and
+        marks it without issuing HTTP again.
+        """
+        await self._session.execute(
+            update(RepairItem)
+            .where(
+                RepairItem.plan_id == plan_id,
+                RepairItem.session_date == session_date,
+                RepairItem.source_id == source_id,
+            )
+            .values(status="completed", reason=reason)
         )
         await self._session.commit()
 

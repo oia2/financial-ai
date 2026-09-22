@@ -439,6 +439,9 @@ class RepairPlan(Base):
 
     plan_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     request_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    # A plan is an audit artefact, not a moving view of today's rule.  Its
+    # result must therefore remain reproducible after a coverage-rule change.
+    coverage_version: Mapped[int] = mapped_column(Integer, nullable=False)
     requests_spent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
