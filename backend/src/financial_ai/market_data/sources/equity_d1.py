@@ -19,7 +19,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from weakref import WeakKeyDictionary
 
-from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.iss.client import IssClient, IssError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.verification import VerificationResult, one_session
 
@@ -31,7 +31,9 @@ COLUMNS = ("SECID", "TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME")
 # union once and splitting it into two persisted source outcomes avoids paying
 # for a second set of pages while keeping the sources independently visible.
 BOARD_COLUMNS = (*COLUMNS, "VALUE", "NUMTRADES", "WAPRICE")
-_BOARD_ROWS: WeakKeyDictionary[IssClient, dict[str, list[dict[str, object]]]] = WeakKeyDictionary()
+_BOARD_ROWS: WeakKeyDictionary[IssClient, dict[str, list[dict[str, object]] | IssError]] = (
+    WeakKeyDictionary()
+)
 
 # Пока нет реестра непрерывности из исследовательского репозитория,
 # идентификаторы строятся по тикеру — это законная форма якоря
@@ -86,8 +88,17 @@ async def fetch_equity_board_rows(
     cache = _BOARD_ROWS.setdefault(client, {})
     key = session_date.isoformat()
     if key not in cache:
-        cache[key] = await client.fetch_session_rows(key, BOARD_COLUMNS)
-    return cache[key]
+        try:
+            cache[key] = await client.fetch_session_rows(key, BOARD_COLUMNS)
+        except IssError as error:
+            # Quotes and aggregates use the same physical ISS traversal.  A
+            # failed traversal must be shared too; otherwise the second
+            # consumer doubles requests precisely while the source is down.
+            cache[key] = error
+    result = cache[key]
+    if isinstance(result, IssError):
+        raise result
+    return result
 
 
 def rows_to_bars(

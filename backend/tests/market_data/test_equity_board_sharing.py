@@ -6,6 +6,7 @@ import datetime as dt
 
 import pytest
 
+from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.sources import equity_agg, equity_d1
 
 
@@ -61,3 +62,25 @@ async def test_quotes_and_aggregates_use_one_board_fetch() -> None:
 
     assert client.calls == 1
     assert quotes.rows_written == aggregates.rows_written == 1
+
+
+class BrokenIss(FakeIss):
+    async def fetch_session_rows(
+        self, date: str, columns: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        self.calls += 1
+        raise IssError("ISS unavailable")
+
+
+@pytest.mark.asyncio
+async def test_quotes_and_aggregates_share_a_failed_board_fetch() -> None:
+    client = BrokenIss()
+    repository = Repository()
+    day = dt.date(2026, 9, 21)
+
+    with pytest.raises(IssError, match="ISS unavailable"):
+        await equity_d1.sync_equity_daily(client, repository, day)  # type: ignore[arg-type]
+    with pytest.raises(IssError, match="ISS unavailable"):
+        await equity_agg.sync_equity_aggregates(client, repository, day)  # type: ignore[arg-type]
+
+    assert client.calls == 1
