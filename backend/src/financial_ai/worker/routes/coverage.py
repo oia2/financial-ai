@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +25,31 @@ from financial_ai.market_data.scheduler import MarketDataScheduler
 router = APIRouter(tags=["coverage"])
 
 
+class CoverageReportFlight:
+    """Объединяет одинаковые незавершённые построения сводки."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._tasks: dict[str, asyncio.Task[object]] = {}
+
+    async def run(self, key: str, build: Callable[[], Coroutine[Any, Any, object]]) -> object:
+        async with self._lock:
+            task = self._tasks.get(key)
+            if task is None:
+                task = asyncio.create_task(build(), name=f"coverage-report:{key}")
+                self._tasks[key] = task
+
+        try:
+            # Таймаут API или закрытая вкладка не должны отменять общий проход,
+            # на который уже ждут остальные запросы.
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                async with self._lock:
+                    if self._tasks.get(key) is task:
+                        self._tasks.pop(key, None)
+
+
 class CollectionPauseIn(BaseModel):
     """Остановка и возобновление автоматического сбора."""
 
@@ -32,6 +59,15 @@ class CollectionPauseIn(BaseModel):
 def _scheduler(request: Request) -> MarketDataScheduler | None:
     scheduler = getattr(request.app.state, "market_data_scheduler", None)
     return scheduler if isinstance(scheduler, MarketDataScheduler) else None
+
+
+def _coverage_reports(request: Request) -> CoverageReportFlight:
+    reports = getattr(request.app.state, "coverage_reports", None)
+    if reports is None:
+        # ASGI unit-тесты не запускают lifespan приложения.
+        reports = CoverageReportFlight()
+        request.app.state.coverage_reports = reports
+    return reports
 
 
 @router.get("/market-data/settings")
@@ -58,30 +94,35 @@ async def set_collection_paused(payload: CollectionPauseIn, request: Request) ->
 
 @router.get("/coverage")
 async def get_coverage(
+    request: Request,
     asof: Annotated[dt.date | None, Query(description="Дата решения")] = None,
 ) -> object:
     """Состояние данных по группам на дату решения."""
     settings = get_settings()
     factory = get_session_factory()
 
-    async with factory() as session:
-        resolved = asof
-        if resolved is None:
-            calendar = TradingCalendar(MarketDataRepository(session))
-            resolved = await calendar.latest_session(moscow_today())
+    async def build() -> object:
+        async with factory() as session:
+            resolved = asof
+            if resolved is None:
+                calendar = TradingCalendar(MarketDataRepository(session))
+                resolved = await calendar.latest_session(moscow_today())
 
-        if resolved is None:
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "detail": {
-                        "code": "calendar_empty",
-                        "message": "календарь пуст: сначала выполните сбор",
-                    }
-                },
-            )
+            if resolved is None:
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "detail": {
+                            "code": "calendar_empty",
+                            "message": "календарь пуст: сначала выполните сбор",
+                        }
+                    },
+                )
 
-        return await coverage_module.build_report(session, settings, resolved)
+            return await coverage_module.build_report(session, settings, resolved)
+
+    key = asof.isoformat() if asof else "latest"
+    return await _coverage_reports(request).run(key, build)
 
 
 @router.get("/calendar")

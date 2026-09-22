@@ -44,6 +44,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     market_data = MarketDataScheduler(settings)
     application.state.market_data_scheduler = market_data
     await market_data.start()
+    # Сводка выполняет серию согласованных чтений. Повторные запросы интерфейса
+    # должны ждать тот же проход, а не занимать весь пул PostgreSQL.
+    application.state.coverage_reports = coverage.CoverageReportFlight()
 
     # Догон истории НЕ запускается сам: он стартует только по команде человека.
     # Владелец заданияживёт в этом процессе, поэтому перезапуск снимает

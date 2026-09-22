@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from decimal import Decimal
 
@@ -23,6 +24,34 @@ SESSIONS = [
     dt.date(2026, 8, 28),
 ]
 ASOF = SESSIONS[-1]
+
+
+async def test_concurrent_coverage_requests_share_one_report_build() -> None:
+    """Повтор интерфейса не должен запускать второй тяжёлый отчёт."""
+    from financial_ai.worker.routes.coverage import CoverageReportFlight
+
+    flight = CoverageReportFlight()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def build() -> dict[str, int]:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return {"calls": calls}
+
+    first = asyncio.create_task(flight.run("latest", build))
+    await started.wait()
+    second = asyncio.create_task(flight.run("latest", build))
+    await asyncio.sleep(0)
+
+    assert calls == 1
+
+    release.set()
+    assert await first == {"calls": 1}
+    assert await second == {"calls": 1}
 
 
 def _bar(day: dt.date) -> DailyBar:
