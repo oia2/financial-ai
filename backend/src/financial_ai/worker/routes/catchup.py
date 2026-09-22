@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from financial_ai.market_data.groups import UnknownGroupError
+from financial_ai.market_data.lock import MarketDataAlreadyRunningError
 from financial_ai.market_data.runner import (
     BackfillRequiredError,
     CatchupAlreadyRunningError,
@@ -103,7 +104,7 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
             # перезапускался. Запускается обычный догон, и об этом говорится.
             state = await runner.start(payload.groups, payload.date_from, payload.date_till)
             resumed = False
-    except CatchupAlreadyRunningError as error:
+    except (CatchupAlreadyRunningError, MarketDataAlreadyRunningError) as error:
         return _error(409, "catchup_already_running", str(error))
     except UnknownGroupError as error:
         return _error(422, "unknown_group", str(error))

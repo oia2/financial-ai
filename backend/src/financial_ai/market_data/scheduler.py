@@ -28,6 +28,7 @@ from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
 from financial_ai.market_data import advance, groups, journal, plan, runner
 from financial_ai.market_data.calendar import moscow_now
+from financial_ai.market_data.lock import MarketDataAlreadyRunningError, MarketDataRunLock
 from financial_ai.market_data.runner import CatchupState, CatchupStatus
 
 logger = logging.getLogger(__name__)
@@ -94,14 +95,6 @@ class MarketDataScheduler:
             logger.info("сбор рыночных данных выключен настройкой")
             return
 
-        # Прогон, не завершившийся из-за перезапуска, помечается прерванным.
-        # Довести его было некому: тот, кто его вёл, больше не существует. Без
-        # этой отметки он остался бы «идущим» навсегда (spec 008, FR-041).
-        factory = get_session_factory()
-        async with factory() as session:
-            await journal.mark_interrupted(session, dt.datetime.now(dt.UTC))
-            await session.commit()
-
         self._task = asyncio.create_task(self._loop(), name="market-data-scheduler")
 
     async def stop(self) -> None:
@@ -114,7 +107,7 @@ class MarketDataScheduler:
     async def _loop(self) -> None:
         while not self._stopping.is_set():
             try:
-                await self._ingest_once()
+                await self._ingest_with_ownership()
             except Exception:
                 logger.exception("сбор рыночных данных: прогон завершился ошибкой")
 
@@ -122,6 +115,29 @@ class MarketDataScheduler:
                 await asyncio.wait_for(self._stopping.wait(), timeout=self._tick_seconds)
             except TimeoutError:
                 continue
+
+    async def _ingest_with_ownership(self) -> None:
+        """Внешняя точка запуска автоматического сбора."""
+        if self._paused:
+            return
+
+        ownership = MarketDataRunLock()
+        try:
+            await ownership.acquire()
+        except MarketDataAlreadyRunningError:
+            logger.info("автоматический сбор пропущен: владелец уже есть")
+            return
+
+        try:
+            # Старый незавершённый журнал можно прервать только после того,
+            # как подтверждено отсутствие живого владельца в другом процессе.
+            factory = get_session_factory()
+            async with factory() as session:
+                await journal.mark_interrupted(session, dt.datetime.now(dt.UTC))
+                await session.commit()
+            await self._ingest_once()
+        finally:
+            await ownership.release()
 
     async def _ingest_once(self) -> None:
         """Довести данные до последней закрытой сессии.

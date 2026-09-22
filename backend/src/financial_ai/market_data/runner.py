@@ -33,6 +33,7 @@ from financial_ai.market_data import completeness, gaps, groups, ingest
 from financial_ai.market_data import plan as plan_module
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssError
+from financial_ai.market_data.lock import MarketDataRunLock
 from financial_ai.market_data.repository import MarketDataRepository
 
 logger = logging.getLogger(__name__)
@@ -372,7 +373,10 @@ class CatchupRunner:
 
     @property
     def is_active(self) -> bool:
-        return self._state.status in (CatchupStatus.RUNNING, CatchupStatus.STOPPING)
+        # Завершённое состояние выставляется до выхода из корутины, а lock
+        # освобождается в её ``finally``. Пока задача ещё не вышла, новый
+        # запуск не должен успеть между этими двумя действиями.
+        return self._task is not None and not self._task.done()
 
     # --- управление ---------------------------------------------------------
 
@@ -386,9 +390,14 @@ class CatchupRunner:
         if self.is_active:
             raise CatchupAlreadyRunningError("догон уже выполняется")
 
-        selected = groups.resolve(group_ids)
-
-        planned = await self._plan(selected, date_from, date_till)
+        ownership = MarketDataRunLock()
+        await ownership.acquire()
+        try:
+            selected = groups.resolve(group_ids)
+            planned = await self._plan(selected, date_from, date_till)
+        except BaseException:
+            await ownership.release()
+            raise
 
         self._stop_requested = False
         self._state = CatchupState(
@@ -409,7 +418,9 @@ class CatchupRunner:
             started_at=dt.datetime.now(dt.UTC),
         )
 
-        self._task = asyncio.create_task(self._run(selected), name="market-data-catchup")
+        self._task = asyncio.create_task(
+            self._run(selected, ownership=ownership), name="market-data-catchup"
+        )
         return self._state.snapshot()
 
     async def resume(self, stopped: CatchupState) -> dict[str, object]:
@@ -427,11 +438,16 @@ class CatchupRunner:
         if self.is_active:
             raise CatchupAlreadyRunningError("догон уже выполняется")
 
-        pending = stopped.unfinished
-        if not pending:
-            raise NothingToCatchUpError("непройденных сессий в прогоне нет")
-
-        selected = groups.resolve(stopped.group_ids or None)
+        ownership = MarketDataRunLock()
+        await ownership.acquire()
+        try:
+            pending = stopped.unfinished
+            if not pending:
+                raise NothingToCatchUpError("непройденных сессий в прогоне нет")
+            selected = groups.resolve(stopped.group_ids or None)
+        except BaseException:
+            await ownership.release()
+            raise
 
         self._stop_requested = False
         self._state = CatchupState(
@@ -459,7 +475,7 @@ class CatchupRunner:
         self._state.note_event(f"Прогон продолжен · осталось сессий {len(pending)}")
 
         self._task = asyncio.create_task(
-            self._run(selected, sessions=pending), name="market-data-catchup"
+            self._run(selected, sessions=pending, ownership=ownership), name="market-data-catchup"
         )
         return self._state.snapshot()
 
@@ -539,6 +555,18 @@ class CatchupRunner:
         return sessions, clamped
 
     async def _run(
+        self,
+        selected: tuple[groups.SourceGroup, ...],
+        sessions: list[dt.date] | None = None,
+        ownership: MarketDataRunLock | None = None,
+    ) -> None:
+        try:
+            await self._run_owned(selected, sessions)
+        finally:
+            if ownership is not None:
+                await ownership.release()
+
+    async def _run_owned(
         self,
         selected: tuple[groups.SourceGroup, ...],
         sessions: list[dt.date] | None = None,

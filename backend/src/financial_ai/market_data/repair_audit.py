@@ -18,6 +18,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import completeness, groups
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.lock import MarketDataRunLock
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.positions_client import PositionsClient
 
@@ -103,6 +104,18 @@ async def create_plan(
 
 
 async def run_plan(session: AsyncSession, settings: Settings, plan_id: str) -> tuple[str, int, int]:
+    """Run a persisted repair plan only while this process owns collection."""
+    ownership = MarketDataRunLock()
+    await ownership.acquire()
+    try:
+        return await _run_plan_owned(session, settings, plan_id)
+    finally:
+        await ownership.release()
+
+
+async def _run_plan_owned(
+    session: AsyncSession, settings: Settings, plan_id: str
+) -> tuple[str, int, int]:
     """Run exactly one explicit repair plan, preserving its HTTP budget.
 
     The existing catch-up path remains the sole source collector.  This wrapper

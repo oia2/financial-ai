@@ -31,6 +31,7 @@ from financial_ai.logging import setup_logging
 from financial_ai.market_data import backfill, gaps, ingest, links, repair_audit
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.lock import MarketDataAlreadyRunningError, MarketDataRunLock
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import brent, cbr, reference
 from financial_ai.market_data.sources.positions_client import (
@@ -222,7 +223,7 @@ async def _repair_run(plan_id: str) -> int:
     try:
         async with factory() as session:
             status, spent, remaining = await repair_audit.run_plan(session, get_settings(), plan_id)
-    except ValueError as error:
+    except (ValueError, MarketDataAlreadyRunningError) as error:
         print(str(error))
         return 2
     print(f"план {plan_id}: {status}; HTTP-попыток израсходовано {spent}; осталось пар {remaining}")
@@ -244,8 +245,16 @@ async def _repair_extend(plan_id: str, request_budget: int) -> int:
 async def _run(session_date: dt.date | None) -> int:
     settings = get_settings()
     factory = get_session_factory()
-    async with factory() as session:
-        result = await ingest.ingest_session(session, settings, session_date)
+    ownership = MarketDataRunLock()
+    try:
+        await ownership.acquire()
+        async with factory() as session:
+            result = await ingest.ingest_session(session, settings, session_date)
+    except MarketDataAlreadyRunningError as error:
+        print(str(error))
+        return 1
+    finally:
+        await ownership.release()
 
     print(f"прогон {result.run_id}, сессия {result.session_date}")
     for outcome in result.outcomes:
@@ -503,20 +512,28 @@ async def _backfill(date_from: str | None, tickers: list[str] | None) -> int:
     config = ingest.build_iss_config(settings)
     factory = get_session_factory()
 
-    async with IssClient(config) as iss, factory() as session:
-        added = await backfill.backfill_calendar(session, settings, iss)
-        print(f"календарь: добавлено сессий {added}")
+    ownership = MarketDataRunLock()
+    try:
+        await ownership.acquire()
+        async with IssClient(config) as iss, factory() as session:
+            added = await backfill.backfill_calendar(session, settings, iss)
+            print(f"календарь: добавлено сессий {added}")
 
-        repository = MarketDataRepository(session)
-        known = sorted(tickers or await repository.tickers_with_history())
-        if not known:
-            print(
-                "список бумаг пуст: укажите --ticker либо выполните обычный сбор, "
-                "чтобы система узнала состав доски"
-            )
-            return 1
+            repository = MarketDataRepository(session)
+            known = sorted(tickers or await repository.tickers_with_history())
+            if not known:
+                print(
+                    "список бумаг пуст: укажите --ticker либо выполните обычный сбор, "
+                    "чтобы система узнала состав доски"
+                )
+                return 1
 
-        progress = await backfill.backfill_equity(session, settings, iss, known)
+            progress = await backfill.backfill_equity(session, settings, iss, known)
+    except MarketDataAlreadyRunningError as error:
+        print(str(error))
+        return 1
+    finally:
+        await ownership.release()
 
     print(f"загружено бумаг: {len(progress.completed)} из {progress.total}")
     return 0
