@@ -60,3 +60,16 @@ async def test_calendar_initial_and_explicit_ranges_remain_full() -> None:
         date_till=dt.date(2026, 2, 1),
     )
     assert client.bounds == ("2026-01-01", "2026-02-01")
+
+
+@pytest.mark.asyncio
+async def test_calendar_upper_bound_is_the_moscow_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    """В контейнере UTC: с 00:00 до 03:00 МСК граница отставала на сутки (FR-040a)."""
+    monkeypatch.setattr(trading_calendar, "moscow_today", lambda: dt.date(2026, 9, 24))
+    client = FakeClient()
+
+    await trading_calendar.sync_trading_calendar(
+        client, FakeRepository(dt.date(2026, 9, 22)), "SBER"
+    )
+
+    assert client.bounds == ("2026-09-08", "2026-09-24")

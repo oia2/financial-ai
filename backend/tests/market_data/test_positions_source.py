@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import ingest, links
+from financial_ai.market_data import ingest, links, plan
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import positions
 from financial_ai.market_data.sources import positions_client as module
@@ -29,6 +29,7 @@ from financial_ai.market_data.sources.positions_client import (
     PositionsSourceError,
     parse_day_table,
 )
+from financial_ai.market_data.verification import VerificationResult
 from tests.market_data.conftest import FakePositionsClient, FakeSnapshot
 
 SESSION = dt.date(2026, 9, 22)
@@ -815,3 +816,87 @@ async def test_stop_cancels_retries_with_its_own_outcome() -> None:
         await client.fetch("SBRF_F", SESSION)
 
     assert attempts["n"] == 1
+
+
+# --- ожидание публикации (FR-032h) ---------------------------------------------
+
+
+async def test_unpublished_day_is_asked_again_not_served_from_cache() -> None:
+    """Кеш неопубликованного дня делал повторный вопрос бесполезным."""
+    recorder = Recorder({})
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        await client.fetch("SBRF_F", SESSION)
+        await client.fetch("SBRF_F", SESSION)
+
+    assert len(recorder.requests) == 2
+
+
+@pytest.mark.db
+async def test_unpublished_day_is_waiting_not_a_source_failure(db_session: AsyncSession) -> None:
+    """Неопубликованная дата — одно обращение и причина `unpublished`."""
+    await _seed_assets(db_session, ["SBER", "GAZP"], {"SBER": "SBRF_F", "GAZP": "GAZR_F"})
+    recorder = Recorder({})
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await positions.sync_positions(client, MarketDataRepository(db_session), SESSION)
+
+    assert result.complete is False
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+    assert len(recorder.requests) == 1
+
+
+@pytest.mark.db
+async def test_unpublished_delayed_source_is_not_repeated_in_the_same_run(
+    db_session: AsyncSession,
+) -> None:
+    """Через секунду биржа дату не опубликует: повтор — дело выдержки."""
+    calls = {"n": 0}
+
+    async def action() -> VerificationResult:
+        calls["n"] += 1
+        return VerificationResult(
+            rows_written=0,
+            evidence=(),
+            complete=False,
+            detail="не опубликовано",
+            failure_kind=plan.FAILURE_UNPUBLISHED,
+        )
+
+    outcome = await ingest._run_delayed_source(
+        MarketDataRepository(db_session), "run-u", positions.SOURCE_ID, SESSION, action
+    )
+
+    assert calls["n"] == 1
+    assert outcome.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+@pytest.mark.db
+async def test_waiting_for_publication_does_not_spend_session_attempts(
+    db_session: AsyncSession,
+) -> None:
+    """Предел попыток расходует только работа за сессию (FR-032h).
+
+    Иначе сессия уходила в «попытки исчерпаны» за час ожидания публикации и
+    оставалась человеку, хотя биржа просто ещё не выложила таблицу.
+    """
+    repository = MarketDataRepository(db_session)
+    now = dt.datetime.now(dt.UTC)
+    rows = [
+        ("run-1", positions.SOURCE_ID, "failed", plan.FAILURE_UNPUBLISHED),
+        ("run-2", positions.SOURCE_ID, "failed", plan.FAILURE_UNPUBLISHED),
+        ("run-2", "equity_sectors", "ok", None),
+        ("run-3", "trading_calendar", "ok", None),
+        ("run-4", positions.SOURCE_ID, "failed", plan.FAILURE_SOURCE),
+    ]
+    for run_id, source_id, status, kind in rows:
+        await repository.record_run(
+            run_id=run_id,
+            source_id=source_id,
+            status=status,
+            started_at=now,
+            finished_at=now,
+            session_date=SESSION,
+            failure_kind=kind,
+        )
+    await db_session.commit()
+
+    assert await repository.attempts_by_session([SESSION]) == {SESSION: 1}

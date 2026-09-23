@@ -70,6 +70,9 @@ RETRY_BACKOFF_FACTOR = 1.7
 # каждая дата нужна только пока собирается её сессия.
 DAY_CACHE_LIMIT = 4
 
+# Причина неизвестного ответа «таблица даты не опубликована» (FR-053a, FR-032h).
+UNPUBLISHED_REASON = "day_not_published"
+
 REQUIRED_COLUMNS = (
     "moment",
     "isin",
@@ -209,7 +212,7 @@ class PositionsClient:
         table = await self._day_table(day)
 
         if not table.published:
-            return PositionFetchResult.unknown("day_not_published")
+            return PositionFetchResult.unknown(UNPUBLISHED_REASON)
 
         snapshot = table.families.get(family)
         if snapshot is None:
@@ -277,6 +280,12 @@ class PositionsClient:
 
         body = await self._get(REQUEST_URL, {"d": day.strftime("%Y%m%d"), "t": "1"})
         table = parse_day_table(body, day)
+        if not table.published:
+            # Неопубликованный день не кешируется: кеш превращал бы повторный
+            # вопрос в тот же ответ без обращения, и «подождать публикацию»
+            # этим клиентом было бы невозможно (FR-032h).
+            logger.info("позиции за %s: день не опубликован", day)
+            return table
         if len(self._days) >= DAY_CACHE_LIMIT:
             self._days.pop(next(iter(self._days)))
         self._days[day] = table

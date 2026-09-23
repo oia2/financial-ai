@@ -32,6 +32,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import gaps
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.models import (
+    UNKNOWN_CONTRACT,
     EquityAggregate,
     EquityDailyBar,
     FuturesPosition,
@@ -120,7 +121,16 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
     position_sessions = await calendar.window(
         asof_date, settings.market_data_positions_window_sessions
     )
-    position_rows = await repository.positions_for_window(position_sessions)
+    # Строки без установленного семейства записаны до FR-039: доказательств
+    # действующего правила у них нет, часть доказанно ошибочна (SBER 24.08.2026:
+    # `fiz_long = 100` при фактических 125148), и отдельной серией
+    # «бумага — unknown» они доходили до модели. В хранилище они остаются как
+    # история происхождения, во вход — нет (FR-051a).
+    position_rows = [
+        row
+        for row in await repository.positions_for_window(position_sessions)
+        if row.contract_code != UNKNOWN_CONTRACT
+    ]
 
     # Агрегаты идут по окну цен: модель заводит их тем же слоем состояния,
     # что и котировки (`data_plane_step4`), отдельного окна у них нет.

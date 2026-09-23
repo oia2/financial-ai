@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
+from financial_ai.market_data.calendar import moscow_today
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 
@@ -45,7 +46,9 @@ async def sync_trading_calendar(
         # anchoring to the last saved session still fetches the entire gap.
         latest = await repository.latest_trading_session()
         start = latest - dt.timedelta(days=14) if latest is not None else EARLIEST_DATE
-    end = date_till or dt.date.today()
+    # Московская дата, а не дата пояса процесса: в контейнере UTC, и с 00:00
+    # до 03:00 МСК граница запроса отставала на сутки (FR-040a).
+    end = date_till or moscow_today()
 
     rows = await client.fetch_security_history(
         proxy_security, start.isoformat(), end.isoformat(), COLUMNS

@@ -79,8 +79,11 @@ def _schema(database_available: bool) -> Iterator[None]:
     async def create() -> None:
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        # Импорт ради регистрации таблиц рыночных данных в Base.metadata:
-        # без него create_all их не создаст.
+        # Импорт ради регистрации таблиц в Base.metadata: без него create_all
+        # их не создаст. Модели Daily ML прежде регистрировал какой-нибудь
+        # ранний тест, и схема зависела от порядка запуска: отдельный прогон
+        # части набора падал на отсутствующей `daily_ml_ranking_item`.
+        import financial_ai.daily_ml.models
         import financial_ai.market_data.models  # noqa: F401
         from financial_ai.db.models import Base
 

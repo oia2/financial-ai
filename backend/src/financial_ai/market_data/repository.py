@@ -42,6 +42,7 @@ from financial_ai.market_data.models import (
     SourceWorkEvidence,
     TradingSession,
 )
+from financial_ai.market_data.plan import DAILY, DAILY_PLAN, FAILURE_UNPUBLISHED
 
 logger = logging.getLogger(__name__)
 
@@ -1103,7 +1104,15 @@ class MarketDataRepository:
             return {}
         rows = await self._session.execute(
             select(IngestRun.session_date, func.count(func.distinct(IngestRun.run_id)))
-            .where(IngestRun.session_date.in_(sessions))
+            .where(
+                IngestRun.session_date.in_(sessions),
+                # Попыткой считается работа ЗА СЕССИЮ. Календарь и суточные
+                # справочники спрашиваются по своему гейту, а ожидание
+                # публикации задержанного источника — не неудача: прогон, где
+                # ничего другого не было, предел попыток не расходует (FR-032h).
+                IngestRun.source_id.not_in(_NOT_SESSION_ATTEMPTS),
+                IngestRun.failure_kind.is_distinct_from(FAILURE_UNPUBLISHED),
+            )
             .group_by(IngestRun.session_date)
         )
         return {day: count for day, count in rows.all() if day is not None}
@@ -1514,6 +1523,23 @@ class MarketDataRepository:
             )
         )
 
+    async def has_verified_success(self, source_id: str) -> bool:
+        """Завершался ли источник хоть раз успехом действующего правила полноты.
+
+        Для справочника без оси сессий это и есть «получен и проверен»: старый
+        успех без доказательства и одни неудачи этим не являются (FR-033j).
+        """
+        found = await self._session.scalar(
+            select(IngestRun.id)
+            .where(
+                IngestRun.source_id == source_id,
+                IngestRun.status == "ok",
+                IngestRun.coverage_version == CURRENT_COVERAGE_VERSION,
+            )
+            .limit(1)
+        )
+        return found is not None
+
     async def latest_source_run(self, source_id: str) -> IngestRun | None:
         """Последний фактический исход источника без выдуманной оси сессий."""
         return await self._session.scalar(
@@ -1530,6 +1556,10 @@ class MarketDataRepository:
             .order_by(IngestRun.started_at)
         )
         return list(rows.all())
+
+
+# Источники без оси сессий: их исход с датой сессии попыткой её закрыть не является.
+_NOT_SESSION_ATTEMPTS = tuple(spec.source_id for spec in DAILY_PLAN if spec.scope == DAILY)
 
 
 def _positions_filled() -> ColumnElement[bool]:

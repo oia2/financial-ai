@@ -17,9 +17,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import groups
-from financial_ai.market_data.models import SourceWorkEvidence
-from financial_ai.market_data.repository import AggregateRow, DailyBar, MarketDataRepository
-from financial_ai.ranking.dataset import DatasetError, build_dataset, prune_datasets
+from financial_ai.market_data.models import UNKNOWN_CONTRACT, SourceWorkEvidence
+from financial_ai.market_data.repository import (
+    AggregateRow,
+    DailyBar,
+    MarketDataRepository,
+    PositionRow,
+)
+from financial_ai.ranking.dataset import (
+    POSITIONS_NAME,
+    DatasetError,
+    build_dataset,
+    prune_datasets,
+)
 from tests.market_data.verified import record_verified_run
 
 pytestmark = pytest.mark.db
@@ -432,4 +442,30 @@ async def test_unfinished_source_is_named(db_session: AsyncSession, settings: Se
 
     assert dataset.incomplete == [
         {"session_date": SESSIONS[1].isoformat(), "sources": ["futures_positions"]}
+    ]
+
+
+async def test_positions_without_contract_family_do_not_reach_the_model(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Старые строки `unknown` — не вход модели (FR-051a).
+
+    На рабочей базе такая строка SBER за 24.08.2026 несла `fiz_long = 100` при
+    фактических 125148 и доходила до модели отдельной серией.
+    """
+    await _seed(db_session)
+    repository = MarketDataRepository(db_session)
+    await repository.upsert_positions(
+        [
+            PositionRow("EQ_AST_SBER", ASOF, Decimal("125148"), None, None, None, "SBRF_F"),
+            PositionRow("EQ_AST_SBER", ASOF, Decimal("100"), None, None, None, UNKNOWN_CONTRACT),
+        ]
+    )
+    await db_session.commit()
+
+    dataset = await build_dataset(db_session, settings, ASOF)
+    payload = json.loads((dataset.path / POSITIONS_NAME).read_text(encoding="utf-8"))
+
+    assert [(s["asset_id"], s["contract_code"]) for s in payload["series"]] == [
+        ("EQ_AST_SBER", "SBRF_F")
     ]

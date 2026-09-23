@@ -31,6 +31,9 @@ FAILURE_SOURCE = "source"
 FAILURE_STOPPED = "stopped"
 FAILURE_INTERRUPTED = "interrupted"
 FAILURE_INTERNAL = "internal"
+# Задержанный источник ещё не опубликовал дату (FR-032h). Это ожидание, а не
+# отказ: попыткой закрыть сессию не считается и «ошибкой источника» не является.
+FAILURE_UNPUBLISHED = "unpublished"
 
 OUTCOME_COLLECTED = "collected"
 OUTCOME_PARTIAL = "partial"

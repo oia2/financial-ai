@@ -28,7 +28,7 @@ export type CoverageState =
  * Почему работа не завершена (FR-033f): остановка человеком и обрыв
  * перезапуском — не отказ источника.
  */
-export type FailureKind = 'source' | 'stopped' | 'interrupted' | 'internal';
+export type FailureKind = 'source' | 'stopped' | 'interrupted' | 'internal' | 'unpublished';
 
 export interface CoverageFailureDto {
   session_date: string;

@@ -48,13 +48,51 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
 fi
 printf 'БД для тестов: %s\n' "${DATABASE_URL//:*@/:***@}"
 
+# ---------- эмулятор и frontend — параллельно с backend ----------
+# Проверки те же и в том же составе; меняется только время: backend-тесты
+# ждут базу, а frontend занят процессором, и последовательно гейт стоял
+# вдвое дольше. Вывод блока печатается целиком после backend, а его провалы
+# входят в общий итог.
+PARALLEL_LOG="$(mktemp)"
+PARALLEL_FAILED="$(mktemp)"
+(
+    FAILED=()
+    # ---------- эмулятор Daily ML ----------
+    # Отдельный uv-проект: свои зависимости и своя конфигурация инструментов.
+    # Сборка образа отдельного шага не требует — docker compose build ниже собирает
+    # все сервисы файла, включая эмулятор.
+    step "daily-ml-emulator: ruff check"  bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff check ."
+    step "daily-ml-emulator: ruff format" bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff format --check ."
+    step "daily-ml-emulator: mypy"        bash -c "cd '$ROOT/daily-ml-emulator' && uv run mypy"
+    step "daily-ml-emulator: pytest"      bash -c "cd '$ROOT/daily-ml-emulator' && uv run pytest -q"
+
+    # ---------- frontend ----------
+    step "frontend: eslint"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/eslint ."
+    step "frontend: prettier"         bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/prettier --check ."
+    step "frontend: tsc"              bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/tsc --noEmit"
+    step "frontend: vitest"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vitest run"
+
+    # Сборка отдельно от образа: она проверяет, что в dist попали не только модули,
+    # но и статические файлы из public/. Иконка вкладки уже терялась ровно так —
+    # Dockerfile копировал src/, но не public/, и сборка при этом проходила.
+    step "frontend: сборка и статика" bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vite build >/dev/null && test -f dist/favicon.svg && test -f dist/index.html && python -c \"
+import io, xml.dom.minidom as m
+m.parseString(io.open('dist/favicon.svg', encoding='utf-8').read())
+\""
+    printf '%s\n' "${FAILED[@]}" > "$PARALLEL_FAILED"
+) > "$PARALLEL_LOG" 2>&1 &
+PARALLEL_PID=$!
+
 # ---------- backend ----------
 # Точка запуска — корень пакета, а не отдельные каталоги: проверяется всё,
 # включая migrations/ и конфигурационные файлы.
 step "backend: ruff check"        bash -c "cd '$ROOT/backend' && uv run ruff check ."
 step "backend: ruff format"       bash -c "cd '$ROOT/backend' && uv run ruff format --check ."
 step "backend: mypy"              bash -c "cd '$ROOT/backend' && uv run mypy"
-step "backend: pytest"            bash -c "cd '$ROOT/backend' && uv run pytest -q"
+step "scripts: ruff"             bash -c "cd '$ROOT/backend' && uv run ruff check ../scripts && uv run ruff format --check ../scripts"
+# Тот же набор тестов, разложенный по шардам со своей тестовой базой у каждого:
+# последовательно ~4 минуты, параллельно ~1,5 (scripts/pytest_shards.py).
+step "backend: pytest"            bash -c "cd '$ROOT/backend' && uv run python ../scripts/pytest_shards.py"
 
 # ---------- миграции на чистой БД ----------
 step "backend: alembic на чистой БД" bash -c "cd '$ROOT/backend' && \
@@ -70,28 +108,13 @@ async def main():
 asyncio.run(main())
 \" && DATABASE_URL=\"\${DATABASE_URL%/*}/financial_ai_gatecheck\" uv run alembic upgrade head >/dev/null"
 
-# ---------- эмулятор Daily ML ----------
-# Отдельный uv-проект: свои зависимости и своя конфигурация инструментов.
-# Сборка образа отдельного шага не требует — docker compose build ниже собирает
-# все сервисы файла, включая эмулятор.
-step "daily-ml-emulator: ruff check"  bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff check ."
-step "daily-ml-emulator: ruff format" bash -c "cd '$ROOT/daily-ml-emulator' && uv run ruff format --check ."
-step "daily-ml-emulator: mypy"        bash -c "cd '$ROOT/daily-ml-emulator' && uv run mypy"
-step "daily-ml-emulator: pytest"      bash -c "cd '$ROOT/daily-ml-emulator' && uv run pytest -q"
-
-# ---------- frontend ----------
-step "frontend: eslint"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/eslint ."
-step "frontend: prettier"         bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/prettier --check ."
-step "frontend: tsc"              bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/tsc --noEmit"
-step "frontend: vitest"           bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vitest run"
-
-# Сборка отдельно от образа: она проверяет, что в dist попали не только модули,
-# но и статические файлы из public/. Иконка вкладки уже терялась ровно так —
-# Dockerfile копировал src/, но не public/, и сборка при этом проходила.
-step "frontend: сборка и статика" bash -c "cd '$ROOT/frontend' && ./node_modules/.bin/vite build >/dev/null && test -f dist/favicon.svg && test -f dist/index.html && python -c \"
-import io, xml.dom.minidom as m
-m.parseString(io.open('dist/favicon.svg', encoding='utf-8').read())
-\""
+# ---------- итог параллельного блока ----------
+wait "$PARALLEL_PID" || true
+cat "$PARALLEL_LOG"
+while IFS= read -r name; do
+    [[ -n "$name" ]] && FAILED+=("$name")
+done < "$PARALLEL_FAILED"
+rm -f "$PARALLEL_LOG" "$PARALLEL_FAILED"
 
 # ---------- сборка образов ----------
 # Собирается всегда, кроме явного --no-docker: неверный тег базового образа

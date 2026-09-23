@@ -62,8 +62,13 @@ async def evaluate(session: AsyncSession, settings: Settings, asof_date: dt.date
     for group in required_groups(settings):
         window_size = group.window_sessions(settings)
         if window_size is None:
-            # Справочник текущего состояния: окна у него нет, и «недобранным»
-            # он не бывает.
+            # Справочник текущего состояния: окна у него нет, но обязательность
+            # должна что-то значить — каждый источник хотя бы раз получен и
+            # проверен действующим правилом. Прежде группа пропускалась
+            # безусловно, и «обязательный» справочник не проверялся вовсе
+            # (FR-033j).
+            if not await _reference_verified(repository, group):
+                missing.append(group.group_id.value)
             continue
 
         window = await calendar.window(asof_date, window_size)
@@ -110,6 +115,13 @@ async def latest_ready(
         for group in required_groups(settings)
         if (size := group.window_sessions(settings)) is not None
     ]
+    # Справочник от даты не зависит: не проверен — не готова ни одна дата
+    # (FR-033j).
+    for group in required_groups(settings):
+        if group.window_sessions(settings) is None and not await _reference_verified(
+            repository, group
+        ):
+            return None
     # Все окна перекрываются. Их повторная проверка по одной дате делала
     # сотни одинаковых аудитов и держала блокировку уже завершённого сбора.
     # Читаем общую историю один раз, сохраняя то же правило полноты источников.
@@ -131,6 +143,14 @@ async def latest_ready(
             return None
 
     return history[max(candidates)] if candidates else None
+
+
+async def _reference_verified(repository: MarketDataRepository, group: groups.SourceGroup) -> bool:
+    """Каждый источник справочника хотя бы раз получен и проверен (FR-033j)."""
+    for source_id in group.source_ids:
+        if not await repository.has_verified_success(source_id):
+            return False
+    return True
 
 
 def dataset_is_complete(incomplete: Iterable[Mapping[str, object]], settings: Settings) -> bool:

@@ -34,9 +34,11 @@ import logging
 from collections.abc import Callable
 
 from financial_ai.market_data.interrupt import SourcePartialError, SourceStoppedError
+from financial_ai.market_data.plan import FAILURE_UNPUBLISHED
 from financial_ai.market_data.repository import MarketDataRepository, PositionRow
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.positions_client import (
+    UNPUBLISHED_REASON,
     PositionFetchKind,
     PositionFetchResult,
     PositionsClient,
@@ -190,6 +192,7 @@ async def sync_positions(
     )
 
     stopped = False
+    unpublished = False
     for ticker in wanted:
         # Единица обращения здесь — инструмент, и их десятки: ждать конца
         # сессии значило бы ждать минуты после нажатия. Собранное до этого
@@ -253,6 +256,13 @@ async def sync_positions(
         if isinstance(fetched, PositionFetchResult):
             if fetched.kind is PositionFetchKind.UNKNOWN:
                 unknown.append(f"{contract}/{session_date}:{fetched.reason_code}")
+                if fetched.reason_code == UNPUBLISHED_REASON:
+                    # Таблица даты одна на все пары: не опубликована для одной —
+                    # не опубликована для всех. Клиент такой день не кеширует
+                    # (FR-032h), и продолжать значило бы спросить его ещё
+                    # столько раз, сколько осталось пар.
+                    unpublished = True
+                    break
                 continue
             if fetched.kind is PositionFetchKind.NOT_APPLICABLE:
                 # Семейство в этот день ещё не торговалось: пара неприменима с
@@ -332,6 +342,18 @@ async def sync_positions(
             written,
             f"спрошено {requested} бумаг из {len(wanted)}",
             evidence=tuple(evidence),
+        )
+
+    if unpublished:
+        # Ожидание публикации, а не отказ: попыткой сессии не считается и
+        # повторяется с обычной выдержкой (FR-032h).
+        return VerificationResult(
+            rows_written=written,
+            evidence=tuple(evidence),
+            complete=False,
+            detail=f"позиции за {session_date} биржей ещё не опубликованы",
+            counts_as_unavailable=False,
+            failure_kind=FAILURE_UNPUBLISHED,
         )
 
     if unknown:

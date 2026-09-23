@@ -161,7 +161,9 @@ def test_zcyc_outside_the_wrapper_is_not_read() -> None:
 @respx.mock
 async def test_key_rate_is_fetched() -> None:
     route = respx.get(cbr.KEY_RATE_URL).mock(return_value=httpx.Response(200, text=KEY_RATE_HTML))
-    values = await cbr.fetch_key_rate(cbr.CbrConfig(), dt.date(2026, 8, 26), dt.date(2026, 8, 28))
+    values = await cbr.fetch_key_rate(
+        cbr.CbrConfig(retry_backoff_seconds=0.0), dt.date(2026, 8, 26), dt.date(2026, 8, 28)
+    )
     assert len(values) == 3
     # Формат даты в параметрах — тот, который понимает ЦБ.
     assert "26.08.2026" in str(route.calls[0].request.url)
@@ -171,14 +173,18 @@ async def test_key_rate_is_fetched() -> None:
 async def test_unavailable_cbr_is_reported() -> None:
     respx.get(cbr.KEY_RATE_URL).mock(side_effect=httpx.ConnectError("нет связи"))
     with pytest.raises(cbr.CbrError, match="недоступен"):
-        await cbr.fetch_key_rate(cbr.CbrConfig(), dt.date(2026, 8, 26), dt.date(2026, 8, 28))
+        await cbr.fetch_key_rate(
+            cbr.CbrConfig(retry_backoff_seconds=0.0), dt.date(2026, 8, 26), dt.date(2026, 8, 28)
+        )
 
 
 @respx.mock
 async def test_error_status_is_reported() -> None:
     respx.get(cbr.ZCYC_URL).mock(return_value=httpx.Response(503))
     with pytest.raises(cbr.CbrError, match="503"):
-        await cbr.fetch_zcyc(cbr.CbrConfig(), dt.date(2026, 8, 26), dt.date(2026, 8, 28))
+        await cbr.fetch_zcyc(
+            cbr.CbrConfig(retry_backoff_seconds=0.0), dt.date(2026, 8, 26), dt.date(2026, 8, 28)
+        )
 
 
 @respx.mock

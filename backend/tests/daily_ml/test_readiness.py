@@ -324,3 +324,58 @@ async def test_empty_exchange_answer_still_closes_the_session(
     )
 
     assert missing == []
+
+
+async def test_required_reference_needs_a_verified_success(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Обязательный справочник что-то значит (FR-033j).
+
+    Прежде группа без оси сессий пропускалась безусловно: справочник, не
+    полученный ни разу, готовности не мешал. Старый успех без доказательства
+    действующего правила её тоже не закрывает; более поздняя неудача
+    полученный справочник не отменяет.
+    """
+    repository = await seed(db_session)
+    settings.daily_ml_required_data_groups = ["quotes", "reference"]
+    moment = dt.datetime.now(dt.UTC)
+
+    result = await readiness.evaluate(db_session, settings, ASOF)
+    assert not result.ready
+    assert result.missing_groups == ["reference"]
+    assert await readiness.latest_ready(db_session, settings, ASOF) is None
+
+    for source_id in ("equity_sectors", "equity_lot_sizes"):
+        # Старый успех без версии правила полноты.
+        await repository.record_run(
+            run_id=f"legacy-{source_id}",
+            source_id=source_id,
+            status="ok",
+            started_at=moment,
+            finished_at=moment,
+        )
+    await db_session.commit()
+    assert not (await readiness.evaluate(db_session, settings, ASOF)).ready
+
+    for source_id in ("equity_sectors", "equity_lot_sizes"):
+        await repository.record_run(
+            run_id=f"verified-{source_id}",
+            source_id=source_id,
+            status="ok",
+            started_at=moment,
+            finished_at=moment,
+            coverage_version=2,
+            coverage_reason="verified_work_evidence",
+        )
+        await repository.record_run(
+            run_id=f"later-failure-{source_id}",
+            source_id=source_id,
+            status="failed",
+            started_at=moment + dt.timedelta(minutes=1),
+            finished_at=moment + dt.timedelta(minutes=1),
+            failure_kind="source",
+        )
+    await db_session.commit()
+
+    assert (await readiness.evaluate(db_session, settings, ASOF)).ready
+    assert await readiness.latest_ready(db_session, settings, ASOF) == ASOF
