@@ -21,7 +21,11 @@ from weakref import WeakKeyDictionary
 
 from financial_ai.market_data.iss.client import IssClient, IssError, ResponseContractError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
-from financial_ai.market_data.verification import VerificationResult, one_session
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    awaiting_publication,
+    one_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,10 @@ async def sync_equity_daily(
     оборванной историей (FR-038).
     """
     rows = await fetch_equity_board_rows(client, session_date)
+    if not rows:
+        # Доска TQBR в торговую сессию не бывает пустой: пустой ответ — день
+        # ещё не опубликован, а не подтверждённое отсутствие (FR-032i).
+        return awaiting_publication(f"котировки за {session_date}: доска TQBR ещё не опубликована")
     aliases = await repository.aliases_on(session_date)
     bars = rows_to_bars(rows, session_date, aliases)
 
@@ -74,7 +82,7 @@ async def sync_equity_daily(
 
     written = await repository.upsert_daily_bars(bars)
     logger.info("котировки за %s: получено строк %d, записано %d", session_date, len(rows), written)
-    return one_session(written, session_date, "board:TQBR", has_value=bool(rows))
+    return one_session(written, session_date, "board:TQBR", has_value=True)
 
 
 async def fetch_equity_board_rows(

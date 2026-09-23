@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
+from financial_ai.market_data.plan import FAILURE_UNPUBLISHED
+
 RESULT_VALUE = "value"
 RESULT_CONFIRMED_ABSENCE = "confirmed_absence"
 RESULT_NOT_APPLICABLE = "not_applicable"
@@ -54,6 +56,27 @@ def one_session(
             ),
         ),
     )
+
+
+def awaiting_publication(detail: str) -> VerificationResult:
+    """Источник за дату ещё ничего не опубликовал (FR-032h, FR-032i).
+
+    Не отсутствие и не отказ: доказательства нет, попытки сессии не
+    расходуются, повтор — с обычной выдержкой. Для значения, которое существует
+    в каждую торговую сессию, пустой ответ означает только это.
+    """
+    return VerificationResult(
+        rows_written=0,
+        evidence=(),
+        complete=False,
+        detail=detail,
+        failure_kind=FAILURE_UNPUBLISHED,
+    )
+
+
+def not_applicable_value(detail: str) -> VerificationResult:
+    """Ответ со строками, но без применимого значения: вопрос к источнику."""
+    return VerificationResult(rows_written=0, evidence=(), complete=False, detail=detail)
 
 
 def required_work_keys(source_id: str) -> frozenset[str]:

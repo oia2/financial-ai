@@ -31,7 +31,11 @@ from financial_ai.market_data.iss.client import IssClient, ResponseContractError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import ASSET_PREFIX, asset_id_for, to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
-from financial_ai.market_data.verification import VerificationResult, one_session
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    awaiting_publication,
+    one_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +138,11 @@ async def sync_index_constituents(
     # (FR-048).
     aliases = await repository.aliases_on(session_date)
     names = {ticker: asset_id.removeprefix(ASSET_PREFIX) for ticker, asset_id in aliases.items()}
+    if not rows:
+        # Состав IMOEX существует в каждую торговую сессию: пустой ответ — день
+        # ещё не опубликован, а не «индекса не было» (FR-032i).
+        return awaiting_publication(f"состав {index_id} за {session_date} ещё не опубликован")
+
     weights = rows_to_weights(rows, session_date, index_id, names)
 
     if rows and not weights:
@@ -152,12 +161,7 @@ async def sync_index_constituents(
         len(weights),
         written,
     )
-    return one_session(
-        written,
-        session_date,
-        f"index:{index_id}",
-        has_value=bool(weights),
-    )
+    return one_session(written, session_date, f"index:{index_id}", has_value=True)
 
 
 def rows_to_weights(

@@ -1198,16 +1198,9 @@ async def _sync_cbr_range(
             evidence.extend(
                 WorkEvidence(day, cbr.KEY_RATE_SERIES_ID) for day in sorted(set(key_rate) & wanted)
             )
-            if key_todo and not key_rate:
-                evidence.extend(
-                    WorkEvidence(
-                        day,
-                        cbr.KEY_RATE_SERIES_ID,
-                        result_kind="confirmed_absence",
-                        reason_code="verified_empty_cbr_table",
-                    )
-                    for day in key_todo
-                )
+            # Пустая таблица ставки доказательством не является: ставка
+            # действует каждый день, и её отсутствие за дату значит «ещё не
+            # опубликовано» (FR-032i).
 
     if should_stop is not None and should_stop():
         raise SourceStoppedError(written, evidence=tuple(evidence))
@@ -1252,6 +1245,12 @@ async def _sync_cbr_range(
         evidence=tuple(evidence),
         complete=not missing,
         detail=f"не собрано: {', '.join(missing)}" if missing else None,
+        # Обе части ответили, но не за все даты — ждём публикации: кривую ЗКЦ
+        # за день выкладывают позже закрытия (FR-032i). Несостоявшееся
+        # обращение — отказ источника.
+        failure_kind=(
+            plan.FAILURE_UNPUBLISHED if missing and not unfinished else plan.FAILURE_SOURCE
+        ),
     )
 
 

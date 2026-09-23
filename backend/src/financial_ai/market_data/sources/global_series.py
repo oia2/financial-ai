@@ -16,17 +16,13 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
-from financial_ai.market_data.calendar import moscow_today
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.plan import FAILURE_SOURCE, FAILURE_UNPUBLISHED
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
-from financial_ai.market_data.verification import (
-    RESULT_CONFIRMED_ABSENCE,
-    VerificationResult,
-    WorkEvidence,
-)
+from financial_ai.market_data.verification import VerificationResult, WorkEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -134,23 +130,12 @@ async def sync_iss_series_range(
             written += await repository.upsert_global_values(spec.series_id, values)
             for day in sorted(set(values) & set(todo) if required else set(values)):
                 evidence.append(WorkEvidence(day, spec.series_id))
-        elif required and upper < moscow_today():
-            # Корректный полностью пустой ответ — проверенное отсутствие. Если
-            # ответ частичный, отсутствующая внутри диапазона дата остаётся
-            # неизвестной и доказательства не получает.
-            #
-            # Сегодняшняя дата отсутствием не подтверждается: значение дня
-            # могло ещё не выйти, а непубликация неприменимостью не является
-            # (FR-032). Она остаётся работой и подтвердится повтором.
-            evidence.extend(
-                WorkEvidence(
-                    day,
-                    spec.series_id,
-                    result_kind=RESULT_CONFIRMED_ABSENCE,
-                    reason_code="verified_empty_history",
-                )
-                for day in todo
-            )
+        # Пустой ответ и недостающая в ответе дата доказательства не получают:
+        # ряды этого источника существуют в каждую торговую сессию, и отсутствие
+        # значения за сессию значит «ещё не опубликовано». Прежде полностью
+        # пустой ответ за прошедшую дату записывался подтверждённым
+        # отсутствием — значение терялось навсегда, если сбор пришёлся на
+        # время до публикации (FR-032i).
 
     proved = done | {(item.session_date, item.work_key) for item in evidence}
     missing_dates = [
@@ -164,6 +149,9 @@ async def sync_iss_series_range(
         rows_written=written,
         evidence=tuple(evidence),
         complete=not missing,
+        # Все ряды ответили, но не за все даты — ждём публикации (FR-032i).
+        # Несостоявшееся обращение — отказ источника.
+        failure_kind=FAILURE_UNPUBLISHED if missing and not unfinished else FAILURE_SOURCE,
         detail=(
             f"не собраны ряды: {', '.join(unfinished)}"
             f" (получено {len(specs) - len(unfinished)} из {len(specs)})"

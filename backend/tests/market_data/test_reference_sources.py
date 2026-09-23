@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from financial_ai.market_data import plan
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import reference
 
@@ -196,14 +197,20 @@ async def test_rows_without_a_single_weight_are_a_failure(
         await reference.sync_index_constituents(iss, repository, SESSION)  # type: ignore[arg-type]
 
 
-async def test_empty_composition_is_not_a_failure(db_session: AsyncSession) -> None:
-    """Состава за дату нет вовсе — это отсутствие данных, а не сбой разбора."""
+async def test_empty_composition_is_awaiting_publication(db_session: AsyncSession) -> None:
+    """Пустой состав за торговую сессию — ещё не опубликован (FR-032i).
+
+    Прежде он записывался подтверждённым отсутствием, и веса дня терялись
+    навсегда, если сбор пришёлся на время до публикации аналитики индекса.
+    """
     repository = await _seed(db_session, ["SBER"])
 
     result = await reference.sync_index_constituents(FakeIss(), repository, SESSION)  # type: ignore[arg-type]
 
     assert result.rows_written == 0
-    assert result.complete is True
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
 
 
 async def test_no_empty_weight_rows_are_written(db_session: AsyncSession) -> None:

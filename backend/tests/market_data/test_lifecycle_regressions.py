@@ -247,9 +247,11 @@ async def test_range_resumes_only_unproved_remainder(db_session: AsyncSession) -
         required_dates=required,
     )
 
-    # Повтор — один запрос RVI за его недоказанную дату. Пустой ответ за
-    # прошедшую дату — подтверждённое отсутствие, и работа завершается.
-    assert not first.complete and second.complete
+    # Повтор — один запрос RVI за его недоказанную дату. Пустой ответ
+    # подтверждённым отсутствием не становится: RVI существует в каждую
+    # сессию, и работа остаётся ожиданием публикации (FR-032i).
+    assert not first.complete and not second.complete
+    assert second.failure_kind == plan.FAILURE_UNPUBLISHED
     assert client.calls == [("RVI", SESSIONS[1].isoformat(), SESSIONS[1].isoformat())]
     group = next(g for g in groups.GROUPS if global_series.SOURCE_ID in g.source_ids)
     closed = await completeness.closed_sessions(

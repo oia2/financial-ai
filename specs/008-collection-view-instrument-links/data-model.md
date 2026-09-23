@@ -97,7 +97,7 @@
 | `period_till` | `Date, null` | конец периода; для посессионного источника равен `session_date` |
 | `coverage_version` | `Integer, null` | версия правила полноты, которым исход проверен |
 | `coverage_reason` | `String(64), null` | исход успешной проверки: `completed_with_values` или `completed_no_new_rows` |
-| `failure_kind` | `String(16), null` | причина незавершённости (FR-033f): `source`, `stopped`, `interrupted`, `internal`, `unpublished` (FR-032h: задержанный источник ещё не опубликовал дату); у успеха — `NULL` |
+| `failure_kind` | `String(16), null` | причина незавершённости (FR-033f): `source`, `stopped`, `interrupted`, `internal`, `unpublished` (FR-032h, FR-032i: источник ещё не опубликовал дату; попытки сессии не расходует); у успеха — `NULL` |
 
 `failure_kind` (миграция `0019`) заведён потому, что остановка человеком, обрыв
 перезапуском и сбой нашей обработки различались только текстом причины, и сводка

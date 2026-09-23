@@ -137,3 +137,52 @@ class _NullRepository:
 
     async def upsert_global_values(self, series_id: str, values: object) -> int:
         return 0
+
+
+# --- пустой свежий ответ (FR-032i) -------------------------------------------
+
+
+class _RowsIss:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    async def fetch_session_rows_for(
+        self, session_date: str, columns: tuple[str, ...], **kwargs: object
+    ) -> list[dict[str, object]]:
+        return self.rows
+
+
+async def test_empty_futures_day_is_awaiting_publication_not_absence() -> None:
+    """BR торгуется в каждую сессию: пусто — день ещё не опубликован.
+
+    Прежде пустой ответ записывался подтверждённым отсутствием, и Brent за
+    этот день терялся навсегда при полной на вид сводке.
+    """
+    from financial_ai.market_data import plan
+    from financial_ai.market_data.sources import brent as brent_source
+
+    result = await brent_source.sync_brent(
+        _RowsIss([]),  # type: ignore[arg-type]
+        _NullRepository(),  # type: ignore[arg-type]
+        SESSION,
+    )
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+async def test_rows_without_front_contract_are_a_source_problem() -> None:
+    """Строки есть, фронтального контракта нет — вопрос к источнику, не отсутствие."""
+    from financial_ai.market_data import plan
+    from financial_ai.market_data.sources import brent as brent_source
+
+    result = await brent_source.sync_brent(
+        _RowsIss([_row("BR-1.26")]),  # type: ignore[arg-type]
+        _NullRepository(),  # type: ignore[arg-type]
+        SESSION,
+    )
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_SOURCE

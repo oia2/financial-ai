@@ -22,7 +22,11 @@ from financial_ai.market_data.sources.equity_d1 import (
     secid_of,
     to_decimal,
 )
-from financial_ai.market_data.verification import VerificationResult, one_session
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    awaiting_publication,
+    one_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +39,15 @@ async def sync_equity_aggregates(
 ) -> VerificationResult:
     """Собрать агрегаты всех бумаг за одну торговую сессию."""
     rows = await fetch_equity_board_rows(client, session_date)
+    if not rows:
+        # Доска TQBR в торговую сессию не бывает пустой: пустой ответ — день
+        # ещё не опубликован, а не подтверждённое отсутствие (FR-032i).
+        return awaiting_publication(f"агрегаты за {session_date}: доска TQBR ещё не опубликована")
     aliases = await repository.aliases_on(session_date)
     aggregates = rows_to_aggregates(rows, session_date, aliases)
     written = await repository.upsert_aggregates(aggregates)
     logger.info("агрегаты за %s: получено %d, записано %d", session_date, len(rows), written)
-    return one_session(written, session_date, "board:TQBR", has_value=bool(rows))
+    return one_session(written, session_date, "board:TQBR", has_value=True)
 
 
 def rows_to_aggregates(

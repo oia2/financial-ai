@@ -28,7 +28,12 @@ from decimal import Decimal
 from financial_ai.market_data.iss.client import IssClient, ResponseContractError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
-from financial_ai.market_data.verification import VerificationResult, one_session
+from financial_ai.market_data.verification import (
+    VerificationResult,
+    awaiting_publication,
+    not_applicable_value,
+    one_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +65,20 @@ async def sync_brent(
     rows = await client.fetch_session_rows_for(
         session_date.isoformat(), COLUMNS, engine=ENGINE, market=MARKET, assetcode="BR"
     )
+    if not rows:
+        # BR торгуется в каждую сессию срочного рынка: пустой ответ за торговый
+        # день значит «ещё не опубликовано», а не «Brent не было». Прежде он
+        # записывался подтверждённым отсутствием, и значение дня терялось
+        # навсегда при полной на вид сводке (FR-032i).
+        logger.info("Brent за %s: срочный рынок день ещё не опубликовал", session_date)
+        return awaiting_publication(f"Brent за {session_date} ещё не опубликован")
+
     contract = select_front_contract(rows, session_date)
     if contract is None:
         logger.warning("Brent за %s: подходящего контракта не нашлось", session_date)
-        return one_session(0, session_date, SERIES_ID, has_value=False)
+        return not_applicable_value(
+            f"Brent за {session_date}: строк {len(rows)}, фронтального контракта нет"
+        )
 
     logger.info(
         "Brent за %s: фронтальный контракт %s (срок %s)",

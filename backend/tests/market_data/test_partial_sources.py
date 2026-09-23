@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from financial_ai.market_data import ingest
+from financial_ai.market_data import ingest, plan
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.sources import cbr, global_series
@@ -104,11 +104,12 @@ async def test_all_series_succeeding_closes_the_source() -> None:
     assert result.complete is True
 
 
-async def test_correct_empty_answer_is_not_a_failure() -> None:
-    """Корректный пустой ответ закрывает ряд: спрашивать нечего.
+async def test_correct_empty_answer_is_awaiting_publication() -> None:
+    """Корректный пустой ответ — ожидание публикации, а не отсутствие (FR-032i).
 
-    Это ровно то различие, которого не было: пустой ответ и сломанный контракт
-    возвращали одинаковый `{}`.
+    Ряды существуют в каждую торговую сессию. Прежде пустой ответ закрывал
+    ряд подтверждённым отсутствием, и значение дня терялось навсегда.
+    Сломанный контракт при этом остаётся отказом источника.
     """
     client = _client([[] for _ in SPECS])
     repository = _repository()
@@ -116,7 +117,9 @@ async def test_correct_empty_answer_is_not_a_failure() -> None:
     result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
 
     assert result.rows_written == 0
-    assert result.complete is True
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
     repository.upsert_global_values.assert_not_awaited()
 
 
@@ -205,3 +208,51 @@ async def test_missing_date_inside_range_remains_unproved() -> None:
     assert result.complete is False
     assert next_day.isoformat() in (result.detail or "")
     assert {item.session_date for item in result.evidence} == {DAY}
+
+
+async def test_fetch_failure_stays_a_source_failure() -> None:
+    """Несостоявшееся обращение — отказ источника, а не ожидание публикации."""
+    client = _client([[_row(DAY)], IssError("нет ответа"), [_row(DAY)], [_row(DAY)], [_row(DAY)]])
+
+    result = await global_series.sync_iss_series_range(client, _repository(), DAY, DAY, SPECS)
+
+    assert result.complete is False
+    assert result.failure_kind == plan.FAILURE_SOURCE
+
+
+async def test_empty_cbr_tables_are_awaiting_publication(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ставка действует каждый день, кривую за день выкладывают позже (FR-032i).
+
+    Прежде пустая таблица ставки записывалась подтверждённым отсутствием, а
+    невыложенная кривая расходовала попытки сессии как отказ источника.
+    """
+    monkeypatch.setattr(cbr, "fetch_key_rate", AsyncMock(return_value={}))
+    monkeypatch.setattr(cbr, "fetch_zcyc", AsyncMock(return_value={}))
+
+    result = await ingest._sync_cbr_range(
+        _repository(), DAY, DAY, client=None, should_stop=None, required_dates=(DAY,)
+    )
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+@pytest.mark.parametrize("source", ["quotes", "aggregates"])
+async def test_empty_tqbr_board_is_awaiting_publication(
+    monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """Доска TQBR в торговую сессию не бывает пустой (FR-032i)."""
+    from financial_ai.market_data.sources import equity_agg, equity_d1
+
+    module = equity_d1 if source == "quotes" else equity_agg
+    monkeypatch.setattr(module, "fetch_equity_board_rows", AsyncMock(return_value=[]))
+    repository = _repository()
+    repository.aliases_on = AsyncMock(return_value={})
+
+    sync = equity_d1.sync_equity_daily if source == "quotes" else equity_agg.sync_equity_aggregates
+    result = await sync(Mock(), repository, DAY)
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
