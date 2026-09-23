@@ -81,7 +81,7 @@ def test_malformed_date_falls_back_to_full_history() -> None:
 
 async def test_history_is_loaded(db_session: AsyncSession, settings: Settings) -> None:
     iss = FakeIss()
-    await backfill.backfill_equity(db_session, settings, iss, ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, iss, ["SBER", "GAZP"], till=DAYS[-1])
 
     repository = MarketDataRepository(db_session)
     assert await repository.count_daily_bars(DAYS[-1]) == 2
@@ -95,7 +95,7 @@ async def test_backfill_walks_securities_not_dates(
 ) -> None:
     """Первичная загрузка ходит по бумагам — за всю историю сразу."""
     iss = FakeIss()
-    await backfill.backfill_equity(db_session, settings, iss, ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, iss, ["SBER", "GAZP"], till=DAYS[-1])
     assert iss.security_calls == ["SBER", "GAZP"]
 
 
@@ -105,18 +105,20 @@ async def test_backfill_walks_securities_not_dates(
 async def test_completed_tickers_are_skipped(db_session: AsyncSession, settings: Settings) -> None:
     """FR-009: повторный запуск продолжает, а не начинает заново."""
     first = FakeIss()
-    await backfill.backfill_equity(db_session, settings, first, ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, first, ["SBER", "GAZP"], till=DAYS[-1])
 
     second = FakeIss()
-    await backfill.backfill_equity(db_session, settings, second, ["SBER", "GAZP", "LKOH"])
+    await backfill.backfill_equity(
+        db_session, settings, second, ["SBER", "GAZP", "LKOH"], till=DAYS[-1]
+    )
 
     assert second.security_calls == ["LKOH"]
 
 
 async def test_progress_reports_remaining(db_session: AsyncSession, settings: Settings) -> None:
-    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER"])
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER"], till=DAYS[-1])
     progress = await backfill.backfill_equity(
-        db_session, settings, FakeIss(), ["SBER", "GAZP", "LKOH"]
+        db_session, settings, FakeIss(), ["SBER", "GAZP", "LKOH"], till=DAYS[-1]
     )
     assert progress.total == 3
     assert "SBER" in progress.completed
@@ -125,7 +127,9 @@ async def test_progress_reports_remaining(db_session: AsyncSession, settings: Se
 async def test_interruption_keeps_loaded_data(db_session: AsyncSession, settings: Settings) -> None:
     """Одна недоступная бумага не отменяет уже загруженные."""
     iss = FakeIss(fail_for={"GAZP"})
-    await backfill.backfill_equity(db_session, settings, iss, ["SBER", "GAZP", "LKOH"])
+    await backfill.backfill_equity(
+        db_session, settings, iss, ["SBER", "GAZP", "LKOH"], till=DAYS[-1]
+    )
 
     repository = MarketDataRepository(db_session)
     tickers = await repository.tickers_with_history()
@@ -137,10 +141,10 @@ async def test_failed_ticker_is_retried_next_run(
 ) -> None:
     """Не загрузившаяся бумага должна попасть в следующий прогон."""
     await backfill.backfill_equity(
-        db_session, settings, FakeIss(fail_for={"GAZP"}), ["SBER", "GAZP"]
+        db_session, settings, FakeIss(fail_for={"GAZP"}), ["SBER", "GAZP"], till=DAYS[-1]
     )
     second = FakeIss()
-    await backfill.backfill_equity(db_session, settings, second, ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, second, ["SBER", "GAZP"], till=DAYS[-1])
     assert second.security_calls == ["GAZP"]
 
 
@@ -169,7 +173,7 @@ async def test_загрузка_это_один_прогон_а_не_прого�
 
     from financial_ai.market_data.models import IngestRun
 
-    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"], till=DAYS[-1])
     await db_session.commit()
 
     runs = await db_session.scalar(
@@ -186,7 +190,7 @@ async def test_исход_загрузки_копит_число_наблюде�
 
     from financial_ai.market_data.models import IngestRun
 
-    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"])
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["SBER", "GAZP"], till=DAYS[-1])
     await db_session.commit()
 
     written = await db_session.scalar(
@@ -204,7 +208,7 @@ async def test_загрузка_переименованной_бумаги_пр
     await repository.upsert_alias("MULTNEW", "EQ_AST_MULTOLD", DAYS[0])
     await db_session.commit()
 
-    await backfill.backfill_equity(db_session, settings, FakeIss(), ["MULTNEW"])
+    await backfill.backfill_equity(db_session, settings, FakeIss(), ["MULTNEW"], till=DAYS[-1])
 
     bars = await repository.daily_bars_for_window(DAYS)
     assert {bar.asset_id for bar in bars} == {"EQ_AST_MULTOLD"}

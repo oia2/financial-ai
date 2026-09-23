@@ -16,7 +16,8 @@
 ранжирование не запускалось бы вовсе.
 
 **Строки сами по себе не закрывают работу.** Источник закрывает дату только
-после успешного исхода, проверенного текущей версией правила полноты. Частичные
+доказательствами всех обязательных единиц работы действующей версии правила
+полноты (FR-032f). Частичные
 строки остаются полезными данными, но не заменяют обработку всего применимого
 набора рядов или пар. Успешная проверка может законно завершиться без новых
 строк; старые неподтверждённые даты требуют аудита и не запускают автодогон.
@@ -32,6 +33,32 @@ from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.groups import SourceGroup
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.verification import required_work_keys
+
+
+async def source_windows(
+    repository: MarketDataRepository,
+    settings: Settings,
+    asof: dt.date,
+) -> dict[str, frozenset[dt.date]]:
+    """Собственное окно каждого посессионного источника на дату ``asof``.
+
+    План — это пары «источник — дата», а не общий список дат для всех
+    (FR-033c). При выборе всех групп общий список дат доходил до позиций
+    целиком: 232 даты вне их окна в 82 сессии, около 15,8 тысячи лишних
+    обращений (анализ 2026-09-23, A2).
+    """
+    calendar = TradingCalendar(repository)
+    by_depth: dict[int, frozenset[dt.date]] = {}
+    windows: dict[str, frozenset[dt.date]] = {}
+    for group in groups.GROUPS:
+        depth = group.window_sessions(settings)
+        if depth is None:
+            continue
+        if depth not in by_depth:
+            by_depth[depth] = frozenset(await calendar.window(asof, depth))
+        for source_id in group.source_ids:
+            windows[source_id] = by_depth[depth]
+    return windows
 
 
 async def closed_sources_for(repository: MarketDataRepository, session_date: dt.date) -> set[str]:
@@ -124,20 +151,22 @@ async def closed_sessions(
     if group.session_column is None or not window:
         return set()
 
-    # Закрывает только успешный исход, проверенный текущей версией правила.
-    # Наличие строки не доказывает, что источник обработал все свои ряды или
-    # все применимые пары «актив — контракт» (FR-032).
-    successful = await repository.sessions_with_successful_run(window, source_id)
+    # Закрывают доказательства ВСЕХ обязательных единиц работы действующей
+    # версии, а не статус прогона (FR-032f). Наличие строки не доказывает, что
+    # источник обработал все свои ряды или все применимые пары (FR-032).
+    #
+    # Статус прогона — свёртка по всему его периоду, и прежнее правило
+    # «успех и доказательства и нет более поздней неудачи» теряло доказанное:
+    # диапазон, упавший на одной дате, не закрывал остальные доказанные, а
+    # поздняя неудачная попытка за уже доказанную дату снова открывала её —
+    # так Brent оставался «с ошибкой» при собранных значениях (анализ
+    # 2026-09-23, A4).
     evidence = await repository.work_evidence_for_sessions(source_id, window)
     by_day: dict[dt.date, set[str]] = {}
     for item in evidence:
         by_day.setdefault(item.session_date, set()).add(item.work_key)
     required = required_work_keys(source_id)
-    proved = {day for day, keys in by_day.items() if required <= keys}
-    closed = successful & proved
-    # Более поздний failed/stopped/running либо старый непроверенный исход
-    # перевешивает прежний успех и частичные наблюдения.
-    return closed - await repository.sessions_left_unfinished(window, source_id)
+    return {day for day, keys in by_day.items() if required <= keys}
 
 
 async def requires_audit_sessions(

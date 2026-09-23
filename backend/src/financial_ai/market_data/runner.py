@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from financial_ai.config import Settings
 from financial_ai.db.engine import get_session_factory
-from financial_ai.market_data import completeness, gaps, groups, ingest
+from financial_ai.market_data import completeness, groups, ingest
 from financial_ai.market_data import plan as plan_module
 from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssError
@@ -76,10 +76,6 @@ class CatchupAlreadyRunningError(RuntimeError):
     Отклоняем, а не присоединяемся: два одновременных сбора писали бы одни и те
     же строки и удваивали обращения к бирже.
     """
-
-
-class BackfillRequiredError(RuntimeError):
-    """В хранилище нет наблюдений: нужна первичная загрузка, а не догон."""
 
 
 class NothingToCatchUpError(RuntimeError):
@@ -250,6 +246,11 @@ class CatchupState:
             for source_id, state in self.sources.items()
             if source_id not in per_session
         }
+        # Вне окна источник исключается на каждую сессию заново: позиции (82
+        # сессии) возвращаются в ленту, когда сбор доходит до их окна. Прежде
+        # они стояли в счёте и тех сессий, где их не спрашивают, и счётчик не
+        # мог дойти до «5 из 5» (FR-033c).
+        self.omitted -= per_session & groups.source_ids_for(groups.resolve(self.group_ids or None))
 
     def note_skip(self, day: dt.date, reason: str, detail: str | None = None) -> None:
         self.outcomes[day] = "skipped"
@@ -400,20 +401,26 @@ class CatchupRunner:
             raise
 
         self._stop_requested = False
+        sessions = planned[0]
+        chosen = groups.source_ids_for(selected)
         self._state = CatchupState(
             status=CatchupStatus.RUNNING,
             mode=plan_module.MODE_MANUAL,
             group_ids=[group.group_id.value for group in selected],
-            date_from=planned[0][0],
-            date_till=planned[0][-1],
+            date_from=sessions[0] if sessions else None,
+            date_till=sessions[-1] if sessions else None,
             clamped=planned[1],
-            requested=list(planned[0]),
-            order=list(planned[0]),
+            requested=list(sessions),
+            order=list(sessions),
+            # Невыбранные источники в плане прогона не стоят (FR-056a).
+            omitted={
+                spec.source_id for spec in plan_module.CATCHUP_PLAN if spec.source_id not in chosen
+            },
             # Сессия называется СРАЗУ, а не когда до неё дошла очередь: до неё
             # прогон синхронизирует календарь и состав инструментов — видимую
             # работу, — а лента источников без названной сессии на экран не
             # выходит вовсе (FR-058c).
-            current=planned[0][0],
+            current=sessions[0] if sessions else None,
             run_id=str(uuid.uuid4()),
             started_at=dt.datetime.now(dt.UTC),
         )
@@ -518,10 +525,10 @@ class CatchupRunner:
             if asof is None:
                 raise NothingToCatchUpError("календарь пуст: собирать нечего")
 
-            report = await gaps.find_gaps(session, self._settings, asof)
-
-            if report.needs_backfill:
-                raise BackfillRequiredError("в хранилище нет наблюдений: нужна первичная загрузка")
+            # Пустая база — не отказ: загрузка окна модели и есть ручной сбор
+            # всех групп за всё окно тем же проверяемым путём (FR-033h).
+            # Прежде кнопка отвечала «нужна первичная загрузка», а сама
+            # первичная загрузка пропускала бумаги, известные по справочнику.
 
             # Ручной выбор ограничивает и даты, и источники. Каждая выбранная
             # группа вносит только свои собственные окна; обязательность для
@@ -550,7 +557,9 @@ class CatchupRunner:
                 missing.update(group_missing - audit)
 
         sessions, clamped = _clamp(sorted(missing), date_from, date_till)
-        if not sessions:
+        # Выбранный справочник — работа и без исторических дат (FR-033g).
+        wants_reference = any(not group.has_history for group in selected)
+        if not sessions and not wants_reference:
             raise NothingToCatchUpError("пропущенных сессий нет")
 
         logger.info(
@@ -591,10 +600,12 @@ class CatchupRunner:
         factory = get_session_factory()
         try:
             async with factory() as session:
+                # Сбор вызывается и без дат: выбранные справочники обновляются
+                # раз за запуск независимо от них (FR-033g).
                 result = await ingest.catch_up(
                     session,
                     self._settings,
-                    plan_sessions[-1],
+                    plan_sessions[-1] if plan_sessions else moscow_today(),
                     sessions=plan_sessions,
                     source_ids=groups.source_ids_for(selected),
                     on_session_start=self._on_session_start,
@@ -680,7 +691,10 @@ class CatchupRunner:
                         run_id=self._state.run_id,
                     )
                     self._on_session_done(
-                        day, ingest.INTERRUPTED if result.interrupted else result.succeeded
+                        day,
+                        ingest.INTERRUPTED
+                        if result.interrupted
+                        else (result.session_outcome or plan_module.OUTCOME_FAILED),
                     )
         except Exception as error:
             self._state.status = CatchupStatus.FAILED

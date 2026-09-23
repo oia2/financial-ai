@@ -17,6 +17,26 @@
 export type GroupId = 'quotes' | 'aggregates' | 'global' | 'positions' | 'reference';
 
 /**
+ * Состояние группы и источника — закрытый перечень, выбранный сервером по
+ * старшинству (spec 008, FR-024e). Интерфейс только подписывает его: второе
+ * объявление правила старшинства однажды разошлось бы с первым.
+ */
+export type CoverageState =
+  'empty' | 'running' | 'source_error' | 'internal_error' | 'interrupted' | 'missing' | 'complete';
+
+/**
+ * Почему работа не завершена (FR-033f): остановка человеком и обрыв
+ * перезапуском — не отказ источника.
+ */
+export type FailureKind = 'source' | 'stopped' | 'interrupted' | 'internal';
+
+export interface CoverageFailureDto {
+  session_date: string;
+  reason: string | null;
+  kind?: FailureKind;
+}
+
+/**
  * Исход одного источника группы за окно.
  *
  * Полнота группы считается по каждому источнику, поэтому неполнота обязана
@@ -38,6 +58,8 @@ export interface SourceCoverageDto {
    * что причины не было.
    */
   status: 'ok' | 'partial' | 'failed';
+  /** Состояние из закрытого перечня; поле старше `status` (FR-024e). */
+  state: CoverageState;
   sessions_covered: number;
   /** Старые сессии, которые требуют явного аудита/ремонта. */
   requires_audit: number;
@@ -48,7 +70,7 @@ export interface SourceCoverageDto {
    * нечего делать: проверить у источника нечего и решить, ждать или
    * вмешиваться, не по чему.
    */
-  failures: { session_date: string; reason: string | null }[];
+  failures: CoverageFailureDto[];
   /** Сколько неудач всего: список ограничен, и молчать об остатке нельзя. */
   failures_total: number;
   /** Момент последней проверки справочника текущего состояния. */
@@ -108,6 +130,17 @@ export interface GroupCoverageDto {
 
   /** Исход каждого источника группы. Пуст, когда окно пусто. */
   sources: SourceCoverageDto[];
+
+  /** Состояние группы — старшее среди её источников (FR-024e). */
+  state: CoverageState;
+
+  /** Последняя причина незавершённой работы: одна строка факта под состоянием. */
+  latest_failure?: {
+    session_date: string | null;
+    reason: string | null;
+    kind: FailureKind;
+    title: string;
+  } | null;
 }
 
 export interface CatchupWindowDto {

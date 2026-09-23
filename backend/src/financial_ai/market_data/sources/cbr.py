@@ -271,8 +271,16 @@ def _parse_cbr_date(raw: str) -> dt.date | None:
 
 
 def _clean_number(raw: str) -> str:
-    """Русский формат числа: пробелы-разделители и запятая вместо точки."""
-    return raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    """Русский формат числа: пробелы-разделители и запятая вместо точки.
+
+    Прочерк в таблице ЦБ означает «значения нет» и становится пустой строкой —
+    законным пропуском. Всё прочее обязано разобраться в число (FR-032e).
+    """
+    cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    return "" if cleaned in _NO_VALUE_MARKS else cleaned
+
+
+_NO_VALUE_MARKS = frozenset({"-", "—", "–"})
 
 
 def _normalise(name: str) -> str:

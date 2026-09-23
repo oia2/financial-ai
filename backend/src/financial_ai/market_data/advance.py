@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import completeness, ingest
+from financial_ai.market_data import completeness, ingest, plan
 from financial_ai.market_data.calendar import MOSCOW, TradingCalendar, moscow_now
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -275,7 +275,20 @@ async def calendar_is_due(
         return False
 
     threshold = dt.datetime.combine(moment.date(), _threshold_time(settings), tzinfo=MOSCOW)
-    return asked < threshold <= moment
+    if asked < threshold <= moment:
+        return True
+
+    # Одного опроса после порога мало: 22.09.2026 календарь спросили в 19:30,
+    # биржа день ещё не опубликовала, и до следующих суток его больше не
+    # спрашивали — сессия вечером не собралась. После порога в будний день,
+    # пока сегодняшней даты в календаре нет, календарь переспрашивается с
+    # интервалом повтора (FR-040, уточнение 2026-09-23).
+    if moment < threshold or moment.weekday() >= 5:
+        return False
+    if await repository.latest_trading_session(moment.date()) == moment.date():
+        return False
+    delay = dt.timedelta(minutes=max(settings.market_data_retry_after_minutes, 1))
+    return moment - asked >= delay
 
 
 def _threshold_time(settings: Settings) -> dt.time:
@@ -455,7 +468,7 @@ async def advance(
         result = await ingest.ingest_session(
             session, settings, day, on_source=on_source, should_stop=should_stop, run_id=run_id
         )
-        if result.succeeded:
+        if result.session_outcome == plan.OUTCOME_COLLECTED:
             collected.append(day)
         else:
             logger.warning("сессия %s не собрана полностью: %s", day, result.unfinished_sources)
@@ -465,7 +478,14 @@ async def advance(
             # её план не доработан по команде, и доделать его обязано
             # продолжение. Автоматический путь помечал её несобранной, и
             # продолжение её не брало: ручной чинили, этот — нет (FR-058).
-            on_session_done(day, ingest.INTERRUPTED if result.interrupted else result.succeeded)
+            # Итог — та же свёртка, что сохранена в журнале: «частично» и
+            # «не собрана» различаются, а не сводятся к да/нет (FR-033e).
+            on_session_done(
+                day,
+                ingest.INTERRUPTED
+                if result.interrupted
+                else (result.session_outcome or plan.OUTCOME_FAILED),
+            )
 
     unfinished = [day for day in pending if day not in collected] + skipped_history + deferred
     return AdvanceResult(

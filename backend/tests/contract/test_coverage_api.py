@@ -281,7 +281,12 @@ async def test_ошибка_источника_названа_днём_и_при
 
     assert brent["status"] == "failed"
     assert brent["failures"] == [
-        {"session_date": ASOF.isoformat(), "reason": "источник не ответил вовремя"}
+        {
+            "session_date": ASOF.isoformat(),
+            "reason": "источник не ответил вовремя",
+            # Запись без причины из перечня размечается по статусу (FR-033f).
+            "kind": "source",
+        }
     ]
 
     # У собравшегося источника списка неудач нет — пустой, а не выдуманный.

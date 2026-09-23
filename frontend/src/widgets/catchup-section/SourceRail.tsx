@@ -8,18 +8,14 @@
  *  - **порядок слева направо — порядок выполнения.** Виден не только идущий
  *    источник, но и следующий: долгий шаг перестаёт быть неотличимым от
  *    зависания (FR-003);
- *  - **в счётчик сессии входят только посессионные источники.** Диапазонные и
- *    суточные помечены отдельно: иначе счётчик обещал бы, что и они повторятся
- *    на следующий день (FR-007).
+ *  - **счётчик считает ровно то, что показано в ленте** (владелец,
+ *    2026-09-23): «1 из 4» при восьми строках читалось как ошибка счёта.
+ *    Источник, идущий раз на прогон, выполнен до сессий и стоит в счёте
+ *    выполненным. Источник вне своего окна в ленту не попадает (FR-033c).
  */
 
 import type { RunSourceDto } from '@/entities/market-data';
 import { formatIsoDate } from '@/shared/lib/market-format';
-
-const FLAG_BY_SCOPE: Record<string, string> = {
-  period: 'на весь период',
-  daily: 'раз в сутки',
-};
 
 const GLYPH: Record<string, string> = {
   done: '✓',
@@ -39,8 +35,7 @@ export function SourceRail({
   /** У идущего прогона первый ожидающий источник помечается следующим. */
   running: boolean;
 }) {
-  const perSession = sources.filter((source) => source.scope === 'session');
-  const aside = sources.filter((source) => source.scope !== 'session');
+  const perSession = sources;
 
   const passed = perSession.filter(
     (source) => source.state === 'done' || source.state === 'failed',
@@ -62,11 +57,6 @@ export function SourceRail({
           Источники сессии {formatIsoDate(sessionDate)}: {passed} из {perSession.length}
           {failed > 0 && `, ${failed} с ошибкой`}
         </b>
-        <span>
-          {aside
-            .map((source) => `${source.title.toLowerCase()} — ${FLAG_BY_SCOPE[source.scope]}`)
-            .join(', ')}
-        </span>
       </div>
 
       <ul className="rail">

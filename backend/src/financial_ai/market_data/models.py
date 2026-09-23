@@ -356,6 +356,10 @@ class IngestRun(Base):
     trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="daily")
 
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Почему работа не завершена: source | stopped | interrupted | internal.
+    # Текст причины — для человека, перечень — для решения, что показать: без
+    # него остановка и перезапуск показывались «ошибкой источника» (FR-033f).
+    failure_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     rows_written: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Период, который покрывает исход. У посессионного источника он совпадает с

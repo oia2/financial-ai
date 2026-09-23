@@ -43,6 +43,7 @@ function sourcesOf(group: GroupCoverageDto['group'], covered: number): SourceCov
     title,
     scope,
     status: 'ok',
+    state: 'complete',
     sessions_covered: covered,
     requires_audit: 0,
     failures: [],
@@ -77,6 +78,8 @@ export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageD
         value_ratio: 1.0,
         looks_collected_but_empty: false,
         sources: sourcesOf('reference', 0),
+        state: 'complete',
+        latest_failure: null,
       },
     ],
     ...overrides,
@@ -107,6 +110,9 @@ function historyGroup(
     value_ratio: valueRatio,
     looks_collected_but_empty: false,
     sources: sourcesOf(group, covered),
+    // Состояние выбирает сервер (FR-024e); у подделки — по недостающим сессиям.
+    state: covered < window ? 'missing' : 'complete',
+    latest_failure: null,
   };
 }
 
@@ -125,6 +131,7 @@ export function anomalyCoverageFixture(): CoverageDto {
           period_till: '2026-09-02',
           value_ratio: 0.0,
           looks_collected_but_empty: true,
+          state: 'empty' as const,
         }
       : row,
   );

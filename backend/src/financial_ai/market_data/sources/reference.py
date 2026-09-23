@@ -27,7 +27,7 @@ import datetime as dt
 import logging
 from decimal import Decimal
 
-from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.iss.client import IssClient, ResponseContractError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import ASSET_PREFIX, asset_id_for, to_decimal
 from financial_ai.market_data.sources.trading_calendar import parse_date
@@ -206,7 +206,10 @@ def _weights_from_analytics(
     for row in rows:
         ticker = row.get("ticker")
         if not isinstance(ticker, str) or not ticker.strip():
-            continue
+            # Строка без тикера — нарушение контракта, а не строка, которую
+            # можно пропустить: иначе состав индекса «подтверждался» неполным
+            # (FR-032e).
+            raise ResponseContractError(f"строка состава индекса без тикера: {ticker!r}")
         trade_date = row.get("tradedate")
         out.append(
             (

@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
+from financial_ai.market_data.calendar import moscow_today
 from financial_ai.market_data.interrupt import SourceStoppedError
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
@@ -99,14 +100,30 @@ async def sync_iss_series_range(
     unfinished: list[str] = []
     evidence: list[WorkEvidence] = []
     required = set(required_dates or ((date_from,) if date_from == date_till else ()))
+
+    # Продолжение по остатку (FR-033d): ряд, все требуемые даты которого уже
+    # доказаны, не спрашивается вовсе, а недоказанный — только в границах своих
+    # недоказанных дат. Прежде одна пропущенная дата RVI заставляла заново
+    # спрашивать все пять рядов за весь период (анализ 2026-09-23, A4).
+    stored = (
+        await repository.work_evidence_for_sessions(SOURCE_ID, sorted(required)) if required else []
+    )
+    done = {(item.session_date, item.work_key) for item in stored}
+
     for spec in specs:
+        todo = sorted(day for day in required if (day, spec.series_id) not in done)
+        if required and not todo:
+            continue
+        lower, upper = (todo[0], todo[-1]) if todo else (date_from, date_till)
         should_stop = getattr(client, "should_stop", None)
         if should_stop is not None and should_stop():
-            raise SourceStoppedError(written)
+            raise SourceStoppedError(written, evidence=tuple(evidence))
         try:
-            values = await _fetch_series(client, spec, date_from, date_till)
+            values = await _fetch_series(client, spec, lower, upper)
         except SourceStoppedError as error:
-            raise SourceStoppedError(written + error.rows_written) from error
+            raise SourceStoppedError(
+                written + error.rows_written, evidence=(*evidence, *error.evidence)
+            ) from error
         except SeriesFetchError as error:
             # Ряд не получен. Дальше идём — ряды независимы, — но запоминаем:
             # незавершённое обязано дожить до исхода.
@@ -115,12 +132,16 @@ async def sync_iss_series_range(
             continue
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
-            for day in sorted(set(values) & required if required else set(values)):
+            for day in sorted(set(values) & set(todo) if required else set(values)):
                 evidence.append(WorkEvidence(day, spec.series_id))
-        elif required:
+        elif required and upper < moscow_today():
             # Корректный полностью пустой ответ — проверенное отсутствие. Если
             # ответ частичный, отсутствующая внутри диапазона дата остаётся
             # неизвестной и доказательства не получает.
+            #
+            # Сегодняшняя дата отсутствием не подтверждается: значение дня
+            # могло ещё не выйти, а непубликация неприменимостью не является
+            # (FR-032). Она остаётся работой и подтвердится повтором.
             evidence.extend(
                 WorkEvidence(
                     day,
@@ -128,10 +149,10 @@ async def sync_iss_series_range(
                     result_kind=RESULT_CONFIRMED_ABSENCE,
                     reason_code="verified_empty_history",
                 )
-                for day in sorted(required)
+                for day in todo
             )
 
-    proved = {(item.session_date, item.work_key) for item in evidence}
+    proved = done | {(item.session_date, item.work_key) for item in evidence}
     missing_dates = [
         f"{spec.series_id}:{day.isoformat()}"
         for spec in specs
@@ -181,12 +202,13 @@ async def _fetch_series(
             market=spec.market,
             board=spec.board,
         )
+        # Разбор — внутри той же защиты: испорченное значение одного ряда
+        # оставляет незавершённым этот ряд, а не весь источник (FR-032e).
+        return rows_to_values(rows, spec.value_column)
     except SourceStoppedError:
         raise
     except Exception as error:
         raise SeriesFetchError(f"{spec.series_id}: {error}") from error
-
-    return rows_to_values(rows, spec.value_column)
 
 
 def rows_to_values(

@@ -29,11 +29,9 @@ import {
   useSetCollectionPaused,
   type GroupCoverageDto,
 } from '@/entities/market-data';
-import { ClampNotice } from '@/features/catchup-launch/ClampNotice';
 import { LaunchDrawer } from '@/features/catchup-launch/LaunchDrawer';
 import { useCatchupControl } from '@/features/catchup-launch/useCatchupControl';
 import { ApiError, ServerUnreachableError } from '@/shared/api/client';
-import { formatIsoDate } from '@/shared/lib/market-format';
 import { CatchupSection, RunNotice } from '@/widgets/catchup-section/CatchupSection';
 import { CollectionCalendar } from '@/widgets/collection-calendar/CollectionCalendar';
 import { EmptyValuesAlert } from '@/widgets/completeness-table/EmptyValuesAlert';
@@ -64,8 +62,8 @@ function localThreshold(exchangeTime: string): string {
 }
 
 export function MarketDataPage() {
-  const coverage = useCoverage();
   const catchup = useCatchupState();
+  const coverage = useCoverage(catchup.data !== undefined && isCatchupActive(catchup.data.status));
   const control = useCatchupControl();
   const collection = useCollectionSettings();
   const runs = useRuns();
@@ -154,16 +152,11 @@ export function MarketDataPage() {
           <h1>Рыночные данные</h1>
         </div>
         <div className="heading-actions">
-          {coverage.data !== undefined && (
-            <span className="snapshot-note">
-              Состояние на
-              <br />
-              <time dateTime={coverage.data.asof_date}>
-                {formatIsoDate(coverage.data.asof_date)}
-              </time>
-            </span>
-          )}
-
+          {/*
+            Даты сводки в шапке нет: в артефакте её нет, а подпись «Состояние
+            на» до закрытия сегодняшней сессии читалась как отставание. Дата
+            данных названа у групп — «Данные по» (FR-024f).
+          */}
           {/*
             Остановка автоматического сбора. Отдельно от паузы ранжирования: это
             разные механизмы, и слитое прочтение дороже прочих ошибок на этих
@@ -236,8 +229,6 @@ export function MarketDataPage() {
       )}
 
       {coverage.data !== undefined && <EmptyValuesAlert groups={coverage.data.groups} />}
-
-      {control.clamp !== null && <ClampNotice {...control.clamp} />}
 
       {emptyStorage ? (
         <EmptyStorage />

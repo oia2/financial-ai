@@ -10,6 +10,9 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pytest
+
+from financial_ai.market_data.iss.client import ResponseContractError
 from financial_ai.market_data.sources.equity_d1 import rows_to_bars
 
 SESSION = dt.date(2026, 8, 28)
@@ -41,15 +44,16 @@ def test_partial_row_keeps_present_values() -> None:
     assert bar.close == Decimal("314.22")
 
 
-def test_row_without_ticker_is_dropped() -> None:
-    """Строка без тикера ни к чему не относится — сохранять её некуда."""
-    rows = [
-        {"SECID": None, "CLOSE": "1"},
-        {"SECID": "  ", "CLOSE": "2"},
-        {"SECID": "SBER", "CLOSE": "3"},
-    ]
-    bars = rows_to_bars(rows, SESSION)
-    assert [b.asset_id for b in bars] == ["EQ_AST_SBER"]
+@pytest.mark.parametrize("secid", [None, "  ", 42])
+def test_row_without_ticker_is_contract_violation(secid: object) -> None:
+    """Строка без тикера — нарушение контракта, а не строка для пропуска.
+
+    Пропущенная молча, она давала ответу без единой годной строки
+    доказательство полноты доски (FR-032e).
+    """
+    rows = [{"SECID": secid, "CLOSE": "1"}, {"SECID": "SBER", "CLOSE": "3"}]
+    with pytest.raises(ResponseContractError):
+        rows_to_bars(rows, SESSION)
 
 
 def test_duplicate_ticker_does_not_create_two_rows() -> None:

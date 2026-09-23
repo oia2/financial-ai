@@ -149,10 +149,6 @@ class Settings(BaseSettings):
     market_data_positions_retries: int = Field(default=4, ge=1)
     market_data_positions_retry_backoff_seconds: float = Field(default=1.0, ge=0)
 
-    # Шаг редкой сетки при поиске первой доступной даты инструмента. Поиск
-    # выполняется однократно и только когда собранных данных ещё нет.
-    market_data_positions_discover_step: int = Field(default=50, ge=1)
-
     # Сколько сессий подряд источник должен провалиться, чтобы прогон перестал
     # его опрашивать. Единичный сбой сети закрывать источник не должен.
     market_data_source_failure_streak: int = Field(default=3, ge=1)

@@ -470,11 +470,11 @@ class MarketDataRepository:
                 )
 
     async def tickers_with_history(self) -> set[str]:
-        """Бумаги, по которым наблюдения уже есть.
+        """Бумаги, известные хранилищу по справочнику активов.
 
-        Основа возобновляемости первичной загрузки: отметка хранится в самих
-        данных, а не в отдельном файле состояния, который мог бы с ними
-        разойтись.
+        Это состав, а НЕ признак загруженной истории: бумага попадает сюда уже
+        после одного обычного сбора. Возобновляемость первичной загрузки
+        держится на доказательствах работы (FR-033h).
         """
         rows = await self._session.scalars(select(MarketAsset.ticker))
         return set(rows.all())
@@ -692,6 +692,7 @@ class MarketDataRepository:
         period_till: dt.date | None = None,
         coverage_version: int | None = None,
         coverage_reason: str | None = None,
+        failure_kind: str | None = None,
     ) -> None:
         # Период по умолчанию — одна сессия: так ведёт себя всякий посессионный
         # источник. Источник с выборкой за диапазон передаёт период явно, иначе
@@ -719,6 +720,7 @@ class MarketDataRepository:
                 coverage_version=coverage_version,
                 coverage_reason=coverage_reason,
                 failure_reason=failure_reason,
+                failure_kind=failure_kind,
                 rows_written=rows_written,
                 started_at=started_at,
                 finished_at=finished_at,
@@ -729,6 +731,7 @@ class MarketDataRepository:
                     "status": status,
                     "trigger": trigger,
                     "failure_reason": failure_reason,
+                    "failure_kind": failure_kind,
                     "rows_written": rows_written,
                     "finished_at": finished_at,
                     "period_from": period_from,
@@ -802,6 +805,18 @@ class MarketDataRepository:
             .returning(SourceWorkEvidence.source_id)
         )
         return await self._session.scalar(statement) is not None
+
+    async def work_keys_for_source(self, source_id: str) -> set[str]:
+        """Все доказанные единицы работы источника действующей версии."""
+        rows = await self._session.scalars(
+            select(SourceWorkEvidence.work_key)
+            .where(
+                SourceWorkEvidence.source_id == source_id,
+                SourceWorkEvidence.coverage_version == CURRENT_COVERAGE_VERSION,
+            )
+            .distinct()
+        )
+        return set(rows.all())
 
     async def work_evidence(
         self,

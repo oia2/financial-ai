@@ -21,7 +21,6 @@ from financial_ai.market_data import plan as collection_plan
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.runner import (
-    BackfillRequiredError,
     CatchupAlreadyRunningError,
     CatchupRunner,
     CatchupStatus,
@@ -409,14 +408,18 @@ async def test_unknown_group_is_rejected(db_session: AsyncSession, settings: Set
 # --- разграничение с первичной загрузкой -------------------------------------
 
 
-async def test_empty_storage_requires_backfill(
-    db_session: AsyncSession, settings: Settings
+async def test_empty_storage_plans_the_whole_window(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Пустая база — загрузка окна тем же ручным сбором, а не отказ (FR-033h)."""
     await _seed(db_session, [])
+    monkeypatch.setattr(ingest, "catch_up", FakeCatchUp())
     instance = CatchupRunner(settings)
 
-    with pytest.raises(BackfillRequiredError):
-        await instance.start()
+    state = await instance.start(group_ids=["quotes"])
+
+    assert state["requested"] == len(SESSIONS)
+    await _wait_until_idle(instance)
 
 
 async def test_full_window_has_nothing_to_catch_up(
@@ -426,7 +429,23 @@ async def test_full_window_has_nothing_to_catch_up(
     instance = CatchupRunner(settings)
 
     with pytest.raises(NothingToCatchUpError):
-        await instance.start()
+        await instance.start(group_ids=["quotes", "aggregates", "global", "positions"])
+
+
+async def test_selected_reference_is_work_without_dates(
+    db_session: AsyncSession, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Выбранный справочник — работа и без исторических дат (FR-033g)."""
+    await _seed(db_session, [])
+    fake = FakeCatchUp()
+    monkeypatch.setattr(ingest, "catch_up", fake)
+    instance = CatchupRunner(settings)
+
+    state = await instance.start(group_ids=["reference"])
+
+    assert state["requested"] == 0
+    await _wait_until_idle(instance)
+    assert fake.source_ids == frozenset({"equity_sectors", "equity_lot_sizes"})
 
 
 @pytest.mark.db

@@ -1909,39 +1909,6 @@ time {
 .run-notice.error strong {
   color: var(--negative);
 }
-.clamp-notice {
-  margin-bottom: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 18px 20px;
-  border-radius: var(--radius-sm);
-}
-.clamp-notice h3 {
-  font-size: 14px;
-  margin: 0 0 10px;
-  font-weight: 550;
-}
-.clamp-ranges {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-.clamp-ranges small {
-  display: block;
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-.clamp-ranges .accepted {
-  font-weight: 550;
-}
-.clamp-notice p {
-  font-size: 12px;
-  margin: 10px 0 0;
-  color: var(--muted);
-}
 .idle-note {
   display: flex;
   align-items: center;
@@ -4039,6 +4006,17 @@ input:focus-visible {
 
 .group-summary .volume {
   font: 400 13px var(--font-mono);
+}
+
+/* Состояние группы и одна строка факта под ним (spec 008, FR-024e). */
+.state-cell {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.group-summary .state-fact {
+  margin-top: 0;
 }
 
 .group-summary time {

@@ -113,20 +113,21 @@ describe('ход прогона', () => {
     expect(next.textContent).not.toContain('Торговый календарь');
   });
 
-  it('идёт: календарь помечен суточным и в счёт сессии не входит', async () => {
+  it('идёт: счётчик считает ровно строки ленты', async () => {
     renderWith(catchupFixture('running'));
 
-    // Пометка области сказана НАД лентой одной фразой и у строки не
-    // повторяется: рядом с её собственной подписью — «собран ранее · на весь
-    // период» — она читалась как вторая характеристика работы.
+    // Пометки области нет ни над лентой, ни у строки: владелец счёл фразу
+    // «— раз в сутки, — на весь период» лишней (2026-09-23).
     const head = await waitFor(() => {
       const found = document.querySelector('.rail-head');
       expect(found).not.toBeNull();
       return found as HTMLElement;
     });
-    expect(head.textContent).toContain('торговый календарь — раз в сутки');
-    // Посессионных источников три, отработал один: календарь в счёт не идёт.
-    expect(head.querySelector('b')?.textContent).toContain('1 из 3');
+    expect(head.textContent).not.toContain('раз в сутки');
+    // Счётчик считает ровно то, что показано: четыре строки, из них выполнены
+    // календарь и котировки (владелец, 2026-09-23).
+    const shown = document.querySelectorAll('.rail .rail-item').length;
+    expect(head.querySelector('b')?.textContent).toContain(`2 из ${shown}`);
 
     const flags = [...document.querySelectorAll('.rail .rail-flag')].map((n) => n.textContent);
     expect(flags).not.toContain('раз в сутки');
@@ -629,5 +630,23 @@ describe('подпись под шкалой', () => {
       return found as HTMLElement;
     });
     expect(note.textContent).toContain('это последняя сессия прогона');
+  });
+});
+
+describe('журнал прогонов', () => {
+  it('проход без сессий назван проверкой календаря, а не сбором из нуля', async () => {
+    // 22.09 в 19:30 календарь спросили, новых сессий не было, и журнал писал
+    // «0 сессий · 0 собрано · точный итог старой записи недоступен».
+    const calendarOnly: RunSummaryDto = {
+      ...FINISHED_RUN,
+      run_id: 'run-0',
+      status: 'finished',
+      sessions: { requested: 0, collected: 0, partial: 0, failed: 0, skipped: 0, pending: 0 },
+      failures: [],
+    };
+    renderWith(catchupFixture('idle'), [calendarOnly, FINISHED_RUN]);
+
+    expect(await screen.findByText(/календарь проверен · новых сессий нет/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 сессий · 0 собрано/)).not.toBeInTheDocument();
   });
 });

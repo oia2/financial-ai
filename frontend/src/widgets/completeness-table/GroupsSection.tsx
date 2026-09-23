@@ -3,24 +3,41 @@
  *
  * Разметка и имена классов перенесены из артефакта Open Design
  * (`market-data.html`, раздел `groups-section`, и `design-assets/
- * market-data-collection-v4/v4.js`).
+ * market-data-collection-v4/v4.js`, `renderGroups`).
  *
- * Три правила, каждое из которых уже стоило проекту дефекта:
+ * Правила, каждое из которых уже стоило проекту дефекта:
  *
- *  - **полнота группы считается по каждому источнику.** Успех одного не
- *    закрывает пропуск другого, поэтому раскрытие называет источник поимённо:
- *    «глобальные ряды не собраны» без имени ряда — не диагноз (FR-032);
- *  - **неполнота позиций объясняется числами, а не догадкой.** Фьючерс есть не
- *    у каждой бумаги, и его отсутствие — не пропуск (FR-010, FR-013);
+ *  - **состояние выбирает сервер** из закрытого перечня (FR-024e): остановка,
+ *    перезапуск и идущий сбор — не «ошибка источника», и правило старшинства
+ *    не повторяется здесь второй раз;
+ *  - **на экране только факты из данных** (FR-024d): под состоянием одна
+ *    строка — сколько не хватает и последняя причина с датой. Шаблонных
+ *    пояснений о правилах счёта нет;
  *  - **у группы без истории полей окна нет вовсе.** Ноль на их месте читался
  *    бы как «ничего не собрано» (FR-014).
  */
 
-import type { GroupCoverageDto, SourceCoverageDto, UniverseDto } from '@/entities/market-data';
-import { formatCount, formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
+import type {
+  CoverageState,
+  GroupCoverageDto,
+  SourceCoverageDto,
+  UniverseDto,
+} from '@/entities/market-data';
+import { formatIsoDate } from '@/shared/lib/market-format';
 import { plural } from '@/shared/lib/plural';
 
 type Badge = readonly [kind: 'complete' | 'partial' | 'error', label: string];
+
+/** Подпись состояния — из артефакта (`v4.js`, перечень над `GROUPS`). */
+const STATE_BADGE: Record<CoverageState, Badge> = {
+  empty: ['error', 'Значения отсутствуют'],
+  running: ['partial', 'Идёт сбор'],
+  source_error: ['error', 'Ошибка источника'],
+  internal_error: ['error', 'Ошибка сбора'],
+  interrupted: ['partial', 'Прервано'],
+  missing: ['partial', 'Не собрано'],
+  complete: ['complete', 'Собрано'],
+};
 
 export function GroupsSection({
   asofDate,
@@ -39,7 +56,7 @@ export function GroupsSection({
         <div>
           <h2 id="groupsTitle">Группы данных</h2>
           <p>
-            Полнота на <span className="mono">{formatIsoDate(asofDate)}</span>
+            Данные по <span className="mono">{formatIsoDate(asofDate)}</span>
             {/*
               Состав бумаг считается по последней СОБРАННОЙ сессии, и она может
               быть старше даты сводки. Молчать об этом нельзя: числа группы
@@ -62,10 +79,10 @@ export function GroupsSection({
       </div>
 
       <div className="group-columns" aria-hidden="true">
-        <span>Группа / источники</span>
-        <span>Результат</span>
-        <span>Подтверждено из возможного</span>
-        <span>Последние данные</span>
+        <span>Группа</span>
+        <span>Состояние</span>
+        <span>Сессии</span>
+        <span>Данные по</span>
         <span />
       </div>
 
@@ -93,7 +110,7 @@ function Group({
   onOpenDetails: (group: GroupCoverageDto) => void;
 }) {
   const [kind, label] = groupBadge(group);
-  const rule = ruleOf(group, universe);
+  const fact = factOf(group);
 
   return (
     <details className="group" data-od-id={`group-${group.group}`}>
@@ -102,37 +119,23 @@ function Group({
           <span className="group-title">{capitalize(group.title)}</span>
           <small>{subtitleOf(group, universe)}</small>
         </span>
-        <span className={`badge ${kind}`}>{label}</span>
-        <span>
-          <span className="volume">{volumeOf(group)}</span>
-          <small>{group.has_history ? 'сессий подтверждено' : 'источников'}</small>
-          <small>{formatCount(group.rows_with_values)} строк со значениями</small>
+        <span className="state-cell">
+          <span className={`badge ${kind}`}>{label}</span>
+          {fact !== '' && <small className="state-fact">{fact}</small>}
         </span>
+        <span className="volume">{volumeOf(group)}</span>
         <span>
-          <time dateTime={group.period_till ?? undefined}>
-            {group.has_history ? formatIsoDate(group.period_till) : '—'}
-          </time>
-          <small>{group.has_history ? 'дата значений' : 'текущее состояние'}</small>
+          <time dateTime={lastOf(group) ?? undefined}>{formatIsoDate(lastOf(group))}</time>
         </span>
       </summary>
 
       <div className="group-detail">
-        {(group.requires_audit ?? 0) > 0 && group.has_history && (
-          <p className="rule-copy">
-            Сохранённые данные на месте. Полнота {group.requires_audit} старых сессий ещё не
-            подтверждена: прежние отчёты не доказывают, что все данные источника получены. Для
-            проверки выберите эту группу и период в ручном сборе. Новые сессии собираются
-            автоматически.
-          </p>
-        )}
-        {rule !== null && <p className="rule-copy">{rule}</p>}
-
         <table className="source-table">
           <thead>
             <tr>
               <th scope="col">Источник</th>
-              <th scope="col">Результат</th>
-              <th scope="col">Охват</th>
+              <th scope="col">Состояние</th>
+              <th scope="col">Сессии</th>
               <th scope="col">Примечание</th>
             </tr>
           </thead>
@@ -171,65 +174,31 @@ function SourceRow({ source, group }: { source: SourceCoverageDto; group: GroupC
         <strong>{source.title}</strong>
         <small>{source.source_id}</small>
       </td>
-      <td data-label="Результат">
+      <td data-label="Состояние">
         <span className={`badge ${kind}`}>{label}</span>
       </td>
-      <td data-label="Охват">
+      <td data-label="Сессии">
         {group.has_history
-          ? `${source.sessions_covered} из ${group.window_sessions ?? source.sessions_covered} сессий`
-          : 'текущее состояние'}
+          ? `${source.sessions_covered} из ${group.window_sessions ?? source.sessions_covered}`
+          : checkedOf(source)}
       </td>
       <td data-label="Примечание">
-        {source.scope === 'daily' ? (
-          <DailyReferenceNote source={source} />
+        {!group.has_history && kind === 'error' && source.reason ? (
+          <small>{source.reason}</small>
         ) : (
-          <>
-            {SCOPE_NOTE[source.scope] ?? ''}
-            <SourceFailures failures={source.failures} total={source.failures_total} />
-            {source.requires_audit > 0 && (
-              <small>Полнота старых сессий не подтверждена: {source.requires_audit}</small>
-            )}
-          </>
+          <SourceFailures failures={source.failures} total={source.failures_total} />
         )}
       </td>
     </tr>
   );
 }
 
-function DailyReferenceNote({ source }: { source: SourceCoverageDto }) {
-  if (source.requires_audit > 0) {
-    return <small>Старый ответ не подтверждён новым правилом</small>;
-  }
-  if (source.status === 'failed') {
-    return (
-      <small>
-        Последняя проверка
-        {source.last_checked_at !== null && source.last_checked_at !== undefined
-          ? ` ${formatShortStamp(source.last_checked_at)}`
-          : ''}
-        : {source.reason ?? 'источник не ответил'}
-      </small>
-    );
-  }
-  if (source.status === 'ok') {
-    return (
-      <small>
-        Полный ответ проверен
-        {source.last_checked_at !== null && source.last_checked_at !== undefined
-          ? ` ${formatShortStamp(source.last_checked_at)}`
-          : ''}
-      </small>
-    );
-  }
-  return <small>Проверенного полного ответа ещё нет</small>;
-}
-
 /**
  * Неудачи источника поимённо.
  *
  * Перенесено из артефакта Open Design (`renderFailures` в `v4.js`). Без дня и
- * причины «ошибка источника» — это состояние, с которым нечего делать:
- * неизвестно ни когда, ни из-за чего, и проверить у источника нечего.
+ * причины состояние — это состояние, с которым нечего делать: неизвестно ни
+ * когда, ни из-за чего, и проверить у источника нечего.
  */
 function SourceFailures({
   failures,
@@ -260,47 +229,63 @@ function SourceFailures({
   );
 }
 
-const SCOPE_NOTE: Record<string, string> = {
-  period: 'Один запрос на весь период',
-  daily: 'Раз в сутки, к сессии не привязан',
-};
-
-/**
- * Итог группы.
- *
- * Расхождение «покрыто, но пусто» важнее любой другой оценки: сессии закрыты,
- * а значений нет, и догон пропущенных сессий этого не исправит.
- */
+/** Итог группы: состояние присылает сервер, здесь только подпись (FR-024e). */
 function groupBadge(group: GroupCoverageDto): Badge {
-  if (group.looks_collected_but_empty) return ['error', 'Значения отсутствуют'];
-  // Ошибкой называется ошибка, а не всякая неполнота: у падавшего источника
-  // есть записанные неудачи, и они названы днём и причиной.
-  if (group.sources.some((source) => source.status === 'failed'))
-    return ['error', 'Ошибка источника'];
-  if ((group.requires_audit ?? 0) > 0)
-    return ['partial', group.has_history ? 'История не проверена' : 'Нужна проверка'];
-  if (group.sources.some((source) => source.status === 'partial')) return ['partial', 'Частично'];
-  if (group.has_history && (group.gaps ?? 0) > 0) return ['partial', 'Частично'];
-  return ['complete', 'Собрано'];
+  return STATE_BADGE[group.state];
+}
+
+function sourceBadge(source: SourceCoverageDto): Badge {
+  return STATE_BADGE[source.state];
 }
 
 /**
- * Итог источника.
- *
- * «Ошибка» и «частично» — разные состояния: источник, не собравший ни одной
- * сессии окна, и источник с пропусками требуют разных действий.
+ * Одна строка факта под состоянием: последняя причина с датой, а если причины
+ * нет — сколько не хватает. Имя источника — только когда их в группе больше
+ * одного: иначе оно повторяет название группы.
  */
-function sourceBadge(source: SourceCoverageDto): Badge {
-  if (source.status !== 'failed' && source.requires_audit > 0) return ['partial', 'Нужна проверка'];
-  if (source.status === 'ok') return ['complete', 'Собрано'];
-  if (source.status === 'partial') return ['partial', 'Частично'];
-  return ['error', 'Ошибка'];
+function factOf(group: GroupCoverageDto): string {
+  const state = group.state;
+  if (state === 'complete' || state === 'running') return '';
+
+  const failure = group.latest_failure;
+  if (failure && failure.reason && state !== 'missing') {
+    const parts = [
+      group.sources.length > 1 ? failure.title : null,
+      failure.session_date ? shortDay(failure.session_date) : null,
+      failure.reason,
+    ];
+    return parts.filter((part) => part !== null).join(' · ');
+  }
+  if (group.has_history && (group.gaps ?? 0) > 0) {
+    const gaps = group.gaps ?? 0;
+    return `не хватает ${gaps} ${plural(gaps, 'сессии', 'сессий', 'сессий')}`;
+  }
+  return '';
 }
 
 function volumeOf(group: GroupCoverageDto): string {
   if (group.has_history) return `${group.sessions_covered} / ${group.window_sessions}`;
-  const ok = group.sources.filter((source) => source.status === 'ok').length;
+  const ok = group.sources.filter((source) => sourceBadge(source)[0] === 'complete').length;
   return `${ok} / ${group.sources.length}`;
+}
+
+/** Дата данных группы; у справочника — дата последней проверки. */
+function lastOf(group: GroupCoverageDto): string | null {
+  if (group.has_history) return group.period_till ?? null;
+  const checked = group.sources
+    .map((source) => source.last_checked_at)
+    .filter((value): value is string => typeof value === 'string')
+    .sort();
+  return checked.at(-1)?.slice(0, 10) ?? null;
+}
+
+function checkedOf(source: SourceCoverageDto): string {
+  if (source.last_checked_at === null || source.last_checked_at === undefined) return '—';
+  return `проверено ${formatIsoDate(source.last_checked_at.slice(0, 10))}`;
+}
+
+function shortDay(isoDate: string): string {
+  return formatIsoDate(isoDate).slice(0, 5);
 }
 
 function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
@@ -312,12 +297,6 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
     // собранной сессии его взять неоткуда (FR-019a).
     if (!isKnown(universe)) return `${count} · состав бумаг не посчитан`;
     return `${count} · фьючерс есть у ${universe.assets_with_futures} из ${universe.assets} бумаг`;
-  }
-  if (!group.has_history) return `${count} · текущее состояние`;
-
-  const failed = group.sources.filter((source) => source.status === 'failed').length;
-  if (failed > 0) {
-    return `${count} · ${failed === 1 ? 'один с ошибкой' : `${failed} с ошибкой`}`;
   }
   return count;
 }
@@ -331,39 +310,6 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
  */
 function isKnown(universe: UniverseDto): boolean {
   return universe.asof_date !== null;
-}
-
-/**
- * Правило, по которому группа считается полной.
- *
- * Пишется там, где человек задаёт вопрос, а не в документации: «почему у
- * фьючерсов меньше сессий» — вопрос к строке группы.
- */
-function ruleOf(group: GroupCoverageDto, universe: UniverseDto): string | null {
-  if (group.group === 'positions') {
-    if (!isKnown(universe)) {
-      return (
-        'Состав бумаг считается по последней собранной сессии, а собранных пока нет: ' +
-        'сколько бумаг с фьючерсом — неизвестно. Окно у группы своё — ' +
-        `${group.window_sessions} сессий: глубже позиции модели не нужны.`
-      );
-    }
-    return (
-      `Позиции бывают не по всем бумагам: фьючерс есть у ${universe.assets_with_futures} ` +
-      `из ${universe.assets}. Окно у группы своё — ${group.window_sessions} сессий: ` +
-      'глубже позиции модели не нужны.'
-    );
-  }
-  if (!group.has_history) {
-    return 'Справочник отражает текущее состояние, истории у него нет — считать по сессиям нечего.';
-  }
-  if (group.sources.length > 1) {
-    return (
-      `Полнота считается по каждому из ${group.sources.length} источников: ` +
-      'успех одного не закрывает пропуск другого.'
-    );
-  }
-  return null;
 }
 
 /**

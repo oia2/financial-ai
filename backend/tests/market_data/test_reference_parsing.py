@@ -12,6 +12,9 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pytest
+
+from financial_ai.market_data.iss.client import ResponseContractError
 from financial_ai.market_data.sources.equity_agg import rows_to_aggregates
 from financial_ai.market_data.sources.global_series import ISS_SERIES, rows_to_values
 from financial_ai.market_data.sources.reference import (
@@ -59,8 +62,10 @@ def test_aggregate_duplicate_ticker_is_taken_once() -> None:
     assert len(rows_to_aggregates(rows, SESSION)) == 1
 
 
-def test_aggregate_row_without_secid_is_dropped() -> None:
-    assert rows_to_aggregates([{"SECID": "  ", "VALUE": "1"}], SESSION) == []
+def test_aggregate_row_without_secid_is_contract_violation() -> None:
+    """Пропущенная молча, строка без бумаги давала полноту доски (FR-032e)."""
+    with pytest.raises(ResponseContractError):
+        rows_to_aggregates([{"SECID": "  ", "VALUE": "1"}], SESSION)
 
 
 # --- глобальные ряды --------------------------------------------------------
@@ -159,4 +164,7 @@ def test_snapshot_for_another_date_is_dropped() -> None:
 def test_uppercase_history_columns_are_not_read() -> None:
     """Именно на этом источник и был сломан: он просил колонки истории торгов."""
     rows = [{"SECID": "SBER", "TRADEDATE": "2026-08-28", "WEIGHT": "13.87"}]
-    assert rows_to_weights(rows, SESSION, "IMOEX") == {}
+    # Строка без колонки раздела аналитики — чужой контракт, а не пустой состав
+    # (FR-032e): прежде она молча давала ноль весов.
+    with pytest.raises(ResponseContractError):
+        rows_to_weights(rows, SESSION, "IMOEX")

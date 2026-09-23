@@ -46,6 +46,8 @@ def _client(side_effect: object) -> Mock:
 def _repository() -> Mock:
     repository = Mock()
     repository.upsert_global_values = AsyncMock(return_value=1)
+    # Доказанного раньше нет: источник спрашивает весь остаток (FR-033d).
+    repository.work_evidence_for_sessions = AsyncMock(return_value=[])
     return repository
 
 

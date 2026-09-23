@@ -12,10 +12,12 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
 from financial_ai.market_data import groups
+from financial_ai.market_data.models import SourceWorkEvidence
 from financial_ai.market_data.repository import AggregateRow, DailyBar, MarketDataRepository
 from financial_ai.ranking.dataset import DatasetError, build_dataset, prune_datasets
 from tests.market_data.verified import record_verified_run
@@ -371,6 +373,15 @@ async def test_missing_session_reaches_the_manifest(
     assert manifest["incomplete"] == dataset.incomplete
 
 
+async def _unprove(session: AsyncSession, source_id: str, day: dt.date) -> None:
+    """Снять доказательство работы: незакрытость держится на нём (FR-032f)."""
+    await session.execute(
+        delete(SourceWorkEvidence).where(
+            SourceWorkEvidence.source_id == source_id, SourceWorkEvidence.session_date == day
+        )
+    )
+
+
 async def test_completeness_changes_the_digest(
     db_session: AsyncSession, settings: Settings
 ) -> None:
@@ -381,6 +392,7 @@ async def test_completeness_changes_the_digest(
     complete = (await build_dataset(db_session, settings, ASOF)).digest
 
     # Ряды не трогаем: меняется только знание о том, что источник не закрылся.
+    await _unprove(db_session, "futures_positions", SESSIONS[1])
     moment = dt.datetime.now(dt.UTC)
     await repository.record_run(
         run_id="run-1",
@@ -403,6 +415,7 @@ async def test_unfinished_source_is_named(db_session: AsyncSession, settings: Se
     """Гранулярность по источнику: неполна модальность, а не весь срез."""
     repository = MarketDataRepository(db_session)
     await _seed(db_session)
+    await _unprove(db_session, "futures_positions", SESSIONS[1])
     moment = dt.datetime.now(dt.UTC)
     await repository.record_run(
         run_id="run-1",

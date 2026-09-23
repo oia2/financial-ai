@@ -40,6 +40,15 @@ class IssError(RuntimeError):
     """Обращение к MOEX ISS не удалось."""
 
 
+class ResponseContractError(IssError):
+    """Ответ получен, но нарушает контракт источника: форма или содержимое.
+
+    Отдельно от недоступности: повтор того же запроса обычно даёт тот же ответ,
+    а пустотой или законным ``NULL`` такой ответ считать нельзя (FR-032a,
+    FR-032e). Подкласс ``IssError`` — чтобы прежние обработчики его не теряли.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class IssConfig:
     """Параметры обращения к бирже."""
@@ -459,9 +468,13 @@ class IssClient:
                     try:
                         payload = _loads(response.content)
                     except ValueError as error:
-                        raise IssError(f"ответ MOEX ISS не является JSON: {error}") from error
+                        raise ResponseContractError(
+                            f"ответ MOEX ISS не является JSON: {error}"
+                        ) from error
                     if not isinstance(payload, dict):
-                        raise IssError("ответ MOEX ISS: корень JSON должен быть объектом")
+                        raise ResponseContractError(
+                            "ответ MOEX ISS: корень JSON должен быть объектом"
+                        )
                     return payload
                 if response.status_code not in RETRYABLE_STATUS_CODES:
                     raise IssError(
@@ -511,29 +524,31 @@ def _validated_block(
 ) -> tuple[list[str], list[list[Any]]]:
     """Проверить форму блока до того, как пустота получит бизнес-смысл."""
     if block_name not in payload:
-        raise IssError(f"ответ MOEX ISS не содержит блок {block_name!r}")
+        raise ResponseContractError(f"ответ MOEX ISS не содержит блок {block_name!r}")
     block = payload[block_name]
     if not isinstance(block, dict):
-        raise IssError(f"блок {block_name!r} должен быть объектом")
+        raise ResponseContractError(f"блок {block_name!r} должен быть объектом")
 
     columns = block.get("columns")
     data = block.get("data")
     if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
-        raise IssError(f"блок {block_name!r}: columns должен быть списком строк")
+        raise ResponseContractError(f"блок {block_name!r}: columns должен быть списком строк")
     if len(columns) != len(set(columns)):
-        raise IssError(f"блок {block_name!r}: имена колонок не должны повторяться")
+        raise ResponseContractError(f"блок {block_name!r}: имена колонок не должны повторяться")
     missing = [column for column in required_columns if column not in columns]
     if missing:
-        raise IssError(
+        raise ResponseContractError(
             f"блок {block_name!r}: отсутствуют обязательные колонки {', '.join(missing)}"
         )
     if not isinstance(data, list):
-        raise IssError(f"блок {block_name!r}: data должен быть списком строк")
+        raise ResponseContractError(f"блок {block_name!r}: data должен быть списком строк")
     for position, row in enumerate(data):
         if not isinstance(row, list):
-            raise IssError(f"блок {block_name!r}: строка {position} должна быть списком")
+            raise ResponseContractError(
+                f"блок {block_name!r}: строка {position} должна быть списком"
+            )
         if len(row) != len(columns):
-            raise IssError(
+            raise ResponseContractError(
                 f"блок {block_name!r}: строка {position} содержит {len(row)} значений "
                 f"для {len(columns)} колонок"
             )
@@ -554,11 +569,11 @@ def _validate_trade_dates(
         try:
             day = dt.date.fromisoformat(str(raw)[:10])
         except (TypeError, ValueError) as error:
-            raise IssError(
+            raise ResponseContractError(
                 f"блок {block_name!r}: строка {position} содержит некорректную дату {raw!r}"
             ) from error
         if not lower <= day <= upper:
-            raise IssError(
+            raise ResponseContractError(
                 f"блок {block_name!r}: строка {position} относится к чужой дате {day}; "
                 f"запрошено {lower}..{upper}"
             )
@@ -581,7 +596,9 @@ def _page_progress(
     if data:
         fingerprint = repr(data)
         if fingerprint in seen_pages:
-            raise IssError(f"блок {block_name!r}: сервер повторил страницу без продвижения")
+            raise ResponseContractError(
+                f"блок {block_name!r}: сервер повторил страницу без продвижения"
+            )
         seen_pages.add(fingerprint)
 
     cursor_name = f"{block_name}.cursor"
@@ -590,7 +607,7 @@ def _page_progress(
             return requested_start, True
         next_start = requested_start + len(data)
         if next_start <= requested_start:
-            raise IssError(f"блок {block_name!r}: пагинация не продвинулась")
+            raise ResponseContractError(f"блок {block_name!r}: пагинация не продвинулась")
         return next_start, False
 
     cursor_columns, cursor_data = _validated_block(
@@ -599,24 +616,26 @@ def _page_progress(
         required_columns=("INDEX", "TOTAL", "PAGESIZE"),
     )
     if len(cursor_data) != 1:
-        raise IssError(f"блок {cursor_name!r}: ожидается ровно одна строка курсора")
+        raise ResponseContractError(f"блок {cursor_name!r}: ожидается ровно одна строка курсора")
     cursor = _rows_to_dicts(cursor_columns, cursor_data)[0]
     index = _cursor_integer(cursor.get("INDEX"), cursor_name, "INDEX", minimum=0)
     total = _cursor_integer(cursor.get("TOTAL"), cursor_name, "TOTAL", minimum=0)
     page_size = _cursor_integer(cursor.get("PAGESIZE"), cursor_name, "PAGESIZE", minimum=1)
     if index != requested_start:
-        raise IssError(
+        raise ResponseContractError(
             f"блок {cursor_name!r}: INDEX={index}, хотя запрошен start={requested_start}"
         )
     if len(data) > page_size:
-        raise IssError(f"блок {cursor_name!r}: пришло {len(data)} строк при PAGESIZE={page_size}")
+        raise ResponseContractError(
+            f"блок {cursor_name!r}: пришло {len(data)} строк при PAGESIZE={page_size}"
+        )
     next_start = index + len(data)
     if next_start > total:
-        raise IssError(
+        raise ResponseContractError(
             f"блок {cursor_name!r}: страница заканчивается на {next_start}, TOTAL={total}"
         )
     if not data and next_start < total:
-        raise IssError(
+        raise ResponseContractError(
             f"блок {cursor_name!r}: пустая страница до конца диапазона ({next_start} из {total})"
         )
     return next_start, next_start >= total
@@ -624,7 +643,7 @@ def _page_progress(
 
 def _cursor_integer(raw: object, block_name: str, column: str, *, minimum: int) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < minimum:
-        raise IssError(
+        raise ResponseContractError(
             f"блок {block_name!r}: {column} должен быть целым числом не меньше {minimum}"
         )
     return raw

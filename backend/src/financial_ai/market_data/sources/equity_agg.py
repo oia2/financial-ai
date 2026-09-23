@@ -19,6 +19,7 @@ from financial_ai.market_data.sources.equity_d1 import (
     asset_id_for,
     fetch_equity_board_rows,
     price_series_id_for,
+    secid_of,
     to_decimal,
 )
 from financial_ai.market_data.verification import VerificationResult, one_session
@@ -61,10 +62,7 @@ def rows_to_aggregates(
     seen: set[str] = set()
 
     for row in rows:
-        secid = row.get("SECID")
-        if not isinstance(secid, str) or not secid.strip():
-            continue
-        ticker = secid.strip().upper()
+        ticker = secid_of(row, session_date)
         if ticker in seen:
             continue
         seen.add(ticker)

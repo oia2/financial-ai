@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 
-from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.iss.client import IssClient, ResponseContractError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
 from financial_ai.market_data.verification import VerificationResult, one_session
@@ -93,8 +93,14 @@ def _parse_contracts(rows: list[dict[str, object]]) -> list[Contract]:
     out: list[Contract] = []
     for row in rows:
         secid = row.get("SECID")
+        if not isinstance(secid, str) or not secid.strip():
+            # Строка без идентификатора — нарушение контракта, а не чужой
+            # инструмент: молча пропущенная, она давала «контракта нет» и
+            # подтверждённое отсутствие за дату (FR-032e).
+            raise ResponseContractError(f"строка Brent без идентификатора контракта: {secid!r}")
         expiry = _expiry_from_shortname(row.get("SHORTNAME"))
-        if not isinstance(secid, str) or expiry is None:
+        if expiry is None:
+            # Не месячный фьючерс (например, календарный спред): законно.
             continue
         out.append(
             Contract(secid=secid.strip().upper(), expiry=expiry, close=to_decimal(row.get("CLOSE")))

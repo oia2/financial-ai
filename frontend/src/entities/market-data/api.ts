@@ -31,6 +31,7 @@ export const collectionQueryKey = ['market-data', 'settings'] as const;
  * относится к портфелю (research.md R5).
  */
 export const CATCHUP_POLL_MS = 3000;
+export const COVERAGE_POLL_MS = 10000;
 
 export function fetchCoverage(): Promise<CoverageDto> {
   return apiGet<CoverageDto>('/api/market-data/coverage');
@@ -91,8 +92,20 @@ export function useSetCollectionPaused() {
   });
 }
 
-export function useCoverage(): UseQueryResult<CoverageDto> {
-  return useQuery({ queryKey: coverageQueryKey, queryFn: fetchCoverage });
+/**
+ * Сводка полноты.
+ *
+ * Пока идёт сбор, перечитывается раз в `COVERAGE_POLL_MS`: прежде она
+ * обновлялась только после окончания прогона, и группы стояли на месте, пока
+ * сессии собирались одна за другой (замечание владельца 2026-09-23). Чаще не
+ * нужно — сборка сводки на рабочей базе занимает до секунды.
+ */
+export function useCoverage(collecting = false): UseQueryResult<CoverageDto> {
+  return useQuery({
+    queryKey: coverageQueryKey,
+    queryFn: fetchCoverage,
+    refetchInterval: collecting ? COVERAGE_POLL_MS : false,
+  });
 }
 
 /**

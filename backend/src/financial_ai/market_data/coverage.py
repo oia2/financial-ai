@@ -66,6 +66,35 @@ class GroupCoverage:
         return round(self.rows_with_values / self.rows_total, 4)
 
     @property
+    def latest_failure(self) -> dict[str, object] | None:
+        """Последняя причина незавершённой работы группы — одна строка факта.
+
+        Берётся самая поздняя по дате сессии неудача среди недоказанных сессий
+        всех источников, а для справочника — причина последнего отказа.
+        """
+        candidates: list[dict[str, object]] = []
+        for source in self.sources:
+            failures = source.get("failures")
+            if isinstance(failures, list) and failures:
+                candidates.append({**failures[0], "title": source["title"]})
+            elif source.get("reason") and source.get("state") in {
+                STATE_SOURCE_ERROR,
+                STATE_INTERNAL_ERROR,
+                STATE_INTERRUPTED,
+            }:
+                candidates.append(
+                    {
+                        "session_date": None,
+                        "reason": source["reason"],
+                        "kind": plan.FAILURE_SOURCE,
+                        "title": source["title"],
+                    }
+                )
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: str(item.get("session_date") or ""))
+
+    @property
     def looks_collected_but_empty(self) -> bool:
         """Покрытие есть, значений нет.
 
@@ -90,6 +119,10 @@ class GroupCoverage:
             "looks_collected_but_empty": self.looks_collected_but_empty,
             "sources": self.sources,
             "requires_audit": self.requires_audit,
+            # Состояние выбирает сервер, интерфейс только подписывает его: иначе
+            # правило старшинства пришлось бы повторить в двух местах (FR-024e).
+            "state": group_state(self.looks_collected_but_empty, self.sources),
+            "latest_failure": self.latest_failure,
         }
         if self.has_history:
             # У справочника этих полей НЕТ вовсе, а не нули: ноль читался бы
@@ -152,24 +185,30 @@ async def _source_outcomes(
     # ПОСЛЕДНИЙ прогон каждой пары «сессия — источник» и только неуспешный:
     # иначе удачный повтор не снимал бы отметку, и перечень превратился бы в
     # журнал былых неудач.
+    #
+    # Идущее обращение неудачей не является: прежде `running` попадал в тот же
+    # перечень, и работающий сбор показывался «ошибкой источника» (FR-033f).
     failures: dict[str, list[dict[str, object]]] = {}
+    running: dict[str, set[dt.date]] = {}
     for (day, source_id), run in (await repository.latest_run_by_session(window)).items():
-        if run.status not in {"failed", "stopped", "running"}:
+        if run.status == "running":
+            running.setdefault(source_id, set()).add(day)
+            continue
+        if run.status not in {"failed", "stopped"}:
             continue
         failures.setdefault(source_id, []).append(
             {
                 "session_date": day.isoformat(),
                 "reason": run.failure_reason,
+                "kind": _kind_of(run.status, run.failure_kind),
             }
         )
 
     outcomes: list[dict[str, object]] = []
     for source_id in group.source_ids:
-        scope = next(
-            (spec.scope for spec in plan.CATCHUP_PLAN if spec.source_id == source_id),
-            plan.SESSION,
-        )
+        scope = plan.scope_of(source_id)
         broken = failures.get(source_id, [])
+        state = STATE_MISSING
         audit: set[dt.date] = set()
         requires_audit = 0
         last_checked_at: str | None = None
@@ -214,22 +253,24 @@ async def _source_outcomes(
             # два, экран называл ошибкой всякую неполноту и не мог показать
             # причину, потому что причины не было.
             if count >= len(window):
-                status = "ok"
-            elif broken:
-                status = "failed"
+                state = STATE_COMPLETE
+            elif running.get(source_id, set()) - closed:
+                state = STATE_RUNNING
             else:
-                status = "partial"
+                state = _state_of_failures({str(item["kind"]) for item in broken})
         else:
             latest = await repository.latest_source_run(source_id)
             if latest is None:
-                status = "partial"
+                state = STATE_MISSING
+            elif latest.status == "running":
+                state = STATE_RUNNING
             elif latest.status != "ok":
-                status = "failed"
+                state = _state_of_failures({_kind_of(latest.status, latest.failure_kind)})
                 reason = latest.failure_reason
             elif latest.coverage_version == CURRENT_COVERAGE_VERSION:
-                status = "ok"
+                state = STATE_COMPLETE
             else:
-                status = "partial"
+                state = STATE_MISSING
                 requires_audit = 1
             if latest is not None:
                 checked = latest.finished_at or latest.started_at
@@ -241,7 +282,10 @@ async def _source_outcomes(
                 "source_id": source_id,
                 "title": plan.title_of(source_id),
                 "scope": scope,
-                "status": status,
+                # Прежнее трёхзначное поле сохраняется для старых читателей:
+                # «failed» — только отказ источника или сбой обработки.
+                "status": _legacy_status(state),
+                "state": state,
                 "sessions_covered": count,
                 "requires_audit": len(audit) if window else requires_audit,
                 "last_checked_at": last_checked_at,
@@ -259,6 +303,60 @@ async def _source_outcomes(
             }
         )
     return outcomes
+
+
+# Состояние группы и источника (FR-024e). Перечень закрытый, порядок — порядок
+# старшинства: у группы показывается первое, которое к ней относится.
+STATE_EMPTY = "empty"
+STATE_RUNNING = "running"
+STATE_SOURCE_ERROR = "source_error"
+STATE_INTERNAL_ERROR = "internal_error"
+STATE_INTERRUPTED = "interrupted"
+STATE_MISSING = "missing"
+STATE_COMPLETE = "complete"
+STATE_ORDER = (
+    STATE_EMPTY,
+    STATE_RUNNING,
+    STATE_SOURCE_ERROR,
+    STATE_INTERNAL_ERROR,
+    STATE_INTERRUPTED,
+    STATE_MISSING,
+    STATE_COMPLETE,
+)
+
+
+def _kind_of(status: str, failure_kind: str | None) -> str:
+    """Причина незавершённости записи; у старой записи без неё — по статусу."""
+    if failure_kind:
+        return failure_kind
+    return plan.FAILURE_STOPPED if status == "stopped" else plan.FAILURE_SOURCE
+
+
+def _state_of_failures(kinds: set[str]) -> str:
+    """Состояние недоказанной работы по причинам её последних попыток."""
+    if plan.FAILURE_SOURCE in kinds:
+        return STATE_SOURCE_ERROR
+    if plan.FAILURE_INTERNAL in kinds:
+        return STATE_INTERNAL_ERROR
+    if kinds & {plan.FAILURE_STOPPED, plan.FAILURE_INTERRUPTED}:
+        return STATE_INTERRUPTED
+    return STATE_MISSING
+
+
+def _legacy_status(state: str) -> str:
+    if state == STATE_COMPLETE:
+        return "ok"
+    if state in {STATE_SOURCE_ERROR, STATE_INTERNAL_ERROR}:
+        return "failed"
+    return "partial"
+
+
+def group_state(looks_empty: bool, sources: list[dict[str, object]]) -> str:
+    """Старшее состояние среди источников группы (FR-024e)."""
+    if looks_empty:
+        return STATE_EMPTY
+    states = {str(source["state"]) for source in sources}
+    return next((state for state in STATE_ORDER if state in states), STATE_COMPLETE)
 
 
 async def build_report(

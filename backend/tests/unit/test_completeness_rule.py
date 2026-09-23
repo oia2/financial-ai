@@ -204,8 +204,10 @@ async def test_прерванный_исход_перевешивает_набл
     первого инструмента из ста двадцати объявляла день собранным навсегда
     (FR-050).
     """
+    # Прерванный сбор оставляет строку, но не доказательство всей работы:
+    # закрывают доказательства, а не наблюдения (FR-032f).
     repository = FakeRepository(
-        runs={"equity_d1": set(WINDOW)},
+        runs={"equity_d1": set(WINDOW) - {WINDOW[1]}},
         observed=set(WINDOW),
         stopped={"equity_d1": {WINDOW[1]}},
     )
@@ -226,7 +228,7 @@ async def test_добранная_после_остановки_сессия_н�
 
 async def test_поздний_failed_перевешивает_частичное_наблюдение() -> None:
     repository = FakeRepository(
-        runs={"equity_d1": set(WINDOW)},
+        runs={"equity_d1": set(WINDOW) - {WINDOW[1]}},
         observed=set(WINDOW),
         failed={"equity_d1": {WINDOW[1]}},
     )

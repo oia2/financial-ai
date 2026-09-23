@@ -13,10 +13,12 @@ from decimal import Decimal
 
 import httpx
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import get_settings
 from financial_ai.market_data import cli, groups
+from financial_ai.market_data.models import SourceWorkEvidence
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
 from tests.market_data.verified import record_verified_run
@@ -118,6 +120,14 @@ async def test_gaps_shows_unfinished_sources_with_reason(
 ) -> None:
     """Незакрытый источник виден так же, как сбой сбора, и с причиной."""
     repository = await _seed(db_session, SESSIONS)
+    # Работа позиций за эту сессию не доказана: закрывают доказательства, а
+    # не статус прогона (FR-032f).
+    await db_session.execute(
+        delete(SourceWorkEvidence).where(
+            SourceWorkEvidence.source_id == "futures_positions",
+            SourceWorkEvidence.session_date == SESSIONS[1],
+        )
+    )
     moment = dt.datetime.now(dt.UTC)
     await repository.record_run(
         run_id="run-1",
@@ -299,18 +309,18 @@ def test_catchup_stop_asks_the_worker(
     assert "доводится до конца" in capsys.readouterr().out
 
 
-def test_backfill_required_is_not_a_crash(
+def test_refusal_is_not_a_crash(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """На пустом хранилище нужна первичная загрузка, а не догон."""
+    """Отказ сборщика печатается его причиной, а не падением команды."""
     monkeypatch.setattr(
         cli.httpx,
         "request",
         FakeWorker(
-            {"detail": {"code": "backfill_required", "message": "нужна первичная загрузка"}},
+            {"detail": {"code": "unknown_group", "message": "неизвестная группа 'x'"}},
             status_code=422,
         ),
     )
 
     assert cli._catchup(None, None, None) == 1
-    assert "нужна первичная загрузка" in capsys.readouterr().out
+    assert "неизвестная группа" in capsys.readouterr().out

@@ -36,6 +36,11 @@ class FakeRepository:
     async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
         return self._last
 
+    async def latest_trading_session(self, not_after: dt.date | None = None) -> dt.date | None:
+        # Сегодняшняя сессия уже в календаре: повторный опрос после порога
+        # нужен только пока её нет (FR-040, уточнение 2026-09-23).
+        return not_after
+
 
 async def test_без_единого_прогона_календарь_спрашивается() -> None:
     assert await calendar_is_due(FakeRepository(None), moment(9), Settings())

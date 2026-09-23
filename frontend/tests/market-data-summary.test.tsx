@@ -85,10 +85,12 @@ describe('сводка полноты', () => {
       'Справочники',
     ]);
 
-    // 255 из 314 — итог «частично», а не доля, выданная за качество (FR-010).
+    // 255 из 314 — состояние «не собрано» и число, а не доля, выданная за
+    // качество (FR-010, FR-024e).
     const quotes = await groupBlock('quotes');
     expect(within(quotes).getByText('255 / 314')).toBeInTheDocument();
-    expect(within(quotes).getByText('Частично')).toBeInTheDocument();
+    expect(within(quotes).getAllByText('Не собрано').length).toBeGreaterThan(0);
+    expect(within(quotes).getByText('не хватает 59 сессий')).toBeInTheDocument();
   });
 
   it('раскрытие группы называет источник поимённо', async () => {
@@ -101,9 +103,8 @@ describe('сводка полноты', () => {
     for (const title of ['Глобальные ряды', 'Курсы и ставка ЦБ', 'Brent', 'Состав индекса']) {
       expect(within(sources).getByText(title)).toBeInTheDocument();
     }
-    expect(
-      within(global).getByText(/успех одного не закрывает пропуск другого/),
-    ).toBeInTheDocument();
+    // Шаблонных пояснений о правиле счёта на экране нет (FR-024d).
+    expect(within(global).queryByText(/успех одного не закрывает/)).not.toBeInTheDocument();
   });
 
   it('ошибка источника названа днём и причиной', async () => {
@@ -114,8 +115,16 @@ describe('сводка полноты', () => {
         const report = coverageFixture();
         const global = report.groups.find((row) => row.group === 'global');
         const brent = global?.sources.find((source) => source.source_id === 'brent');
-        if (brent !== undefined) {
+        if (global !== undefined && brent !== undefined) {
+          global.state = 'source_error';
+          global.latest_failure = {
+            session_date: '2026-09-02',
+            reason: 'источник не ответил вовремя',
+            kind: 'source',
+            title: 'Brent',
+          };
           brent.status = 'failed';
+          brent.state = 'source_error';
           brent.failures = [
             { session_date: '2026-09-02', reason: 'источник не ответил вовремя' },
             { session_date: '2026-08-29', reason: 'HTTP 503 от источника' },
@@ -129,55 +138,67 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const global = await groupBlock('global');
+    // Одна строка факта под состоянием: источник, день, причина (FR-024e).
+    expect(within(global).getAllByText('Ошибка источника')).toHaveLength(2);
+    expect(
+      within(global).getByText('Brent · 02.09 · источник не ответил вовремя'),
+    ).toBeInTheDocument();
     expect(within(global).getByText(/Неудачи по дням · 2/)).toBeInTheDocument();
     expect(within(global).getByText('02.09.2026')).toBeInTheDocument();
     expect(within(global).getByText('источник не ответил вовремя')).toBeInTheDocument();
     expect(within(global).getByText('HTTP 503 от источника')).toBeInTheDocument();
   });
 
-  it('старый справочник требует проверки без ложной ошибки и покрытия по сессиям', async () => {
+  it('остановка не выдаётся за ошибку источника', async () => {
+    // Прежде остановленный и оборванный перезапуском сбор показывался «Ошибкой
+    // источника» (FR-033f, FR-024e).
     server.use(
       http.get('*/api/market-data/coverage', () => {
         const report = coverageFixture();
-        const reference = report.groups.find((row) => row.group === 'reference');
-        const sectors = reference?.sources.find((source) => source.source_id === 'equity_sectors');
-        if (reference !== undefined && sectors !== undefined) {
-          reference.requires_audit = 1;
-          sectors.status = 'partial';
-          sectors.requires_audit = 1;
-        }
+        const positions = report.groups.find((row) => row.group === 'positions')!;
+        positions.state = 'interrupted';
+        positions.latest_failure = {
+          session_date: '2026-09-02',
+          reason: 'спрошено 12 бумаг из 63',
+          kind: 'stopped',
+          title: 'Позиции по фьючерсам',
+        };
+        positions.sources[0]!.state = 'interrupted';
+        positions.sources[0]!.status = 'partial';
         return HttpResponse.json(report);
       }),
     );
 
     renderMarketData();
 
-    const reference = await groupBlock('reference');
-    expect(within(reference).getAllByText('Нужна проверка')).toHaveLength(2);
-    expect(within(reference).queryByText('Ошибка источника')).not.toBeInTheDocument();
-    expect(
-      within(reference).getByText('Старый ответ не подтверждён новым правилом'),
-    ).toBeInTheDocument();
-    expect(within(reference).queryByText(/из \d+ сессий/)).not.toBeInTheDocument();
+    const positions = await groupBlock('positions');
+    expect(within(positions).getAllByText('Прервано')).toHaveLength(2);
+    expect(within(positions).queryByText('Ошибка источника')).not.toBeInTheDocument();
+    expect(within(positions).getByText('02.09 · спрошено 12 бумаг из 63')).toBeInTheDocument();
   });
 
-  it('сохранённая история видна даже без подтверждения полноты', async () => {
+  it('несобранная история названа числом, без шаблонных пояснений', async () => {
     server.use(
       http.get('*/api/market-data/coverage', () => {
         const report = coverageFixture();
         const quotes = report.groups.find((row) => row.group === 'quotes')!;
-        quotes.requires_audit = 313;
-        quotes.sessions_covered = 1;
+        quotes.requires_audit = 312;
+        quotes.sessions_covered = 2;
+        quotes.gaps = 312;
         quotes.rows_with_values = 91465;
+        quotes.state = 'missing';
         return HttpResponse.json(report);
       }),
     );
     renderMarketData();
     const quotes = await groupBlock('quotes');
-    expect(within(quotes).getByText('История не проверена')).toBeInTheDocument();
-    expect(within(quotes).getByText(/91\s465 строк со значениями/)).toBeInTheDocument();
-    expect(within(quotes).getByText(/Сохранённые данные на месте/)).toBeInTheDocument();
-    expect(within(quotes).getByText('1 / 314')).toBeInTheDocument();
+    expect(within(quotes).getByText('Не собрано')).toBeInTheDocument();
+    expect(within(quotes).getByText('не хватает 312 сессий')).toBeInTheDocument();
+    expect(within(quotes).getByText('2 / 314')).toBeInTheDocument();
+    // Число строк — в сведениях группы, а не в её строке (FR-024d).
+    expect(within(quotes).queryByText(/строк со значениями/)).not.toBeInTheDocument();
+    expect(within(quotes).queryByText(/Сохранённые данные на месте/)).not.toBeInTheDocument();
+    expect(within(quotes).queryByText(/прежние отчёты/)).not.toBeInTheDocument();
   });
 
   it('реальный отказ справочника показан отдельно от отсутствия проверки', async () => {
@@ -186,7 +207,9 @@ describe('сводка полноты', () => {
         const report = coverageFixture();
         const reference = report.groups.find((row) => row.group === 'reference');
         const lots = reference?.sources.find((source) => source.source_id === 'equity_lot_sizes');
-        if (lots !== undefined) {
+        if (reference !== undefined && lots !== undefined) {
+          reference.state = 'source_error';
+          lots.state = 'source_error';
           lots.status = 'failed';
           lots.last_checked_at = '2026-09-03T18:00:00Z';
           lots.reason = 'ISS вернул некорректный справочник';
@@ -198,8 +221,7 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const reference = await groupBlock('reference');
-    expect(within(reference).getByText('Ошибка источника')).toBeInTheDocument();
-    expect(within(reference).getByText('Ошибка')).toBeInTheDocument();
+    expect(within(reference).getAllByText('Ошибка источника')).toHaveLength(2);
     expect(within(reference).getByText(/ISS вернул некорректный справочник/)).toBeInTheDocument();
   });
 
@@ -329,8 +351,10 @@ describe('сводка полноты', () => {
     renderMarketData();
 
     const reference = await groupBlock('reference');
-    expect(within(reference).getAllByText('текущее состояние').length).toBeGreaterThan(0);
-    expect(within(reference).getByText(/истории у него нет/)).toBeInTheDocument();
+    // Счёт — по источникам и дате проверки, а не по сессиям (FR-014).
+    expect(within(reference).getByText('2 / 2')).toBeInTheDocument();
+    expect(within(reference).getAllByText('проверено 03.09.2026')).toHaveLength(2);
+    expect(within(reference).queryByText(/из \d+$/)).not.toBeInTheDocument();
     // Ноль вместо отсутствующего покрытия читался бы как «ничего не собрано».
     expect(within(reference).queryByText('0,0%')).not.toBeInTheDocument();
   });

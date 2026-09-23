@@ -162,16 +162,6 @@ describe('отказы запуска', () => {
     );
   });
 
-  it('пустое хранилище при запуске: обращение к администратору', async () => {
-    refuseStart(422, 'backfill_required');
-
-    renderMarketData();
-    const form = await submitLaunch();
-
-    expect(await within(form).findByRole('alert')).toHaveTextContent(/первичная загрузка/);
-    expect(within(form).getByRole('alert')).toHaveTextContent(/администратору/);
-  });
-
   it('сборщик недоступен: не выдаётся за отказ операции', async () => {
     refuseStart(503, 'worker_unavailable');
 
@@ -214,46 +204,6 @@ describe('отказы запуска', () => {
 
     const alert = await within(form).findByRole('alert');
     expect(alert.textContent).not.toMatch(/backend-worker|internal|ConnectError/);
-  });
-});
-
-describe('сужение диапазона', () => {
-  it('показывает введённый и принятый диапазоны и не убирает сообщение', async () => {
-    server.use(
-      http.post('*/api/market-data/catchup', () =>
-        HttpResponse.json({
-          status: 'running',
-          groups: ['quotes'],
-          date_from: '2026-04-20',
-          date_till: '2026-09-03',
-          clamped: true,
-          requested_sessions: 90,
-        }),
-      ),
-    );
-
-    renderMarketData();
-
-    await userEvent.click(await screen.findByRole('button', { name: 'Ручной сбор' }));
-    const form = await screen.findByRole('dialog', { name: 'Запустить догон' });
-    await userEvent.click(within(form).getByLabelText('Всё доступное окно'));
-
-    const from = within(form).getByLabelText('Начало');
-    await userEvent.clear(from);
-    await userEvent.type(from, '01.01.2019');
-    const till = within(form).getByLabelText('Конец');
-    await userEvent.clear(till);
-    await userEvent.type(till, '31.12.2030');
-
-    await userEvent.click(within(form).getByRole('button', { name: 'Запустить' }));
-
-    const notice = await screen.findByText('Диапазон ограничен доступным окном');
-    const section = notice.closest('section');
-    expect(section).not.toBeNull();
-
-    // Оба диапазона рядом: введённый — контекст показа, не серверное поле.
-    expect(within(section as HTMLElement).getByText('01.01.2019 — 31.12.2030')).toBeInTheDocument();
-    expect(within(section as HTMLElement).getByText('20.04.2026 — 03.09.2026')).toBeInTheDocument();
   });
 });
 

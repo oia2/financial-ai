@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from financial_ai.market_data.iss.client import IssClient, IssConfig
+from financial_ai.market_data.iss.client import IssClient, IssConfig, ResponseContractError
 from financial_ai.market_data.sources.equity_d1 import rows_to_bars, to_decimal
 
 SESSION = dt.date(2026, 8, 28)
@@ -64,8 +64,15 @@ def test_missing_value_is_none_not_zero() -> None:
     assert to_decimal("0") is not None
 
 
-def test_unparsable_value_becomes_none() -> None:
-    assert to_decimal("н/д") is None
+@pytest.mark.parametrize("raw", ["н/д", "broken-value", "NaN", "Infinity", True])
+def test_unparsable_value_is_contract_violation(raw: object) -> None:
+    """Нераспознанное число — не законный пропуск (FR-032e).
+
+    Прежде оно становилось ``None`` и получало доказательство полноты наравне
+    с настоящим отсутствием значения.
+    """
+    with pytest.raises(ResponseContractError):
+        to_decimal(raw)
 
 
 def test_bars_carry_exact_prices() -> None:

@@ -119,7 +119,9 @@ describe('доступность раздела', () => {
     const section = (await screen.findByRole('heading', { name: 'Группы данных' })).closest(
       'section',
     ) as HTMLElement;
-    expect(within(section).getByText('Подтверждено из возможного')).toBeInTheDocument();
+    expect(section.querySelector('.group-columns')).toHaveTextContent(
+      'ГруппаСостояниеСессииДанные по',
+    );
 
     await userEvent.click(await screen.findByRole('button', { name: 'Сведения: Котировки' }));
 

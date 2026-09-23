@@ -19,14 +19,21 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
+from financial_ai.market_data.calendar import TradingCalendar, moscow_today
 from financial_ai.market_data.iss.client import IssClient, IssError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import equity_d1, trading_calendar
+from financial_ai.market_data.verification import RESULT_CONFIRMED_ABSENCE, RESULT_VALUE
 
 logger = logging.getLogger(__name__)
 
 # Раньше на MOEX торгов не было.
 EARLIEST_DATE = dt.date(1990, 1, 1)
+
+# Доказательство выполненной загрузки истории бумаги. Отдельный источник, а не
+# котировки: история одной бумаги полноту доски за дату не подтверждает
+# (FR-032d), и в расчёт полноты групп это доказательство не входит.
+HISTORY_SOURCE_ID = "equity_history"
 
 
 class BackfillProgress:
@@ -86,15 +93,26 @@ async def backfill_equity(
 ) -> BackfillProgress:
     """Загрузить историю котировок по каждой бумаге.
 
-    Возобновляемость: бумага, у которой уже есть наблюдения, пропускается.
-    Отметка хранится в самих данных — отдельного файла состояния не нужно, и
-    он не может разойтись с тем, что реально загружено.
+    Возобновляемость — по доказательству выполненной работы: бумага, история
+    которой загружена, отмечается в таблице доказательств и при повторном
+    запуске пропускается. Прежде признаком служило присутствие бумаги в
+    справочнике активов, и после одного обычного сбора загрузка пропускала
+    бумагу целиком, не спросив её историю ни разу (FR-033h, анализ A3).
+
+    Верхняя граница — последняя ЗАКРЫТАЯ сессия: незавершённая сегодняшняя в
+    хранилище не попадает (правило модуля `ingest`).
     """
     repository = MarketDataRepository(session)
     start = resolve_start_date(settings)
-    end = till or dt.date.today()
+    end = till or await last_closed_session(repository, settings)
+    if end is None:
+        logger.warning("первичная загрузка: закрытых сессий в календаре нет")
+        return BackfillProgress(completed=set(), total=len(tickers))
 
-    completed = await repository.tickers_with_history()
+    completed = {
+        key.removeprefix("ticker:")
+        for key in await repository.work_keys_for_source(HISTORY_SOURCE_ID)
+    }
     progress = BackfillProgress(completed=completed, total=len(tickers))
     started = dt.datetime.now(dt.UTC)
 
@@ -119,8 +137,16 @@ async def backfill_equity(
             logger.warning("первичная загрузка: %s не загружена (%s)", ticker, error)
             continue
 
-        written = await _store_history(repository, ticker, rows)
+        written = await _store_history(repository, ticker, rows, end)
         written_total += written
+        await repository.record_work_evidence(
+            source_id=HISTORY_SOURCE_ID,
+            session_date=end,
+            work_key=f"ticker:{ticker}",
+            result_kind=RESULT_VALUE if written else RESULT_CONFIRMED_ABSENCE,
+            reason_code="history_loaded" if written else "verified_empty_history",
+            origin_run_id=run_id,
+        )
         # Первичная загрузка записывает свой исход наравне с остальным сбором.
         # Не ради отчётности: по этой таблице отвечают на вопрос «собиралось ли
         # что-нибудь после такого-то момента», и молчаливая запись мимо неё
@@ -162,14 +188,33 @@ async def _record_backfill(
     )
 
 
+async def last_closed_session(
+    repository: MarketDataRepository, settings: Settings
+) -> dt.date | None:
+    """Последняя закрытая сессия календаря: сегодняшняя — только после порога."""
+    from financial_ai.market_data.advance import session_is_closed
+
+    calendar = TradingCalendar(repository)
+    latest = await calendar.latest_session(moscow_today())
+    if latest is None:
+        return None
+    for day in reversed(await calendar.window(latest, 2)):
+        if session_is_closed(day, settings):
+            return day
+    return None
+
+
 async def _store_history(
-    repository: MarketDataRepository, ticker: str, rows: list[dict[str, object]]
+    repository: MarketDataRepository,
+    ticker: str,
+    rows: list[dict[str, object]],
+    end: dt.date,
 ) -> int:
-    """Разложить историю одной бумаги по датам и сохранить."""
+    """Разложить историю одной бумаги по датам и сохранить — не позже ``end``."""
     by_date: dict[dt.date, dict[str, object]] = {}
     for row in rows:
         parsed = trading_calendar.parse_date(row.get("TRADEDATE"))
-        if parsed is not None:
+        if parsed is not None and parsed <= end:
             by_date[parsed] = row
 
     if not by_date:

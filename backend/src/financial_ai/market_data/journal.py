@@ -54,6 +54,9 @@ class RunFailure:
     source_id: str
     session_date: dt.date | None
     reason: str | None
+    # Причина из закрытого перечня (FR-033f): остановка и перезапуск не
+    # выдаются за отказ источника.
+    kind: str = plan.FAILURE_SOURCE
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -61,6 +64,7 @@ class RunFailure:
             "title": plan.title_of(self.source_id),
             "session_date": self.session_date.isoformat() if self.session_date else None,
             "reason": self.reason,
+            "kind": self.kind,
         }
 
 
@@ -297,6 +301,8 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
                 IngestRun.source_id,
                 IngestRun.session_date,
                 IngestRun.failure_reason,
+                IngestRun.status,
+                IngestRun.failure_kind,
             ).where(IngestRun.run_id.in_(run_ids), IngestRun.status.in_(("failed", "stopped")))
         )
     ).all()
@@ -306,8 +312,15 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
     # показывался завершённым с собранной сессией — при том что спрошены были
     # три бумаги из ста двадцати (FR-050).
     failures: dict[str, list[RunFailure]] = {}
-    for run_id, source_id, session_date, reason in failures_rows:
-        failures.setdefault(run_id, []).append(RunFailure(source_id, session_date, reason))
+    for run_id, source_id, session_date, reason, status, kind in failures_rows:
+        failures.setdefault(run_id, []).append(
+            RunFailure(
+                source_id,
+                session_date,
+                reason,
+                kind or (plan.FAILURE_STOPPED if status == "stopped" else plan.FAILURE_SOURCE),
+            )
+        )
 
     saved_rows = (
         await session.execute(
@@ -325,7 +338,9 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
     summaries: list[RunSummary] = []
     for row in rows:
         exact = saved.get(row.run_id, [])
-        history_limited = not exact
+        # Прогон без сессий — проверка календаря, у которой нечего сохранять:
+        # «точный итог недоступен» про неё неправда (анализ 2026-09-23).
+        history_limited = not exact and bool(row.sessions)
         if exact:
             counts = {
                 outcome: sum(item_outcome == outcome for item_outcome, _ in exact)
@@ -391,6 +406,7 @@ async def mark_interrupted(session: AsyncSession, process_started_at: dt.datetim
             finished_at=process_started_at,
             status="failed",
             failure_reason=INTERRUPTED_REASON,
+            failure_kind=plan.FAILURE_INTERRUPTED,
         )
     )
     count = int(getattr(result, "rowcount", 0) or 0)

@@ -254,6 +254,18 @@ async def sync_positions(
             if fetched.kind is PositionFetchKind.UNKNOWN:
                 unknown.append(f"{contract}/{session_date}:{fetched.reason_code}")
                 continue
+            if fetched.kind is PositionFetchKind.NOT_APPLICABLE:
+                # Семейство в этот день ещё не торговалось: пара неприменима с
+                # основанием, а не «неизвестна» навсегда (FR-032g).
+                evidence.append(
+                    WorkEvidence(
+                        session_date,
+                        work_key,
+                        RESULT_NOT_APPLICABLE,
+                        fetched.reason_code,
+                    )
+                )
+                continue
             if fetched.kind is PositionFetchKind.CONFIRMED_ABSENCE:
                 evidence.append(
                     WorkEvidence(

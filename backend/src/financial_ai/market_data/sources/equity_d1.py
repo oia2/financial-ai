@@ -19,7 +19,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from weakref import WeakKeyDictionary
 
-from financial_ai.market_data.iss.client import IssClient, IssError
+from financial_ai.market_data.iss.client import IssClient, IssError, ResponseContractError
 from financial_ai.market_data.repository import DailyBar, MarketDataRepository
 from financial_ai.market_data.verification import VerificationResult, one_session
 
@@ -108,8 +108,10 @@ def rows_to_bars(
 ) -> list[DailyBar]:
     """Преобразовать ответ биржи в наблюдения.
 
-    Строка без тикера пропускается: она ни к чему не относится. Строка без
-    цен сохраняется с ``None`` — отсутствие наблюдения это факт, а не ноль.
+    Строка без тикера — нарушение контракта, а не строка, которую можно
+    пропустить: иначе ответ без единой годной строки получал доказательство
+    полноты доски (FR-032e). Строка без цен сохраняется с ``None`` —
+    отсутствие наблюдения это факт, а не ноль.
 
     ``aliases`` отображает действующее имя бумаги на её сущность. Без него
     переименование выглядело бы появлением новой бумаги, а прежний ряд — как
@@ -120,10 +122,7 @@ def rows_to_bars(
     seen: set[str] = set()
 
     for row in rows:
-        secid = row.get("SECID")
-        if not isinstance(secid, str) or not secid.strip():
-            continue
-        ticker = secid.strip().upper()
+        ticker = secid_of(row, session_date)
         if ticker in seen:
             # Дубли в пределах одной даты не должны порождать две строки:
             # ключ price_series_id + session_date обязан остаться ключом.
@@ -151,31 +150,48 @@ def rows_to_bars(
     return bars
 
 
+def secid_of(row: dict[str, object], session_date: dt.date) -> str:
+    """Идентификатор бумаги строки ответа либо нарушение контракта (FR-032e)."""
+    secid = row.get("SECID")
+    if not isinstance(secid, str) or not secid.strip():
+        raise ResponseContractError(
+            f"строка ответа за {session_date} без идентификатора бумаги: {secid!r}"
+        )
+    return secid.strip().upper()
+
+
 def to_decimal(raw: object) -> Decimal | None:
     """Разобрать значение в ``Decimal``.
 
-    ``None`` означает «наблюдения нет» и НЕ заменяется нулём: отсутствие
-    торгов и нулевая цена — разные факты, и модель обязана их различать.
+    ``None`` и пустая строка означают «наблюдения нет» и НЕ заменяются нулём:
+    отсутствие торгов и нулевая цена — разные факты, и модель обязана их
+    различать.
+
+    Всё остальное обязано разобраться в конечное число. Прежде нераспознанное
+    значение превращалось в ``None`` и получало доказательство полноты наравне
+    с законным пропуском — испорченный ответ записывался «собранным»
+    (FR-032e). Теперь это нарушение контракта: работа остаётся незавершённой.
 
     ``Decimal`` на входе возвращается как есть: ответы биржи разбираются сразу
-    в него (`iss/client.py:_loads`), и лишний проход через ``str`` здесь ничего
-    бы не изменил.
-
-    ``float`` тоже принимается — его приносят источники, чей ответ не JSON, —
-    но к этому моменту значение уже искажено, и перевод через ``str`` потерю не
-    возвращает. Точка, где потеря предотвращается, — разбор ответа, а не эта
-    функция.
+    в него (`iss/client.py:_loads`). ``float`` принимается — его приносят
+    источники, чей ответ не JSON, — но к этому моменту значение уже искажено;
+    точка, где потеря предотвращается, — разбор ответа, а не эта функция.
     """
     if raw is None or raw == "":
         return None
+    if isinstance(raw, bool):
+        raise ResponseContractError(f"вместо числа пришло логическое значение {raw!r}")
     if isinstance(raw, Decimal):
-        return raw
-    if isinstance(raw, float):
-        logger.warning(
-            "числовое значение пришло как float (%r): точность уже потеряна до разбора", raw
-        )
-    try:
-        return Decimal(str(raw))
-    except (InvalidOperation, ValueError):
-        logger.warning("не удалось разобрать числовое значение %r", raw)
-        return None
+        value = raw
+    else:
+        if isinstance(raw, float):
+            logger.warning(
+                "числовое значение пришло как float (%r): точность уже потеряна до разбора", raw
+            )
+        try:
+            value = Decimal(str(raw))
+        except (InvalidOperation, ValueError) as error:
+            raise ResponseContractError(f"нераспознанное число {raw!r}") from error
+    if not value.is_finite():
+        raise ResponseContractError(f"нечисловое значение {raw!r}")
+    return value

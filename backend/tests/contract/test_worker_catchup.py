@@ -156,11 +156,17 @@ async def test_start_returns_the_plan(
 async def test_nothing_to_catch_up_is_not_an_error(
     worker_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Запускать нечего — тоже `200`: запрос состоялся."""
+    """Запускать нечего — тоже `200`: запрос состоялся.
+
+    Выбраны группы с историей: выбранный справочник — работа и без дат
+    (FR-033g).
+    """
     await _seed(db_session, SESSIONS)
     _install_runner()
 
-    response = await worker_client.post("/internal/catchup", json={})
+    response = await worker_client.post(
+        "/internal/catchup", json={"groups": ["quotes", "aggregates", "global", "positions"]}
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -188,17 +194,19 @@ async def test_second_start_is_rejected_with_409(
     await _wait_idle(runner)
 
 
-async def test_empty_storage_answers_backfill_required(
+async def test_empty_storage_starts_loading_the_window(
     worker_client: httpx.AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Не ошибка ввода, а состояние системы: нужна первичная загрузка."""
+    """Пустая база — не отказ: загрузка окна и есть ручной сбор (FR-033h)."""
     await _seed(db_session, [])
-    _install_runner()
+    runner = _install_runner()
 
-    response = await worker_client.post("/internal/catchup", json={})
+    response = await worker_client.post("/internal/catchup", json={"groups": ["quotes"]})
 
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "backfill_required"
+    assert response.status_code == 200
+    assert response.json()["requested_sessions"] == len(SESSIONS)
+    runner.stop()
+    await _wait_idle(runner)
 
 
 async def test_unknown_group_is_422(

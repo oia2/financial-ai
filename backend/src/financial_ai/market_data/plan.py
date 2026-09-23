@@ -24,6 +24,14 @@ SESSION = "session"
 PERIOD = "period"
 DAILY = "daily"
 
+# Почему работа не завершена (FR-033f). «Ошибка источника» показывается только
+# при первой причине: остановка человеком, обрыв перезапуском и сбой нашей
+# обработки источником не являются, и прежде экран их не различал.
+FAILURE_SOURCE = "source"
+FAILURE_STOPPED = "stopped"
+FAILURE_INTERRUPTED = "interrupted"
+FAILURE_INTERNAL = "internal"
+
 OUTCOME_COLLECTED = "collected"
 OUTCOME_PARTIAL = "partial"
 OUTCOME_FAILED = "failed"
@@ -107,7 +115,15 @@ CATCHUP_PLAN: tuple[SourceSpec, ...] = (
     SourceSpec("index_constituents", "Состав индекса", SESSION),
     SourceSpec("brent", "Brent", SESSION),
     SourceSpec("futures_positions", "Позиции по фьючерсам", SESSION),
+    # Выбранные справочники обновляются один раз за запуск, независимо от
+    # списка дат (FR-033g). Прежде их можно было выбрать, но план их не
+    # исполнял: выбор одних справочников отвечал «собирать нечего».
+    SourceSpec("equity_sectors", "Секторы бумаг", DAILY),
+    SourceSpec("equity_lot_sizes", "Лоты бумаг", DAILY),
 )
+
+# Справочники текущего состояния: без оси сессий, раз за запуск.
+REFERENCE_SOURCES = frozenset({"equity_sectors", "equity_lot_sizes"})
 
 MODE_DAILY = "daily"
 MODE_MANUAL = "manual"
@@ -153,6 +169,14 @@ def describe(source_id: str, rows: int) -> str | None:
     if unit is None or rows <= 0:
         return None
     return f"{rows} {plural(rows, *unit)}"
+
+
+def scope_of(source_id: str) -> str:
+    """Область источника: ручной план первым — в нём диапазонные идут периодом."""
+    for spec in (*CATCHUP_PLAN, *DAILY_PLAN):
+        if spec.source_id == source_id:
+            return spec.scope
+    return SESSION
 
 
 def title_of(source_id: str) -> str:

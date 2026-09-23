@@ -158,14 +158,8 @@ async def test_legacy_coverage_requires_audit_without_automatic_backfill(
         coverage_version=2,
         coverage_reason="test_verified_work",
     )
-    await repository.record_work_evidence(
-        source_id="equity_d1",
-        session_date=SESSIONS[0],
-        work_key="board:TQBR",
-        result_kind="value",
-        reason_code="test_verified_work",
-        origin_run_id="repair-one-date",
-    )
+    # У старого успеха доказательств единиц работы нет: таблица доказательств
+    # появилась вместе с версией 2, и закрывают именно они (FR-032f).
     await db_session.flush()
     from financial_ai.market_data.models import IngestRun
 

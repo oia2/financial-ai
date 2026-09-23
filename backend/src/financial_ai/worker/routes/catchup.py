@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 from financial_ai.market_data.groups import UnknownGroupError
 from financial_ai.market_data.lock import MarketDataAlreadyRunningError
 from financial_ai.market_data.runner import (
-    BackfillRequiredError,
     CatchupAlreadyRunningError,
     CatchupStatus,
     NothingToCatchUpError,
@@ -108,10 +107,6 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
         return _error(409, "catchup_already_running", str(error))
     except UnknownGroupError as error:
         return _error(422, "unknown_group", str(error))
-    except BackfillRequiredError as error:
-        # Не ошибка ввода, а состояние системы: на пустом хранилище нужна
-        # первичная загрузка, а не догон.
-        return _error(422, "backfill_required", str(error))
     except NothingToCatchUpError as error:
         return {"status": "idle", "requested_sessions": 0, "reason": str(error)}
 

@@ -29,6 +29,9 @@ class VerificationResult:
     complete: bool = True
     detail: str | None = None
     counts_as_unavailable: bool = False
+    # Причина незавершённости (FR-033f). Незавершённая проверка по умолчанию —
+    # источник не отдал нужное: не ответил за дату или ответил не всё.
+    failure_kind: str = "source"
 
 
 def one_session(

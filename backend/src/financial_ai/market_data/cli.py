@@ -536,12 +536,15 @@ async def _backfill(date_from: str | None, tickers: list[str] | None) -> int:
             print(f"календарь: добавлено сессий {added}")
 
             repository = MarketDataRepository(session)
-            known = sorted(tickers or await repository.tickers_with_history())
+            # Состав доски спрашивается у биржи: на пустой базе известных бумаг
+            # нет, и прежний совет «сначала обычный сбор» вёл к пропуску их
+            # истории (FR-033h).
+            known = sorted(
+                tickers
+                or (set(await iss.fetch_equity_isins()) | await repository.tickers_with_history())
+            )
             if not known:
-                print(
-                    "список бумаг пуст: укажите --ticker либо выполните обычный сбор, "
-                    "чтобы система узнала состав доски"
-                )
+                print("биржа не вернула состав доски: укажите --ticker")
                 return 1
 
             progress = await backfill.backfill_equity(session, settings, iss, known)
@@ -647,7 +650,7 @@ async def _verify_positions(session_date: dt.date, ticker: str) -> int:
     """Обратиться к источнику позиций по-настоящему.
 
     Подтверждает на настоящем ответе три вещи разом: соответствие акции и
-    контракта построилось, обмен формой состоялся, разбор дал значения.
+    контракта построилось, таблица позиций за дату получена, разбор дал значения.
     Подделка этого по определению не ловит.
     """
     settings = get_settings()

@@ -248,7 +248,9 @@ async def test_cbr_stop_cancels_remaining_requests_and_keeps_partial_rows_unfini
     )
 
 
-@pytest.mark.parametrize("evidence", ["observation", "successful_range_then_failure"])
+# Второй случай — неудача без доказательства. Успешный диапазон с
+# доказательством даты закрывает её и после поздней неудачи (FR-032f).
+@pytest.mark.parametrize("evidence", ["observation", "failure_without_proof"])
 async def test_daily_uses_same_completeness_as_report_and_skips_positions(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, evidence: str
 ) -> None:
@@ -262,7 +264,6 @@ async def test_daily_uses_same_completeness_as_report_and_skips_positions(
     if evidence == "observation":
         await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, {DAY: Decimal("16.5")})
     else:
-        await record(repository, cbr.SOURCE_ID, period=(WINDOW[0], DAY))
         await record(repository, cbr.SOURCE_ID, "failed")
     await repository.commit()
     cbr_action = AsyncMock(return_value=verified(cbr.SOURCE_ID, [DAY]))

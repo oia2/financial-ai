@@ -221,7 +221,6 @@ async def test_просьба_продолжить_доходит_до_сбор�
     ("status_code", "code"),
     [
         (409, "catchup_already_running"),
-        (422, "backfill_required"),
         (422, "unknown_group"),
         (422, "invalid_range"),
     ],

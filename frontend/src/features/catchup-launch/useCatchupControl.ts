@@ -21,13 +21,6 @@ import {
 import { ApiError, ServerUnreachableError } from '@/shared/api/client';
 import { useToast } from '@/shared/ui/toast/ToastHost';
 
-export interface ClampContext {
-  requestedFrom: string | null;
-  requestedTill: string | null;
-  acceptedFrom: string | null;
-  acceptedTill: string | null;
-}
-
 /**
  * Сообщения отказа.
  *
@@ -37,8 +30,6 @@ export interface ClampContext {
  */
 const REFUSALS: Record<string, string> = {
   catchup_already_running: 'Догон уже выполняется. Текущий прогон продолжается без изменений.',
-  backfill_required:
-    'В хранилище нет наблюдений: нужна первичная загрузка. Обратитесь к администратору системы.',
   unknown_group: 'Неизвестная группа. Запуск отклонён. Выберите группы из списка.',
   invalid_group: 'Неизвестная группа. Запуск отклонён. Выберите группы из списка.',
   invalid_range: 'Начало диапазона должно быть не позже конца.',
@@ -69,7 +60,6 @@ export function useCatchupControl() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
-  const [clamp, setClamp] = useState<ClampContext | null>(null);
   /** Отказ, показанный поверх состояния прогона: счётчики он не затирает. */
   const [pageNotice, setPageNotice] = useState<PageNotice | null>(null);
   /**
@@ -113,17 +103,6 @@ export function useCatchupControl() {
 
         setNothingToCatchUp(false);
         setPageNotice(null);
-        setClamp(
-          result.clamped === true && !resumed
-            ? {
-                requestedFrom: request.date_from,
-                requestedTill: request.date_till,
-                acceptedFrom: result.date_from ?? null,
-                acceptedTill: result.date_till ?? null,
-              }
-            : null,
-        );
-
         // Состояние перечитывается СРАЗУ. У остановленного прогона опрос
         // выключен — само оно не изменится, — и панель показывала бы остановку
         // с предложением продолжить уже после того, как продолжение началось
@@ -139,11 +118,10 @@ export function useCatchupControl() {
           return;
         }
 
-        toast.show(
-          result.clamped === true
-            ? 'Догон запущен. Диапазон ограничен окном.'
-            : 'Догон запущен. Можно перейти в другой раздел.',
-        );
+        // Сужения диапазона на экране нет (владелец, 2026-09-23): сервер берёт
+        // из выбранного диапазона только несобранные сессии, и «ограничен
+        // окном» выдавало обычную работу за отказ. Артефакт v4 плашки не имеет.
+        toast.show('Догон запущен. Можно перейти в другой раздел.');
       },
       onError: (error) => {
         const message = refusalMessage(error);
@@ -213,7 +191,6 @@ export function useCatchupControl() {
     launching: start.isPending,
     refusal,
     requestStop,
-    clamp,
     pageNotice,
     nothingToCatchUp,
     clearNothingToCatchUp,

@@ -207,7 +207,9 @@ async def test_large_gap_is_not_collected_when_limit_is_set(
 
     async def only_latest(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         called.append(day)
-        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+        return SimpleNamespace(
+            succeeded=True, unfinished_sources=[], interrupted=False, session_outcome="collected"
+        )
 
     monkeypatch.setattr(advance.ingest, "ingest_session", only_latest)
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
@@ -244,7 +246,9 @@ async def test_default_collects_the_whole_gap(
 
     async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
-        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+        return SimpleNamespace(
+            succeeded=True, unfinished_sources=[], interrupted=False, session_outcome="collected"
+        )
 
     monkeypatch.setattr(advance.ingest, "ingest_session", collect)
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
@@ -281,7 +285,9 @@ async def test_hole_inside_the_window_is_collected(
 
     async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
-        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+        return SimpleNamespace(
+            succeeded=True, unfinished_sources=[], interrupted=False, session_outcome="collected"
+        )
 
     monkeypatch.setattr(advance.ingest, "ingest_session", collect)
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
@@ -339,7 +345,9 @@ async def test_session_with_a_failed_source_is_collected_again(
 
     async def collect(_session: object, _settings: object, day: dt.date, **_: object) -> object:
         collected.append(day)
-        return SimpleNamespace(succeeded=True, unfinished_sources=[])
+        return SimpleNamespace(
+            succeeded=True, unfinished_sources=[], interrupted=False, session_outcome="collected"
+        )
 
     monkeypatch.setattr(advance.ingest, "ingest_session", collect)
     monkeypatch.setattr(advance.trading_calendar, "sync_trading_calendar", _noop)
@@ -628,4 +636,6 @@ async def test_несобранная_сессия_прерванной_не_о�
         should_stop=lambda: len(seen) >= 1,
     )
 
-    assert seen == [False]
+    # Итог — сохранённая свёртка, а не да/нет (FR-033e); у подделки без плана
+    # сессии свёртки нет, и она называется несобранной.
+    assert seen == ["failed"]

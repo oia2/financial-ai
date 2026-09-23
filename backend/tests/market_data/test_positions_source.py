@@ -1,9 +1,9 @@
 """Тесты источника позиций по фьючерсам.
 
-Образцы разметки сняты с **настоящих ответов** биржи 2026-09-04 (данные за
-2026-08-28, контракт `SBRF_F`), а не придуманы. Все четыре дефекта этой фичи
-были расхождением с настоящим источником, а тесты на подделках при этом
-проходили; подделка, срисованная с живого ответа, ловит хотя бы разбор.
+Образец таблицы — строки **настоящего ответа** биржи
+(`open-positions-csv.aspx?d=20260922&t=1`, снят 2026-09-23), а не придуманы:
+все дефекты этого источника были расхождением с настоящим ответом, а тесты на
+подделках при этом проходили.
 
 Живая сверка — отдельной командой вне гейта: `cli verify-positions` (FR-025).
 """
@@ -27,15 +27,13 @@ from financial_ai.market_data.sources.positions_client import (
     PositionFetchResult,
     PositionsClient,
     PositionsSourceError,
-    parse_page_state,
-    parse_snapshot,
+    parse_day_table,
 )
 from tests.market_data.conftest import FakePositionsClient, FakeSnapshot
 
-SESSION = dt.date(2026, 8, 28)
-OTHER = dt.date(2026, 8, 27)
-
-NBSP = " "
+SESSION = dt.date(2026, 9, 22)
+OTHER = dt.date(2026, 9, 21)
+WEEKEND = dt.date(2026, 9, 20)
 
 
 class TypedPositionsClient:
@@ -50,165 +48,113 @@ class TypedPositionsClient:
         return self.results[(contract_code, day)]
 
 
-# Живой ответ по SBRF_F: строка открытых позиций идёт ПЕРВОЙ.
-LIVE_TABLE = f"""
-<span class="text-center"><b> Данные на 28 августа 2026 </b></span>
-<table class="table1 _full-width table1">
-<tr>
-<th rowspan="2">&nbsp;</th>
-<th colspan="2">Физические лица</th>
-<th colspan="2">Юридические лица</th>
-<th rowspan="2">Совокупный объем открытых позиций</th>
-</tr>
-<tr>
-<th>Длинные позиции</th><th>Короткие позиции</th>
-<th>Длинные позиции</th><th>Короткие позиции</th>
-</tr>
-<tr><td align="center" colspan="6"><b>Фьючерс</b></td></tr>
-<tr><td>Количество договоров (контрактов), шт.</td>
-<td align="right">125{NBSP}484</td>
-<td align="right">88{NBSP}768</td>
-<td align="right">388{NBSP}054</td>
-<td align="right">424{NBSP}770</td>
-<td align="right">1{NBSP}027{NBSP}076</td>
-</tr>
-<tr><td>Изменение количества договоров (контрактов) по отношению к предыдущему дню, шт.</td>
-<td align="right">459</td><td align="right">-3{NBSP}485</td>
-<td align="right">-4{NBSP}574</td><td align="right">-630</td>
-<td align="right">-8{NBSP}230</td>
-</tr>
-<tr><td>Относительное изменение количества договоров (контрактов), в %</td>
-<td align="right">0,37</td><td align="right">-3,78</td>
-<td align="right">-1,17</td><td align="right">-0,15</td>
-<td align="right">-0,79</td>
-</tr>
-<tr><td>Количество лиц, имеющих открытые позиции</td>
-<td align="right">3{NBSP}296</td><td align="right">1{NBSP}646</td>
-<td align="right">33</td><td align="right">65</td>
-<td align="right">5{NBSP}040</td>
-</tr>
-</table>
-"""
-
-# Ответ того же дня с ДРУГИМ порядком строк: сначала число лиц. Это не гипотеза —
-# оба варианта сняты с биржи в один день. Отображение по позиции, как в
-# оригинале, записало бы сюда число держателей позиций.
-REORDERED_TABLE = f"""
-<span class="text-center"><b> Данные на 28 августа 2026 </b></span>
-<table class="table1 _full-width table1">
-<tr><td>Количество лиц, имеющих открытые позиции</td>
-<td align="right">1{NBSP}196</td><td align="right">592</td>
-<td align="right">3</td><td align="right">33</td>
-<td align="right">1{NBSP}824</td>
-</tr>
-<tr><td>Количество договоров (контрактов), шт.</td>
-<td align="right">182{NBSP}003</td><td align="right">81{NBSP}175</td>
-<td align="right">4{NBSP}594</td><td align="right">105{NBSP}422</td>
-<td align="right">373{NBSP}194</td>
-</tr>
-</table>
-"""
-
-# Скрытые поля и список инструментов — тоже с живой страницы, значения укорочены.
-_QUOT = "&#39;"
-_POSTBACK = (
-    f"javascript:__doPostBack({_QUOT}ctl00$PageContent$RepeaterInstr$ctl{{n}}$Instrum{_QUOT},"
-    f"{_QUOT}{_QUOT})"
+HEADER = (
+    "moment,isin,name,contract_type,iz_fiz,clients_in_long,clients_in_short,"
+    "long_position,short_position,change_prev_week_long_abs,change_prev_week_short_abs,"
+    "change_prev_week_long_perc,change_prev_week_short_perc,"
 )
-_ANCHOR_ID = "ctl00_PageContent_RepeaterInstr_ctl{n}_Instrum"
-
-LIVE_STATE = f"""
-<input id="__VIEWSTATE" name="__VIEWSTATE" type="hidden"
-       value="/65DkHKNQexV34pBJcsjuy2anFSl"/>
-<input id="__VIEWSTATEGENERATOR" name="__VIEWSTATEGENERATOR" type="hidden"
-       value="20BEEBED"/>
-<input id="__EVENTVALIDATION" name="__EVENTVALIDATION" type="hidden"
-       value="mwVzjkKDRwloB0OJAehvBu7"/>
-<a href="{_POSTBACK.format(n="497")}" id="{_ANCHOR_ID.format(n="497")}">(SBRF_F)
-   Фьючерсный контракт на обыкновенные акции ПАО Сбербанк</a>
-<a href="{_POSTBACK.format(n="000")}" id="{_ANCHOR_ID.format(n="000")}">(GAZR_F)
-   Фьючерсный контракт на обыкновенные акции ПАО "Газпром"</a>
-"""
-
-EMPTY_PAGE = "<html><body><p>Данных нет</p></body></html>"
 
 
-# --- разбор ответа (contracts/positions-source.md) ----------------------------
+def _table(day: dt.date = SESSION, rows: list[str] | None = None) -> str:
+    """Таблица за дату: строки живого ответа 22.09.2026 с подставленной датой."""
+    lines = rows if rows is not None else LIVE_ROWS
+    return "\ufeff" + "\n".join([HEADER, *(line.format(day=day) for line in lines)]) + "\n"
 
 
-def test_open_positions_row_is_parsed() -> None:
-    """ФИЗ и ЮР по сторонам — из строки «Количество договоров»."""
-    snapshot = parse_snapshot(LIVE_TABLE)
+# Строки живого ответа за 22.09.2026. Опционы SBRF стоят рядом с фьючерсами и
+# в наблюдение не входят; у LENT юридические лица без коротких позиций.
+LIVE_ROWS = [
+    "{day},SBRF,Опцион SBRF,C,,1879.0,7.0000,1677348,1705149,5382.0,7755.0,0.00322,0.00457,",
+    "{day},SBRF,Опцион SBRF,C,1.0000,675.00,127.00,651163,623362,50438,48065,0.08396,0.08355,",
+    "{day},SBRF,Фьючерс SBRF,F,,38.000,52.000,29854,97640,3177.0,1822.0,0.11909,0.01902,",
+    "{day},SBRF,Фьючерс SBRF,F,1.0000,2719.0,1334.0,114175,46389,1754.0,3109.0,0.01560,0.07183,",
+    "{day},LENT,Фьючерс LENT,F,,1.0000,,1390.0,,241.00,,0.20975,,",
+    "{day},LENT,Фьючерс LENT,F,1.0000,145.00,107.00,4042.0,5432.0,-150.00,91.000,-0.03578,0.01704,",
+]
 
-    assert snapshot is not None
-    assert snapshot.trade_date == SESSION
-    assert snapshot.fiz_long == Decimal("125484")
-    assert snapshot.fiz_short == Decimal("88768")
-    assert snapshot.jur_long == Decimal("388054")
-    assert snapshot.jur_short == Decimal("424770")
-
-
-def test_row_is_found_by_title_not_by_position() -> None:
-    """Порядок строк в живых ответах различается — искать по номеру нельзя."""
-    snapshot = parse_snapshot(REORDERED_TABLE)
-
-    assert snapshot is not None
-    assert snapshot.fiz_long == Decimal("182003")
-    assert snapshot.fiz_long != Decimal("1196")
-
-
-def test_persons_row_is_not_taken_for_positions() -> None:
-    """Соседние строки таблицы в наблюдение не попадают."""
-    snapshot = parse_snapshot(REORDERED_TABLE)
-
-    assert snapshot is not None
-    for value in (snapshot.fiz_long, snapshot.fiz_short, snapshot.jur_long, snapshot.jur_short):
-        assert value not in (Decimal("1196"), Decimal("592"), Decimal("1824"))
+# Серии семейств, включая истёкшие (`show_expired=1`): LENT торгуется с 16.06.2026.
+SERIES = {
+    "LENT": [["LNZ6", "LENT-12.26", "2026-06-16", "2026-12-18", "LENT", "LENT", 1]],
+    # Спред и служебная серия начались на день раньше самого фьючерса.
+    "FIXR": [
+        ["FIU6FIZ6", "FIXR-9.26-12.26", "2026-08-17", "2026-09-18", "FIXR", "FIXR", 0],
+        ["FIXR_CLT", "FIXR_CLT", "2026-08-17", "2100-01-01", "FIXR", "FIXR", 0],
+        ["FIU6", "FIXR-9.26", "2026-08-18", "2026-09-18", "FIXR", "FIXR", 0],
+    ],
+    "SBRF": [["SRZ6", "SBRF-12.26", "2025-12-04", "2026-12-18", "SBRF", "SBER", 1]],
+}
 
 
-def test_sides_are_split_into_fiz_and_jur() -> None:
-    """Разделение на ФИЗ и ЮР перенесено из оригинала."""
-    snapshot = parse_snapshot(LIVE_TABLE)
+def _series_body(family: str) -> str:
+    import json
 
-    assert snapshot is not None
-    assert (snapshot.fiz_long, snapshot.fiz_short) != (snapshot.jur_long, snapshot.jur_short)
-
-
-def test_response_without_table_is_absence_not_crash() -> None:
-    """Нет таблицы — нет данных. Это не ошибка разбора."""
-    assert parse_snapshot(EMPTY_PAGE) is None
-
-
-def test_empty_snapshot_is_distinguishable_from_filled() -> None:
-    """На этом различии держится FR-018."""
-    snapshot = parse_snapshot(LIVE_TABLE)
-
-    assert snapshot is not None
-    assert snapshot.has_values is True
-
-
-def test_page_state_is_read_from_the_response() -> None:
-    """Состояние формы берётся у страницы, а не из захваченного файла."""
-    state = parse_page_state(LIVE_STATE)
-
-    assert state.viewstate.startswith("/65DkHKNQex")
-    assert state.generator == "20BEEBED"
-    assert state.validation.startswith("mwVzjkKD")
-    assert state.is_ready
-
-
-def test_instrument_list_is_read_from_the_response() -> None:
-    """Список контрактов — оттуда же, вместе с целью постбэка."""
-    state = parse_page_state(LIVE_STATE)
-
-    assert set(state.instruments) == {"SBRF_F", "GAZR_F"}
-    assert (
-        state.instruments["SBRF_F"].event_target == "ctl00$PageContent$RepeaterInstr$ctl497$Instrum"
+    return json.dumps(
+        {
+            "series": {
+                "columns": [
+                    "secid",
+                    "name",
+                    "start_date",
+                    "expiration_date",
+                    "asset_code",
+                    "underlying_asset",
+                    "is_traded",
+                ],
+                "data": SERIES.get(family, []),
+            }
+        }
     )
-    assert "Сбербанк" in state.instruments["SBRF_F"].selected_text
 
 
-# --- соответствие акции и контракта (research.md §11) ------------------------
+# --- разбор таблицы (FR-053a) ---------------------------------------------------
+
+
+def test_futures_rows_are_split_into_fiz_and_jur() -> None:
+    """`iz_fiz = 1` — физические лица, пусто — юридические; опционы не берутся."""
+    table = parse_day_table(_table(), SESSION)
+
+    sber = table.families["SBRF"]
+    assert (sber.fiz_long, sber.fiz_short) == (Decimal("114175"), Decimal("46389"))
+    assert (sber.jur_long, sber.jur_short) == (Decimal("29854"), Decimal("97640"))
+
+
+def test_missing_side_value_stays_none() -> None:
+    """Пустая ячейка — законный пропуск, а не ноль."""
+    lent = parse_day_table(_table(), SESSION).families["LENT"]
+    assert lent.jur_long == Decimal("1390.0")
+    assert lent.jur_short is None
+
+
+def test_header_only_means_not_published() -> None:
+    """Биржа отдаёт только заголовок за день без данных: это неизвестность."""
+    table = parse_day_table(_table(rows=[]), WEEKEND)
+    assert table.published is False
+    assert table.families == {}
+
+
+def test_foreign_date_is_a_contract_violation() -> None:
+    """Строка за другой день — не наблюдение о запрошенной сессии."""
+    with pytest.raises(PositionsSourceError, match="относится"):
+        parse_day_table(_table(day=OTHER), SESSION)
+
+
+def test_duplicate_family_side_is_a_contract_violation() -> None:
+    rows = [*LIVE_ROWS, LIVE_ROWS[3]]
+    with pytest.raises(PositionsSourceError, match="повтор"):
+        parse_day_table(_table(rows=rows), SESSION)
+
+
+def test_broken_number_is_not_silently_empty() -> None:
+    """Нераспознанное число — нарушение контракта, а не пропуск (FR-032e)."""
+    rows = [LIVE_ROWS[2].replace("29854", "н/д")]
+    with pytest.raises(Exception, match="нераспознанное число"):
+        parse_day_table(_table(rows=rows), SESSION)
+
+
+def test_missing_column_is_a_contract_violation() -> None:
+    body = "moment,isin,contract_type\n2026-09-22,SBRF,F\n"
+    with pytest.raises(PositionsSourceError, match="обязательных колонок"):
+        parse_day_table(body, SESSION)
 
 
 class FakeIss:
@@ -269,19 +215,22 @@ async def test_series_without_underlying_are_skipped() -> None:
     assert set(mapping) == {"SBER", "NVTK"}
 
 
-# --- обмен: темп, повторы, даты (FR-024a — FR-024d) --------------------------
+# --- обмен: одна таблица на дату, темп, повторы (FR-053a, FR-032g) -------------
 
 
 class Recorder:
-    """Подделка сайта биржи. Считает обращения и отдаёт заготовленное."""
+    """Подделка сайта биржи и ISS. Считает обращения и отдаёт заготовленное."""
 
-    def __init__(self) -> None:
+    def __init__(self, tables: dict[dt.date, str] | None = None) -> None:
         self.requests: list[httpx.Request] = []
-        self.body = LIVE_STATE + LIVE_TABLE
+        self.tables = tables if tables is not None else {SESSION: _table()}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return httpx.Response(200, text=self.body)
+        if request.url.path.endswith("series.json"):
+            return httpx.Response(200, text=_series_body(request.url.params["asset_code"]))
+        day = dt.datetime.strptime(request.url.params["d"], "%Y%m%d").date()
+        return httpx.Response(200, text=self.tables.get(day, _table(rows=[])))
 
     def client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
@@ -298,112 +247,107 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**base)  # type: ignore[arg-type]
 
 
+async def test_one_request_per_date_serves_every_family() -> None:
+    """Все семейства даты — из одной таблицы: прежде ~70 обращений на сессию."""
+    recorder = Recorder()
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        sber = await client.fetch("SBRF_F", SESSION)
+        lent = await client.fetch("LENT_F", SESSION)
+
+    assert sber.kind is PositionFetchKind.VALUE
+    assert lent.kind is PositionFetchKind.VALUE
+    assert len(recorder.requests) == 1
+    assert recorder.requests[0].url.params["d"] == "20260922"
+
+
 async def test_pause_is_kept_between_batches(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Между пачками выдерживается пауза, а размер пачки — из конфигурации."""
+    """Между пачками обращений выдерживается пауза из конфигурации."""
     pauses: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:
         pauses.append(seconds)
 
     monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
-
-    recorder = Recorder()
+    days = [SESSION - dt.timedelta(days=shift) for shift in range(5)]
+    recorder = Recorder({day: _table(day) for day in days})
     settings = _settings(
         market_data_positions_batch_size=2,
         market_data_positions_batch_pause_seconds=0.25,
     )
-    # Даты РАЗНЫЕ: повтор одной и той же пары «контракт — дата» второго
-    # обращения больше не делает, и пять одинаковых вызовов проверяли бы уже
-    # не темп, а кеш снимков (T206).
     async with PositionsClient(settings, client=recorder.client()) as client:
-        for shift in range(5):
-            await client.fetch("SBRF_F", SESSION - dt.timedelta(days=shift))
+        for day in days:
+            await client.fetch("SBRF_F", day)
 
-    # Шесть обращений: одно за состоянием формы и пять за данными.
-    assert len(recorder.requests) == 6
+    assert len(recorder.requests) == 5
     assert pauses == [0.25, 0.25]
 
 
-async def test_batch_size_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Темп — вопрос эксплуатации, а не свойство кода."""
-    pauses: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        pauses.append(seconds)
-
-    monkeypatch.setattr(module.asyncio, "sleep", fake_sleep)
-
-    recorder = Recorder()
-    settings = _settings(
-        market_data_positions_batch_size=5,
-        market_data_positions_batch_pause_seconds=0.5,
-    )
-    async with PositionsClient(settings, client=recorder.client()) as client:
-        for shift in range(5):
-            await client.fetch("SBRF_F", SESSION - dt.timedelta(days=shift))
-
-    assert pauses == [0.5]
-
-
-async def test_state_is_requested_once_not_per_instrument() -> None:
-    """Список инструментов спрашивается один раз, а не на каждый контракт."""
+async def test_unpublished_day_is_unknown() -> None:
+    """Таблица без строк — день не опубликован, а не отсутствие позиций."""
     recorder = Recorder()
     async with PositionsClient(_settings(), client=recorder.client()) as client:
-        await client.fetch("SBRF_F", SESSION)
-        await client.fetch("GAZR_F", SESSION)
-
-    assert len(recorder.requests) == 3
-
-
-async def test_snapshot_for_another_date_is_not_returned() -> None:
-    """Биржа отдаёт последний доступный снимок — записывать его нельзя."""
-    recorder = Recorder()
-    async with PositionsClient(_settings(), client=recorder.client()) as client:
-        result = await client.fetch("SBRF_F", OTHER)
+        result = await client.fetch("SBRF_F", WEEKEND)
 
     assert result.kind is PositionFetchKind.UNKNOWN
-    assert result.reason_code == "foreign_trade_date"
+    assert result.reason_code == "day_not_published"
 
 
-async def test_unknown_contract_costs_no_request() -> None:
-    """Контракта нет в списке — обращения не выполняется (FR-022)."""
+async def test_family_before_its_first_series_is_not_applicable() -> None:
+    """LENT торгуется с 16.06.2026: 29.05 его законно нет (FR-032g)."""
+    early = dt.date(2026, 5, 29)
+    recorder = Recorder({early: _table(early, [LIVE_ROWS[2], LIVE_ROWS[3]])})
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await client.fetch("LENT_F", early)
+
+    assert result.kind is PositionFetchKind.NOT_APPLICABLE
+    assert result.reason_code == "contract_family_not_traded_yet"
+    series = [r for r in recorder.requests if r.url.path.endswith("series.json")]
+    assert series[0].url.params["show_expired"] == "1"
+
+
+async def test_spread_does_not_start_the_family() -> None:
+    """17.08.2026 у FIXR был только спред: позиций по фьючерсу быть не могло."""
+    day = dt.date(2026, 8, 17)
+    recorder = Recorder({day: _table(day, [LIVE_ROWS[2]])})
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await client.fetch("FIXR_F", day)
+
+    assert result.kind is PositionFetchKind.NOT_APPLICABLE
+
+
+async def test_family_missing_after_its_start_stays_unknown() -> None:
+    """Семейство уже торговалось, но в таблице его нет — это не отсутствие."""
+    recorder = Recorder({SESSION: _table(rows=LIVE_ROWS[4:])})
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        result = await client.fetch("SBRF_F", SESSION)
+
+    assert result.kind is PositionFetchKind.UNKNOWN
+    assert result.reason_code == "family_missing_in_day_table"
+
+
+async def test_family_without_series_stays_unknown() -> None:
+    """Серий семейства у биржи нет — основания для неприменимости нет."""
     recorder = Recorder()
     async with PositionsClient(_settings(), client=recorder.client()) as client:
-        await client.known_contracts(SESSION)
-        before = len(recorder.requests)
+        result = await client.fetch("NEWF_F", SESSION)
 
-        result = await client.fetch("НЕТТАКОГО_F", SESSION)
-        assert result.kind is PositionFetchKind.UNKNOWN
-        assert result.reason_code == "not_in_current_list"
-        assert len(recorder.requests) == before
+    assert result.kind is PositionFetchKind.UNKNOWN
 
 
-async def test_missing_table_is_unknown_and_cached() -> None:
-    recorder = Recorder()
-    recorder.body = LIVE_STATE
+async def test_family_start_is_asked_once_per_run() -> None:
+    early = dt.date(2026, 5, 29)
+    recorder = Recorder({early: _table(early, [LIVE_ROWS[2]])})
     async with PositionsClient(_settings(), client=recorder.client()) as client:
-        first = await client.fetch("SBRF_F", SESSION)
-        spent = len(recorder.requests)
-        again = await client.fetch("SBRF_F", SESSION)
+        await client.fetch("LENT_F", early)
+        await client.fetch("LENT_F", early - dt.timedelta(days=1))
 
-    assert first.kind is PositionFetchKind.UNKNOWN
-    assert first.reason_code == "positions_table_missing"
-    assert again == first
-    assert len(recorder.requests) == spent
+    series = [r for r in recorder.requests if r.url.path.endswith("series.json")]
+    assert len(series) == 1
 
 
 async def test_exact_date_empty_row_confirms_absence() -> None:
-    recorder = Recorder()
-    recorder.body = (
-        LIVE_STATE
-        + """
-    <span class="text-center"><b> Данные на 28 августа 2026 </b></span>
-    <table class="table1 _full-width table1">
-      <tr><td>Количество договоров (контрактов), шт.</td>
-      <td></td><td></td><td></td><td></td><td></td></tr>
-    </table>
-    """
-    )
+    rows = ["{day},SBRF,Фьючерс SBRF,F,,,,,,,,,,", "{day},SBRF,Фьючерс SBRF,F,1,,,,,,,,,"]
+    recorder = Recorder({SESSION: _table(rows=rows)})
     async with PositionsClient(_settings(), client=recorder.client()) as client:
         result = await client.fetch("SBRF_F", SESSION)
 
@@ -412,16 +356,20 @@ async def test_exact_date_empty_row_confirms_absence() -> None:
 
 
 async def test_zero_positions_are_values() -> None:
-    recorder = Recorder()
-    recorder.body = LIVE_STATE + LIVE_TABLE.replace(f"125{NBSP}484", "0").replace(
-        f"88{NBSP}768", "0"
-    ).replace(f"388{NBSP}054", "0").replace(f"424{NBSP}770", "0")
+    rows = ["{day},SBRF,Фьючерс SBRF,F,1.0000,1,1,0,0,,,,"]
+    recorder = Recorder({SESSION: _table(rows=rows)})
     async with PositionsClient(_settings(), client=recorder.client()) as client:
         result = await client.fetch("SBRF_F", SESSION)
 
     assert result.kind is PositionFetchKind.VALUE
     assert result.snapshot is not None
     assert result.snapshot.fiz_long == Decimal("0")
+
+
+async def test_known_contracts_come_from_the_day_table() -> None:
+    recorder = Recorder()
+    async with PositionsClient(_settings(), client=recorder.client()) as client:
+        assert await client.known_contracts(SESSION) == {"SBRF_F", "LENT_F"}
 
 
 async def test_retries_are_bounded_and_reported() -> None:
@@ -431,16 +379,15 @@ async def test_retries_are_bounded_and_reported() -> None:
         return httpx.Response(503, text="сервис недоступен")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(failing))
-    async with PositionsClient(_settings(), client=client) as positions:
+    async with PositionsClient(_settings(), client=client) as positions_client:
         with pytest.raises(PositionsSourceError):
-            await positions.fetch("SBRF_F", SESSION)
+            await positions_client.fetch("SBRF_F", SESSION)
 
 
-# --- первая доступная дата (FR-024b) -----------------------------------------
+# --- первая доступная дата ------------------------------------------------------
 
 
 async def test_without_sessions_nothing_is_searched() -> None:
-    """Искать не по чему — значит и не искали: незнание не повод не спрашивать."""
     recorder = Recorder()
     async with PositionsClient(_settings(), client=recorder.client()) as client:
         found = await client.first_available_date("SBRF_F", [])
@@ -450,28 +397,14 @@ async def test_without_sessions_nothing_is_searched() -> None:
         assert recorder.requests == []
 
 
-async def test_search_marks_the_contract_as_searched() -> None:
-    """Отличать «искали и не нашли» от «ещё не искали» обязан вызывающий."""
+async def test_first_available_date_is_searched_once() -> None:
     recorder = Recorder()
     async with PositionsClient(_settings(), client=recorder.client()) as client:
-        await client.first_available_date("SBRF_F", [OTHER, SESSION])
-
-        assert client.searched_for_first_date("SBRF_F") is True
-
-
-async def test_first_available_date_is_searched_once() -> None:
-    """Поиск выполняется однократно, а не при каждом прогоне."""
-    recorder = Recorder()
-    sessions = [SESSION - dt.timedelta(days=n) for n in range(10, 0, -1)]
-
-    async with PositionsClient(
-        _settings(market_data_positions_discover_step=5), client=recorder.client()
-    ) as client:
-        first = await client.first_available_date("SBRF_F", sessions)
+        first = await client.first_available_date("SBRF_F", [WEEKEND, SESSION])
         spent = len(recorder.requests)
-        again = await client.first_available_date("SBRF_F", sessions)
+        again = await client.first_available_date("SBRF_F", [WEEKEND, SESSION])
 
-    assert first == again
+    assert first == again == SESSION
     assert len(recorder.requests) == spent
 
 
@@ -849,12 +782,7 @@ async def test_без_остановки_повторы_идут_как_преж
     assert client.metrics.to_dict()["retries"] == 2
 
 
-# --- T206: сбой, отсутствие и повторное использование снимка -----------------
-#
-# Три вещи, которые этот источник раньше путал между собой: неудавшееся
-# обращение, доказанное отсутствие данных и уже полученный ответ. `_has_data()`
-# ловил ошибку обмена и возвращал False, поэтому упавшая проба читалась как
-# «данных нет», а все упавшие пробы давали источнику исход «ок» с нулём строк.
+# --- T206: сбой не читается отсутствием ---------------------------------------
 
 
 async def test_failed_probe_is_not_read_as_absence() -> None:
@@ -863,58 +791,12 @@ async def test_failed_probe_is_not_read_as_absence() -> None:
     def failing(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="сервис недоступен")
 
-    sessions = [SESSION - dt.timedelta(days=n) for n in range(10, 0, -1)]
     http = httpx.AsyncClient(transport=httpx.MockTransport(failing))
     async with PositionsClient(_settings(), client=http) as client:
         with pytest.raises(PositionsSourceError):
-            await client.first_available_date("SBRF_F", sessions)
+            await client.first_available_date("SBRF_F", [SESSION])
 
-    # И отрицательный ответ при этом не запомнен: иначе один сбой сети закрыл бы
-    # контракт на весь прогон.
     assert client.searched_for_first_date("SBRF_F") is False
-
-
-async def test_failed_probe_does_not_cache_absence_for_later_calls() -> None:
-    """После сбоя поиск повторяется, а не отвечает из запомненного «нет»."""
-    calls = {"n": 0}
-
-    def flaky(request: httpx.Request) -> httpx.Response:
-        calls["n"] += 1
-        if calls["n"] <= 2:
-            return httpx.Response(503, text="сервис недоступен")
-        return httpx.Response(200, text=LIVE_STATE + LIVE_TABLE)
-
-    # Окно кончается SESSION: подделка отдаёт снимок именно за эту дату, и
-    # удачная проба в принципе возможна — иначе тест не отличил бы
-    # «спросили снова» от «ответили запомненным нет».
-    sessions = [SESSION - dt.timedelta(days=n) for n in range(3, -1, -1)]
-    http = httpx.AsyncClient(transport=httpx.MockTransport(flaky))
-    async with PositionsClient(_settings(), client=http) as client:
-        with pytest.raises(PositionsSourceError):
-            await client.first_available_date("SBRF_F", sessions)
-        # Второй заход обязан снова пойти в источник — и, раз источник ожил,
-        # найти дату. Запомненное «нет» ответило бы `None`, не спросив.
-        spent = calls["n"]
-        found = await client.first_available_date("SBRF_F", sessions)
-
-        assert calls["n"] > spent
-        assert found is not None
-
-
-async def test_found_snapshot_is_not_requested_twice() -> None:
-    """Снимок, полученный при поиске, повторно не запрашивается (FR-022)."""
-    recorder = Recorder()
-    async with PositionsClient(_settings(), client=recorder.client()) as client:
-        found = await client.first_available_date("SBRF_F", [SESSION])
-        assert found == SESSION
-        spent = len(recorder.requests)
-
-        # Ровно та пара «контракт — дата», которую только что принёс поиск.
-        result = await client.fetch("SBRF_F", SESSION)
-
-        assert result.kind is PositionFetchKind.VALUE
-        assert result.snapshot is not None
-        assert len(recorder.requests) == spent
 
 
 async def test_stop_cancels_retries_with_its_own_outcome() -> None:

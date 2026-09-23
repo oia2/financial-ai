@@ -33,6 +33,9 @@ const STATUS: Record<string, string> = {
 };
 
 function sessionsLine(run: RunSummaryDto): string {
+  // Проход без сессий — проверка календаря, а не несостоявшийся сбор: «0
+  // сессий · 0 собрано» читалось как сбой (артефакт, журнал прогонов).
+  if (run.sessions.requested === 0) return 'календарь проверен · новых сессий нет';
   const parts = [`${run.sessions.requested} сессий`, `${run.sessions.collected} собрано`];
   if (run.sessions.partial > 0) parts.push(`${run.sessions.partial} частично`);
   if (run.sessions.failed > 0) parts.push(`${run.sessions.failed} с ошибкой`);

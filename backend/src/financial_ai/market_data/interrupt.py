@@ -55,6 +55,7 @@ class SourcePartialError(RuntimeError):
         unfinished: tuple[str, ...] = (),
         counts_as_unavailable: bool = True,
         evidence: tuple[WorkEvidence, ...] = (),
+        failure_kind: str = "source",
     ) -> None:
         super().__init__(detail or "источник отработал не всю применимую работу")
         self.rows_written = rows_written
@@ -62,3 +63,4 @@ class SourcePartialError(RuntimeError):
         self.detail = detail or "источник отработал не всю применимую работу"
         self.counts_as_unavailable = counts_as_unavailable
         self.evidence = evidence
+        self.failure_kind = failure_kind
