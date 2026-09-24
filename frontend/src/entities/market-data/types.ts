@@ -14,7 +14,14 @@
  *    а не нулём (FR-015).
  */
 
-export type GroupId = 'quotes' | 'aggregates' | 'global' | 'positions' | 'reference';
+export type GroupId =
+  | 'quotes'
+  | 'aggregates'
+  | 'global'
+  | 'positions'
+  | 'fund_quotes'
+  | 'fund_aggregates'
+  | 'reference';
 
 /**
  * Состояние группы и источника — закрытый перечень, выбранный сервером по
@@ -103,6 +110,11 @@ export interface GroupCoverageDto {
   /** Название группы. Показывается с заглавной буквы, своей таблицы меток нет. */
   title: string;
   has_history: boolean;
+  /**
+   * Идут ли строки группы во вход модели (FR-060c). `false` у групп фондов:
+   * с 22.06.2026 паи торгуются на доске акций, но модель к ним не готова.
+   */
+  model_input?: boolean;
 
   /** Поля истории. Отсутствуют целиком при `has_history: false`. */
   window_sessions?: number;

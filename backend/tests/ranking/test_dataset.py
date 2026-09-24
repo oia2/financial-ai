@@ -54,6 +54,7 @@ async def _seed(session: AsyncSession, close: str = "314.22") -> None:
     for ticker in ("SBER", "GAZP"):
         await repository.upsert_asset(f"EQ_AST_{ticker}", ticker, ASOF)
         await repository.upsert_price_series(f"EQ_PRS_{ticker}", f"EQ_AST_{ticker}", ASOF)
+    await repository.update_security_kinds({"EQ_AST_SBER": "share", "EQ_AST_GAZP": "share"})
     bars = [
         DailyBar(
             asset_id=f"EQ_AST_{ticker}",
@@ -340,6 +341,7 @@ async def test_missing_session_reaches_the_manifest(
     for ticker in ("SBER", "GAZP"):
         await repository.upsert_asset(f"EQ_AST_{ticker}", ticker, ASOF)
         await repository.upsert_price_series(f"EQ_PRS_{ticker}", f"EQ_AST_{ticker}", ASOF)
+    await repository.update_security_kinds({"EQ_AST_SBER": "share", "EQ_AST_GAZP": "share"})
     # Средняя сессия не собрана: дыра внутри окна.
     await repository.upsert_daily_bars(
         [

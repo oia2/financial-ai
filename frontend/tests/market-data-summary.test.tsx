@@ -15,7 +15,7 @@ import { AppShell } from '@/app/App';
 import { navigate } from '@/app/router';
 import { AppProviders } from '@/app/providers';
 
-import { anomalyCoverageFixture, coverageFixture } from './msw/market-data';
+import { anomalyCoverageFixture, coverageFixture, fundGroup } from './msw/market-data';
 import { http, HttpResponse, server } from './msw/server';
 
 function renderMarketData() {
@@ -232,6 +232,31 @@ describe('сводка полноты', () => {
     // (FR-010, FR-013).
     const positions = await groupBlock('positions');
     expect(within(positions).getByText(/фьючерс есть у 63 из 243 бумаг/)).toBeInTheDocument();
+  });
+
+  it('группа фондов видна, но подписана как не входящая в модель', async () => {
+    // С 22.06.2026 паи фондов торгуются на доске акций; их строки собираются,
+    // но во вход модели не идут (FR-060c).
+    server.use(
+      http.get('*/api/market-data/coverage', () => {
+        const report = coverageFixture();
+        return HttpResponse.json({
+          ...report,
+          groups: [...report.groups, fundGroup('fund_quotes', 'котировки фондов')],
+        });
+      }),
+    );
+
+    renderMarketData();
+
+    const funds = await groupBlock('fund_quotes');
+    expect(within(funds).getByText('Котировки фондов')).toBeInTheDocument();
+    expect(within(funds).getByText(/1 источник · пока не входит в модель/)).toBeInTheDocument();
+    expect(within(funds).getByText('68 / 68')).toBeInTheDocument();
+
+    // Группы входа модели такой подписи не несут.
+    const quotes = await groupBlock('quotes');
+    expect(within(quotes).queryByText(/не входит в модель/)).not.toBeInTheDocument();
   });
 
   it('состав, которого нет, назван неизвестным, а не нулём', async () => {

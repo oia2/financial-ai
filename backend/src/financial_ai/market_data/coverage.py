@@ -23,7 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from financial_ai.config import Settings
 from financial_ai.market_data import completeness, groups, plan
 from financial_ai.market_data.calendar import TradingCalendar, moscow_now
-from financial_ai.market_data.repository import CURRENT_COVERAGE_VERSION, MarketDataRepository
+from financial_ai.market_data.models import KIND_FUND
+from financial_ai.market_data.repository import (
+    CURRENT_COVERAGE_VERSION,
+    GroupCoverageRaw,
+    MarketDataRepository,
+    UnfinishedRun,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +53,9 @@ class GroupCoverage:
     # Исход каждого источника группы. Полнота считается по каждому, а не по
     # любому: успех одного не закрывает пропуск другого (FR-032).
     sources: list[dict[str, object]] = field(default_factory=list)
+
+    # Идут ли строки группы во вход модели (FR-060c).
+    model_input: bool = True
 
     @property
     def coverage_ratio(self) -> float | None:
@@ -110,6 +119,7 @@ class GroupCoverage:
             "group": self.group_id,
             "title": self.title,
             "has_history": self.has_history,
+            "model_input": self.model_input,
             "rows_total": self.rows_total,
             "rows_with_values": self.rows_with_values,
             "value_ratio": self.value_ratio,
@@ -169,8 +179,12 @@ async def _source_outcomes(
     closed_sources: dict[str, set[dt.date]] | None = None,
     audit_sources: dict[str, set[dt.date]] | None = None,
     boundary: dt.date | None = None,
+    latest_runs: dict[tuple[dt.date, str], UnfinishedRun] | None = None,
 ) -> list[dict[str, object]]:
     """Исход каждого источника группы за окно.
+
+    ``latest_runs`` — незавершённые последние исходы, прочитанные сводкой один раз на все
+    группы; без него они читаются здесь.
 
     Нужен, чтобы неполнота группы объяснялась именем источника, а не оставалась
     числом. У «глобальных рядов» четыре источника, и ошибка одного из них — это
@@ -190,7 +204,12 @@ async def _source_outcomes(
     # перечень, и работающий сбор показывался «ошибкой источника» (FR-033f).
     failures: dict[str, list[dict[str, object]]] = {}
     running: dict[str, set[dt.date]] = {}
-    for (day, source_id), run in (await repository.latest_run_by_session(window)).items():
+    if latest_runs is None:
+        latest_runs = await repository.latest_unfinished_runs(window)
+    in_window = set(window)
+    for (day, source_id), run in latest_runs.items():
+        if day not in in_window or source_id not in group.source_ids:
+            continue
         if run.status == "running":
             running.setdefault(source_id, set()).add(day)
             continue
@@ -377,14 +396,81 @@ async def build_report(
     # нулевым, и несобранная сессия выглядела бы отсутствием торгов (FR-019a).
     universe_date = await _last_collected_session(repository, calendar, asof_date)
     traded = await repository.assets_traded_on(universe_date) if universe_date else set()
+    # Состав — по акциям: «фьючерс есть у N из M бумаг» относится к бумагам, для
+    # которых фьючерсы бывают, а не к паям фондов (FR-060e).
+    traded -= await repository.fund_asset_ids()
     links = await repository.active_links_on(universe_date) if universe_date else {}
 
     rows: list[GroupCoverage] = []
     pending: set[dt.date] = set()
     boundary = await repository.coverage_boundary()
+
+    windows: dict[groups.GroupId, list[dt.date]] = {}
     for group in groups.GROUPS:
         window_size = group.window_sessions(settings)
-        window = await calendar.window(asof_date, window_size) if window_size else []
+        windows[group.group_id] = (
+            group.trim(await calendar.window(asof_date, window_size)) if window_size else []
+        )
+
+    # Журнал исходов и доказательства читаются ОДИН раз на всю сводку, а не на
+    # каждую группу. Журнал окна — тысячи записей, и повтор на каждую из шести
+    # групп стоил секунды на каждое открытие раздела; у котировок и агрегатов по
+    # две группы на один источник (FR-060a), и доказательства тех же дат
+    # читались дважды.
+    union = sorted({day for window in windows.values() for day in window})
+    # Последний исход каждой пары выбирает база; наружу — только незавершённые.
+    latest_runs = await repository.latest_unfinished_runs(union)
+    closed_cache: dict[str, set[dt.date]] = {}
+    rows_cache: dict[tuple[type, bool], dict[tuple[bool | None, dt.date], tuple[int, int]]] = {}
+
+    async def raw_for(group: groups.SourceGroup, window: list[dt.date]) -> GroupCoverageRaw:
+        """Числа строк группы в её окне из одного прохода по таблице (FR-060a)."""
+        if not window or group.session_column is None:
+            return await repository.group_coverage(
+                group.model,
+                group.session_column,
+                group.value_columns,
+                window or None,
+                group.asset_kind,
+            )
+        split = group.asset_kind is not None
+        key = (group.model, split)
+        if key not in rows_cache:
+            rows_cache[key] = await repository.rows_by_session(
+                group.model, group.session_column, group.value_columns, union, split_by_kind=split
+            )
+        wanted = None if not split else group.asset_kind == KIND_FUND
+        in_window = set(window)
+        days: set[dt.date] = set()
+        total = with_values = 0
+        for (is_fund, day), (rows, filled) in rows_cache[key].items():
+            if is_fund != wanted or day not in in_window:
+                continue
+            days.add(day)
+            total += rows
+            with_values += filled
+        return GroupCoverageRaw(
+            sessions_covered=len(days),
+            period_from=min(days) if days else None,
+            period_till=max(days) if days else None,
+            rows_total=total,
+            rows_with_values=with_values,
+        )
+
+    async def closed_for(
+        group: groups.SourceGroup, window: list[dt.date]
+    ) -> dict[str, set[dt.date]]:
+        result: dict[str, set[dt.date]] = {}
+        for source_id in group.source_ids:
+            if source_id not in closed_cache:
+                closed_cache[source_id] = await completeness.closed_sessions(
+                    repository, group, source_id, union
+                )
+            result[source_id] = closed_cache[source_id] & set(window)
+        return result
+
+    for group in groups.GROUPS:
+        window = windows[group.group_id]
 
         missing: list[dt.date] = []
         closed_sources: dict[str, set[dt.date]] = {}
@@ -394,7 +480,7 @@ async def build_report(
             # Те же недостающие сессии, что найдёт сбор: правило полноты одно
             # на сводку, поиск пропусков и решение о работе (FR-032). Считается
             # ОДИН раз на группу и отдаётся обоим потребителям.
-            closed_sources = await completeness.closed_by_source(repository, group, window)
+            closed_sources = await closed_for(group, window)
             missing = await completeness.missing_sessions(repository, group, window, closed_sources)
             for source_id in group.source_ids:
                 audit_sources[source_id] = await completeness.requires_audit_sessions(
@@ -410,12 +496,7 @@ async def build_report(
             # предсказание следующего автоматического сбора её не выбирает.
             pending.update(day for day in missing if day not in requires_audit)
 
-        raw = await repository.group_coverage(
-            group.model,
-            group.session_column,
-            group.value_columns,
-            window or None,
-        )
+        raw = await raw_for(group, window)
 
         sources = await _source_outcomes(
             repository,
@@ -424,6 +505,7 @@ async def build_report(
             closed_sources,
             audit_sources,
             boundary,
+            latest_runs,
         )
 
         rows.append(
@@ -454,6 +536,7 @@ async def build_report(
                 rows_total=raw.rows_total,
                 rows_with_values=raw.rows_with_values,
                 sources=sources,
+                model_input=group.model_input,
             )
         )
 

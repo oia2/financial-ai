@@ -83,6 +83,13 @@
   `source_error`, `internal_error`, `interrupted` (последняя причина `stopped` или
   `interrupted`), `missing` (недоказанные сессии без записанной причины, включая
   непроверенную старую историю), `complete`. Интерфейс только подписывает состояние.
+- `groups[].group` (с 2026-09-24, FR-060a) — `quotes`, `aggregates`, `fund_quotes`,
+  `fund_aggregates`, `global`, `positions`, `reference`. `quotes` и `aggregates` — строки
+  акций, `fund_*` — строки фондов тех же источников (`equity_d1`, `equity_agg`); исходы
+  источника у пары групп общие. Окно `fund_*` начинается 22.06.2026 (FR-060b).
+- `groups[].model_input` (с 2026-09-24, FR-060c) — идут ли строки группы во вход модели.
+  `false` у групп фондов; интерфейс подписывает группу «пока не входит в модель».
+- `universe.assets` (уточнено 2026-09-24, FR-060e) — считаются только акции.
 - `groups[].latest_failure` — последняя по дате причина незавершённой работы группы:
   `session_date` (у справочника `null`), `reason`, `kind`, `title` источника; `null`, если
   причин нет.

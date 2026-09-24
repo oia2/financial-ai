@@ -16,13 +16,15 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from financial_ai.market_data.coverage_rule import CURRENT_COVERAGE_VERSION
 from financial_ai.market_data.models import (
+    KIND_FUND,
+    KIND_SHARE,
     UNKNOWN_CONTRACT,
     AssetAlias,
     AssetFuturesLink,
@@ -56,6 +58,15 @@ class GroupCoverageRaw:
     period_till: dt.date | None
     rows_total: int
     rows_with_values: int
+
+
+@dataclass(frozen=True, slots=True)
+class UnfinishedRun:
+    """Последний исход пары «сессия — источник», оставшийся незавершённым."""
+
+    status: str
+    failure_reason: str | None
+    failure_kind: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +373,77 @@ class MarketDataRepository:
             )
             updated += len(touched.all())
         return updated
+
+    async def update_security_kinds(self, kinds: dict[str, str]) -> int:
+        """Проставить вид бумаги известным активам (FR-060).
+
+        Как и лоты, справочник дополняет собранное: активы, которых в хранилище
+        нет, не заводятся.
+        """
+        updated = 0
+        for asset_id, kind in kinds.items():
+            touched = await self._session.scalars(
+                update(MarketAsset)
+                .where(
+                    MarketAsset.asset_id == asset_id,
+                    MarketAsset.security_kind.is_distinct_from(kind),
+                )
+                .values(security_kind=kind)
+                .returning(MarketAsset.asset_id)
+            )
+            updated += len(touched.all())
+        return updated
+
+    async def assets_without_kind(self, on: dt.date | None = None) -> dict[str, str]:
+        """Активы с наблюдениями, у которых вид бумаги ещё не установлен.
+
+        ``on`` ограничивает ответ бумагами с котировкой за эту сессию. Ответ —
+        ``asset_id → тикер``: по тикеру биржа отдаёт описание бумаги.
+        """
+        bars = select(EquityDailyBar.asset_id).where(
+            EquityDailyBar.asset_id == MarketAsset.asset_id
+        )
+        if on is not None:
+            bars = bars.where(EquityDailyBar.session_date == on)
+        rows = await self._session.execute(
+            select(MarketAsset.asset_id, MarketAsset.ticker).where(
+                MarketAsset.security_kind.is_(None), bars.exists()
+            )
+        )
+        return dict(rows.tuples().all())
+
+    async def latest_bar_session(self) -> dt.date | None:
+        """Последняя сессия, за которую в хранилище есть котировки."""
+        return await self._session.scalar(select(func.max(EquityDailyBar.session_date)))
+
+    async def sessions_with_kindless_assets(self, sessions: list[dt.date]) -> set[dt.date]:
+        """Сессии из перечня, в которые торговалась бумага без вида (FR-060d)."""
+        if not sessions:
+            return set()
+        rows = await self._session.scalars(
+            select(EquityDailyBar.session_date)
+            .join(MarketAsset, MarketAsset.asset_id == EquityDailyBar.asset_id)
+            .where(
+                MarketAsset.security_kind.is_(None),
+                EquityDailyBar.session_date.in_(sessions),
+            )
+            .distinct()
+        )
+        return set(rows.all())
+
+    async def fund_asset_ids(self) -> set[str]:
+        """Активы, известные как паи фондов (FR-060)."""
+        rows = await self._session.scalars(
+            select(MarketAsset.asset_id).where(MarketAsset.security_kind == KIND_FUND)
+        )
+        return set(rows.all())
+
+    async def share_asset_ids(self) -> set[str]:
+        """Активы, известные как акции: они и только они идут в модель (FR-060c)."""
+        rows = await self._session.scalars(
+            select(MarketAsset.asset_id).where(MarketAsset.security_kind == KIND_SHARE)
+        )
+        return set(rows.all())
 
     async def update_lot_sizes(self, lots: dict[str, int]) -> int:
         """Проставить размеры лотов известным активам.
@@ -853,6 +935,35 @@ class MarketDataRepository:
         )
         return list(rows.all())
 
+    async def sessions_with_all_work(
+        self,
+        source_id: str,
+        sessions: list[dt.date],
+        required_keys: frozenset[str],
+        coverage_version: int = CURRENT_COVERAGE_VERSION,
+    ) -> set[dt.date]:
+        """Сессии, за которые источник доказал КАЖДУЮ обязательную единицу работы.
+
+        Счёт ведёт база: ответ — список дат, а не тысячи строк доказательств.
+        Прежде строки поднимались целиком и сверялись в Python, и сводка тратила
+        на это большую часть времени открытия раздела. Какие единицы
+        обязательны, решает правило полноты (`completeness`), а не хранилище.
+        """
+        if not sessions or not required_keys:
+            return set()
+        rows = await self._session.scalars(
+            select(SourceWorkEvidence.session_date)
+            .where(
+                SourceWorkEvidence.source_id == source_id,
+                SourceWorkEvidence.session_date.in_(sessions),
+                SourceWorkEvidence.coverage_version == coverage_version,
+                SourceWorkEvidence.work_key.in_(required_keys),
+            )
+            .group_by(SourceWorkEvidence.session_date)
+            .having(func.count(func.distinct(SourceWorkEvidence.work_key)) == len(required_keys))
+        )
+        return set(rows.all())
+
     # --- покрытие по группам (spec 005) ------------------------------------
 
     async def sessions_with_observations(
@@ -960,6 +1071,65 @@ class MarketDataRepository:
                     latest.setdefault((covered_day, source), run)
         return latest
 
+    async def latest_unfinished_runs(
+        self, sessions: list[dt.date]
+    ) -> dict[tuple[dt.date, str], UnfinishedRun]:
+        """Пары «сессия — источник», чей ПОСЛЕДНИЙ исход не успешен.
+
+        Тот же ответ, что :meth:`latest_run_by_session` с отбором
+        `failed`/`stopped`/`running`, но последний исход выбирает база
+        (`DISTINCT ON`), а наружу уходят только незавершённые пары. Прогон за
+        диапазон относится ко всем торговым сессиям своего периода — как и там.
+        Прежде сводка поднимала весь журнал окна, тысячи записей, ради десятка
+        неудач.
+        """
+        if not sessions:
+            return {}
+        moment = func.coalesce(IngestRun.finished_at, IngestRun.started_at)
+        columns = (
+            IngestRun.source_id,
+            IngestRun.status,
+            IngestRun.failure_reason,
+            IngestRun.failure_kind,
+            moment.label("moment"),
+            IngestRun.id.label("run_pk"),
+        )
+        single = select(IngestRun.session_date.label("day"), *columns).where(
+            IngestRun.session_date.in_(sessions)
+        )
+        ranged = (
+            select(TradingSession.session_date.label("day"), *columns)
+            .join(
+                TradingSession,
+                TradingSession.session_date.between(IngestRun.period_from, IngestRun.period_till),
+            )
+            .where(
+                IngestRun.period_from.is_not(None),
+                IngestRun.period_till.is_not(None),
+                TradingSession.session_date.in_(sessions),
+            )
+        )
+        runs = union_all(single, ranged).subquery()
+        latest = (
+            select(runs)
+            .distinct(runs.c.day, runs.c.source_id)
+            .order_by(runs.c.day, runs.c.source_id, runs.c.moment.desc(), runs.c.run_pk.desc())
+            .subquery()
+        )
+        rows = await self._session.execute(
+            select(
+                latest.c.day,
+                latest.c.source_id,
+                latest.c.status,
+                latest.c.failure_reason,
+                latest.c.failure_kind,
+            ).where(latest.c.status.in_(("failed", "stopped", "running")))
+        )
+        return {
+            (day, source_id): UnfinishedRun(status, failure_reason, failure_kind)
+            for day, source_id, status, failure_reason, failure_kind in rows.all()
+        }
+
     async def coverage_boundary(self) -> dt.date | None:
         """Последняя сессия старой области, зафиксированная миграцией."""
         return await self._session.scalar(
@@ -974,8 +1144,13 @@ class MarketDataRepository:
         session_column: str | None,
         value_columns: tuple[str, ...],
         sessions: list[dt.date] | None,
+        asset_kind: str | None = None,
     ) -> GroupCoverageRaw:
         """Покрытие и наполненность одной группы наблюдений.
+
+        ``asset_kind`` делит строки одной таблицы по виду бумаги (FR-060a):
+        ``fund`` — паи фондов, ``share`` — всё прочее, в том числе бумаги, чей
+        вид ещё не получен: до 22.06.2026 доска была только акциями.
 
         Метод намеренно **не знает о группах**: модель, столбец сессии и
         столбцы значений приходят снаружи. Иначе хранилище пришлось бы править
@@ -1004,7 +1179,14 @@ class MarketDataRepository:
 
         column = getattr(model, session_column)
         scope = column.in_(sessions) if sessions else column.is_not(None)
+        if asset_kind is not None:
+            funds = select(MarketAsset.asset_id).where(MarketAsset.security_kind == KIND_FUND)
+            asset = model.asset_id  # type: ignore[attr-defined]
+            kind_scope = asset.in_(funds) if asset_kind == KIND_FUND else asset.not_in(funds)
+            scope = and_(scope, kind_scope)
 
+        # Один проход по таблице: строки со значениями считаются фильтром того
+        # же запроса, а не вторым обходом тех же строк.
         row = (
             await self._session.execute(
                 select(
@@ -1012,22 +1194,66 @@ class MarketDataRepository:
                     func.min(column),
                     func.max(column),
                     func.count(),
-                ).where(scope)
+                    func.count().filter(filled),
+                )
+                .select_from(model)
+                .where(scope)
             )
         ).one()
-
-        with_values = (
-            await self._session.scalar(select(func.count()).select_from(model).where(scope, filled))
-            or 0
-        )
 
         return GroupCoverageRaw(
             sessions_covered=int(row[0] or 0),
             period_from=row[1],
             period_till=row[2],
             rows_total=int(row[3] or 0),
-            rows_with_values=int(with_values),
+            rows_with_values=int(row[4] or 0),
         )
+
+    async def rows_by_session(
+        self,
+        model: type,
+        session_column: str,
+        value_columns: tuple[str, ...],
+        sessions: list[dt.date],
+        *,
+        split_by_kind: bool = False,
+    ) -> dict[tuple[bool | None, dt.date], tuple[int, int]]:
+        """Строки и строки со значениями по каждой сессии — одним проходом.
+
+        Ключ — ``(фонд ли, дата)``; без разбивки по виду первый элемент ``None``.
+        Сводка складывает из этого числа каждой группы в её собственном окне:
+        у котировок акций и фондов таблица одна, и считать её дважды — два
+        прохода по сотне тысяч строк на каждое открытие раздела (FR-060a).
+        """
+        if not sessions:
+            return {}
+        column = getattr(model, session_column)
+        filled = or_(*(getattr(model, name).is_not(None) for name in value_columns))
+        kind = (
+            func.coalesce(MarketAsset.security_kind == KIND_FUND, False) if split_by_kind else None
+        )
+        query = select(
+            column,
+            *(() if kind is None else (kind,)),
+            func.count(),
+            func.count().filter(filled),
+        ).select_from(model)
+        if kind is not None:
+            query = query.outerjoin(
+                MarketAsset,
+                MarketAsset.asset_id == model.asset_id,  # type: ignore[attr-defined]
+            ).group_by(column, kind)
+        else:
+            query = query.group_by(column)
+        result: dict[tuple[bool | None, dt.date], tuple[int, int]] = {}
+        for row in (await self._session.execute(query.where(column.in_(sessions)))).all():
+            if kind is None:
+                day, total, with_values = row
+                is_fund: bool | None = None
+            else:
+                day, is_fund, total, with_values = row
+            result[(is_fund, day)] = (int(total), int(with_values))
+        return result
 
     # --- поиск пропусков (spec 004) ----------------------------------------
 

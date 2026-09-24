@@ -25,7 +25,7 @@ from financial_ai.config import Settings
 from financial_ai.market_data import completeness, groups
 from financial_ai.market_data.calendar import TradingCalendar
 from financial_ai.market_data.repository import MarketDataRepository
-from financial_ai.market_data.sources import trading_calendar
+from financial_ai.market_data.sources import securities, trading_calendar
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +88,12 @@ async def evaluate(session: AsyncSession, settings: Settings, asof_date: dt.date
         if await completeness.missing_sessions(repository, group, window):
             missing.append(group.group_id.value)
 
+    # Бумага без вида, торговавшаяся в дату решения, — кандидат, о котором
+    # неизвестно, акция он или фонд (FR-060d). Снятая с торгов дату не держит:
+    # из набора она выходит с записью в манифест (FR-060f).
+    if await _kind_unknown_on(repository, settings, [asof_date]):
+        missing.append(groups.GroupId.REFERENCE.value)
+
     if missing:
         return Readiness(
             asof_date,
@@ -128,6 +134,9 @@ async def latest_ready(
     depth = settings.catchup_window_sessions
     history = await calendar.window(not_after, depth + max((n for _, n in windows), default=1) - 1)
     candidates = set(range(max(0, len(history) - depth), len(history)))
+    # Дата, в которую торговалась бумага без вида, не готова (FR-060d).
+    blocked = await _kind_unknown_on(repository, settings, history)
+    candidates = {index for index in candidates if history[index] not in blocked}
     for group, size in windows:
         missing = set(await completeness.missing_sessions(repository, group, history))
         complete: set[int] = set()
@@ -151,6 +160,19 @@ async def _reference_verified(repository: MarketDataRepository, group: groups.So
         if not await repository.has_verified_success(source_id):
             return False
     return True
+
+
+async def _kind_unknown_on(
+    repository: MarketDataRepository, settings: Settings, sessions: list[dt.date]
+) -> set[dt.date]:
+    """Даты, в которые торговалась бумага без вида (FR-060d).
+
+    Правило действует, пока справочники входят в обязательный вход модели:
+    исключив их настройкой, владелец исключил из готовности и вид бумаги.
+    """
+    if not any(securities.SOURCE_ID in group.source_ids for group in required_groups(settings)):
+        return set()
+    return await repository.sessions_with_kindless_assets(sessions)
 
 
 def dataset_is_complete(incomplete: Iterable[Mapping[str, object]], settings: Settings) -> bool:

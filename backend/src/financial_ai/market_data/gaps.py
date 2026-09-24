@@ -105,7 +105,7 @@ async def find_gaps(session: AsyncSession, settings: Settings, asof_date: dt.dat
         depth = group.window_sessions(settings)
         if depth is None:
             continue
-        source_window = await calendar.window(asof_date, depth)
+        source_window = group.trim(await calendar.window(asof_date, depth))
         closed_by_source = await completeness.closed_by_source(repository, group, source_window)
         if group.group_id is groups.GroupId.QUOTES:
             missing.update(day for day in source_window if day not in closed_by_source["equity_d1"])

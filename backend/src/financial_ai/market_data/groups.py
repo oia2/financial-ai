@@ -13,11 +13,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from enum import StrEnum
 
 from financial_ai.config import Settings
 from financial_ai.market_data.models import (
+    KIND_FUND,
+    KIND_SHARE,
     AssetSector,
     EquityAggregate,
     EquityDailyBar,
@@ -31,6 +34,8 @@ class GroupId(StrEnum):
 
     QUOTES = "quotes"
     AGGREGATES = "aggregates"
+    FUND_QUOTES = "fund_quotes"
+    FUND_AGGREGATES = "fund_aggregates"
     GLOBAL = "global"
     POSITIONS = "positions"
     REFERENCE = "reference"
@@ -63,6 +68,24 @@ class SourceGroup:
     key_column: str | None = None
     source_keys: dict[str, tuple[str, ...]] | None = None
 
+    # Строки группы — по виду бумаги (FR-060a). У котировок и агрегатов
+    # источник один на доску, а групп две: `share` — всё, кроме известных
+    # фондов (до 22.06.2026 доска была только акциями), `fund` — паи фондов.
+    asset_kind: str | None = None
+
+    # Первая сессия группы. У фондов окно начинается 22.06.2026: раньше они
+    # торговались на другой доске, и «314 из 314» было бы неправдой (FR-060b).
+    available_from: dt.date | None = None
+
+    # Идут ли строки группы во вход модели (FR-060c).
+    model_input: bool = True
+
+    def trim(self, window: list[dt.date]) -> list[dt.date]:
+        """Окно группы: сессии общего окна не раньше её первой сессии."""
+        if self.available_from is None:
+            return window
+        return [day for day in window if day >= self.available_from]
+
     def keys_of(self, source_id: str) -> tuple[str, ...] | None:
         """Начала имён рядов, принадлежащих источнику. ``None`` — вся таблица."""
         if self.source_keys is None:
@@ -89,10 +112,15 @@ class SourceGroup:
         return settings.market_data_price_window_sessions
 
 
+# Первая сессия фондов на доске TQBR: до 19.06.2026 они торговались на TQTF
+# (сверено 2026-09-24: TBEU — TQTF по 19.06, TQBR с 22.06; FR-060b).
+FUNDS_ON_BOARD_SINCE = dt.date(2026, 6, 22)
+
 GROUPS: tuple[SourceGroup, ...] = (
     SourceGroup(
         group_id=GroupId.QUOTES,
-        title="котировки",
+        title="котировки акций",
+        asset_kind=KIND_SHARE,
         source_ids=("equity_d1",),
         model=EquityDailyBar,
         session_column="session_date",
@@ -102,7 +130,8 @@ GROUPS: tuple[SourceGroup, ...] = (
     ),
     SourceGroup(
         group_id=GroupId.AGGREGATES,
-        title="агрегаты",
+        title="агрегаты акций",
+        asset_kind=KIND_SHARE,
         source_ids=("equity_agg",),
         model=EquityAggregate,
         session_column="session_date",
@@ -136,6 +165,29 @@ GROUPS: tuple[SourceGroup, ...] = (
         # Любое из четырёх: покрытие по сторонам бывает частичным по-настоящему,
         # и это не то же самое, что пустая строка.
         value_columns=("fiz_long", "fiz_short", "jur_long", "jur_short"),
+    ),
+    # Фонды — после входов модели: те же источники, строки паёв ПИФов.
+    SourceGroup(
+        group_id=GroupId.FUND_QUOTES,
+        title="котировки фондов",
+        source_ids=("equity_d1",),
+        model=EquityDailyBar,
+        session_column="session_date",
+        value_columns=("close",),
+        asset_kind=KIND_FUND,
+        available_from=FUNDS_ON_BOARD_SINCE,
+        model_input=False,
+    ),
+    SourceGroup(
+        group_id=GroupId.FUND_AGGREGATES,
+        title="агрегаты фондов",
+        source_ids=("equity_agg",),
+        model=EquityAggregate,
+        session_column="session_date",
+        value_columns=("value", "num_trades", "waprice"),
+        asset_kind=KIND_FUND,
+        available_from=FUNDS_ON_BOARD_SINCE,
+        model_input=False,
     ),
     SourceGroup(
         group_id=GroupId.REFERENCE,
@@ -179,7 +231,9 @@ def required(settings: Settings) -> tuple[SourceGroup, ...]:
     объявление одного факта однажды разойдётся с первым.
     """
     wanted = {name.strip() for name in settings.daily_ml_required_data_groups if name.strip()}
-    return tuple(group for group in GROUPS if group.group_id.value in wanted)
+    # Группа не входа модели обязательной не бывает, как её ни назови в
+    # настройке: фонды в набор не попадают (FR-060c).
+    return tuple(group for group in GROUPS if group.group_id.value in wanted and group.model_input)
 
 
 def source_ids_for(groups: tuple[SourceGroup, ...]) -> frozenset[str]:

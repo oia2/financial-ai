@@ -93,8 +93,8 @@ def fold_session_outcome(
 # прогон платил за них обращением к брокеру по каждой бумаге (FR-008).
 DAILY_PLAN: tuple[SourceSpec, ...] = (
     SourceSpec("trading_calendar", "Торговый календарь", DAILY),
-    SourceSpec("equity_d1", "Котировки акций", SESSION),
-    SourceSpec("equity_agg", "Агрегаты торгов", SESSION),
+    SourceSpec("equity_d1", "Котировки доски TQBR", SESSION),
+    SourceSpec("equity_agg", "Агрегаты доски TQBR", SESSION),
     SourceSpec("global_series", "Глобальные ряды", SESSION),
     SourceSpec("index_constituents", "Состав индекса", SESSION),
     SourceSpec("brent", "Brent", SESSION),
@@ -113,8 +113,8 @@ DAILY_PLAN: tuple[SourceSpec, ...] = (
 CATCHUP_PLAN: tuple[SourceSpec, ...] = (
     SourceSpec("global_series", "Глобальные ряды", PERIOD),
     SourceSpec("cbr", "Курсы и ставка ЦБ", PERIOD),
-    SourceSpec("equity_d1", "Котировки акций", SESSION),
-    SourceSpec("equity_agg", "Агрегаты торгов", SESSION),
+    SourceSpec("equity_d1", "Котировки доски TQBR", SESSION),
+    SourceSpec("equity_agg", "Агрегаты доски TQBR", SESSION),
     SourceSpec("index_constituents", "Состав индекса", SESSION),
     SourceSpec("brent", "Brent", SESSION),
     SourceSpec("futures_positions", "Позиции по фьючерсам", SESSION),
@@ -127,6 +127,9 @@ CATCHUP_PLAN: tuple[SourceSpec, ...] = (
 
 # Справочники текущего состояния: без оси сессий, раз за запуск.
 REFERENCE_SOURCES = frozenset({"equity_sectors", "equity_lot_sizes"})
+
+# Суточные источники: исход пишут с датой, но сессию не собирают (FR-056b).
+DAILY_SOURCES = frozenset(spec.source_id for spec in DAILY_PLAN if spec.scope == DAILY)
 
 MODE_DAILY = "daily"
 MODE_MANUAL = "manual"

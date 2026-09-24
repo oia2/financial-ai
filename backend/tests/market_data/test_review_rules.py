@@ -1300,6 +1300,12 @@ class ReferenceIss:
     async def fetch_equity_isins(self) -> dict[str, str]:
         return {self.ticker: "RU000MULT001"}
 
+    async def fetch_equity_security_types(self) -> dict[str, str]:
+        return {self.ticker: "1"}
+
+    async def fetch_security_group(self, secid: str) -> str | None:
+        return "stock_shares"
+
 
 async def _renamed(repository: MarketDataRepository) -> None:
     """Бумага, переименованная из MULTOLD в MULTNEW: сущность прежняя."""
@@ -1870,3 +1876,32 @@ async def test_сводка_считает_закрытое_один_раз_на
 
     # По одному расчёту на источник группы, а не по два.
     assert calls["n"] == len(group.source_ids)
+
+
+@pytest.mark.db
+async def test_журнал_не_считает_суточный_справочник_сессией(
+    db_session: AsyncSession,
+) -> None:
+    """Прогон одного справочника показывался «запрошена 1, ожидает 1 · точный
+    итог старой записи недоступен» — про сессию, которую никто не запрашивал
+    (FR-056b)."""
+    from financial_ai.market_data import journal
+    from financial_ai.market_data.sources import securities
+
+    repository = MarketDataRepository(db_session)
+    moment = dt.datetime.now(dt.UTC)
+    await repository.record_run(
+        run_id="run-lots",
+        source_id=securities.SOURCE_ID,
+        status=ingest.STATUS_OK,
+        started_at=moment,
+        finished_at=moment,
+        session_date=SESSION,
+    )
+    await db_session.commit()
+
+    [run] = await journal.recent_runs(db_session)
+
+    assert run.requested == 0
+    assert run.pending == 0
+    assert run.history_limited is False

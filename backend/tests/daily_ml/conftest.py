@@ -79,6 +79,8 @@ async def seed(
     await repository.add_trading_sessions(SESSIONS)
     await repository.upsert_asset("EQ_AST_SBER", "SBER", ASOF)
     await repository.upsert_price_series("EQ_PRS_SBER", "EQ_AST_SBER", ASOF)
+    # Вид бумаги установлен: во вход модели идут только акции (FR-060c).
+    await repository.update_security_kinds({"EQ_AST_SBER": "share"})
 
     days = SESSIONS if collected is None else collected
     if days:

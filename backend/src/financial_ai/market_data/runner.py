@@ -539,7 +539,7 @@ class CatchupRunner:
                 depth = group.window_sessions(self._settings)
                 if depth is None:
                     continue
-                window = await calendar.window(asof, depth)
+                window = group.trim(await calendar.window(asof, depth))
                 group_missing = set(await completeness.missing_sessions(repository, group, window))
                 if date_from is not None and date_till is not None:
                     # Явно выбранный диапазон — команда проверить и добрать

@@ -290,3 +290,26 @@ async def test_journal_keeps_proved_range_date_collected(
     }
     assert saved[first] == plan.OUTCOME_COLLECTED
     assert saved[second] != plan.OUTCOME_COLLECTED
+
+
+async def test_reference_waits_out_the_retry_inside_session_collection(
+    db_session: AsyncSession,
+) -> None:
+    """Выдержка после неудачи — и внутри сбора сессии: при догоне N сессий упавший
+    справочник спрашивался N раз подряд (FR-055a)."""
+    repository = MarketDataRepository(db_session)
+    failed_at = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5)
+    await repository.record_run(
+        run_id="lots-failed",
+        source_id=securities.SOURCE_ID,
+        status="failed",
+        started_at=failed_at,
+        finished_at=failed_at,
+        failure_kind=plan.FAILURE_SOURCE,
+    )
+    await db_session.commit()
+
+    waiting = Settings(market_data_retry_after_minutes=15)
+    assert not await ingest._reference_wanted(repository, securities.SOURCE_ID, DAY, waiting)
+    elapsed = Settings(market_data_retry_after_minutes=1)
+    assert await ingest._reference_wanted(repository, securities.SOURCE_ID, DAY, elapsed)

@@ -364,7 +364,7 @@ async def _ingest_session(
         # пока прогон доходит до каждой (FR-058l).
         if on_source is not None:
             for source_id in (reference.SECTORS_SOURCE_ID, securities.SOURCE_ID):
-                if not await reference_is_due(repository, source_id, session_date):
+                if not await _reference_wanted(repository, source_id, session_date, settings):
                     on_source(source_id, STATUS_OMITTED, None)
             # Только те, кого эта сессия и собирает. Диапазонный источник
             # идёт раз на прогон и свой исход уже объявил: сказать про него
@@ -460,7 +460,7 @@ async def _ingest_session(
                 lambda: _sync_verified_lot_sizes(iss, repository, session_date),
             ),
         ):
-            if not await reference_is_due(repository, source_id, session_date):
+            if not await _reference_wanted(repository, source_id, session_date, settings):
                 # Объявлено в начале сессии: в план этого прогона источник не
                 # попадает (FR-007, FR-058l).
                 continue
@@ -1772,22 +1772,49 @@ async def references_to_retry(
     с той же выдержкой, что и сессии: тик раз в минуту не должен превращаться
     в поток обращений к неотвечающему источнику.
     """
-    delay = dt.timedelta(minutes=settings.market_data_retry_after_minutes)
     moment = now if now.tzinfo is not None else now.replace(tzinfo=MOSCOW)
     wanted: set[str] = set()
     for source_id in plan.REFERENCE_SOURCES:
         if not await reference_is_due(repository, source_id, moment.astimezone(MOSCOW).date()):
             continue
-        latest = await repository.latest_source_run(source_id)
-        if (
-            latest is not None
-            and latest.finished_at is not None
-            and latest.status != STATUS_OK
-            and moment - latest.finished_at < delay
-        ):
+        if await reference_backs_off(repository, source_id, settings, moment):
             continue
         wanted.add(source_id)
     return frozenset(wanted)
+
+
+async def reference_backs_off(
+    repository: MarketDataRepository,
+    source_id: str,
+    settings: Settings,
+    now: dt.datetime | None = None,
+) -> bool:
+    """Выдерживает ли справочник интервал повтора после неудачи (FR-055a).
+
+    Одно правило для отдельного тика и для сбора сессии: прежде выдержка стояла
+    только у тика, и при догоне N сессий упавший справочник спрашивался N раз
+    подряд.
+    """
+    latest = await repository.latest_source_run(source_id)
+    if latest is None or latest.finished_at is None or latest.status == STATUS_OK:
+        return False
+    moment = now or dt.datetime.now(dt.UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=MOSCOW)
+    delay = dt.timedelta(minutes=settings.market_data_retry_after_minutes)
+    return moment - latest.finished_at < delay
+
+
+async def _reference_wanted(
+    repository: MarketDataRepository,
+    source_id: str,
+    session_date: dt.date,
+    settings: Settings,
+) -> bool:
+    """Спрашивать ли справочник в этой сессии: пора и не выдерживает повтор (FR-055a)."""
+    return await reference_is_due(
+        repository, source_id, session_date
+    ) and not await reference_backs_off(repository, source_id, settings)
 
 
 async def reference_is_due(
@@ -1807,6 +1834,14 @@ async def reference_is_due(
     """
     last = await repository.last_successful_run_at(source_id)
     if last is None:
+        return True
+    if source_id == securities.SOURCE_ID and await repository.assets_without_kind(
+        on=await repository.latest_bar_session()
+    ):
+        # Бумага без вида в последней собранной сессии не может ждать суток: она
+        # кандидат, и до ответа справочника дата не готова (FR-060d). Снятая с
+        # торгов сюда не относится — иначе нераспознанная давняя бумага
+        # перезапрашивала бы справочник без конца (FR-060f).
         return True
     return last.astimezone(MOSCOW).date() < moscow_today()
 

@@ -163,6 +163,13 @@ class NoInstrumentChanges:
     async def fetch_equity_isins(self) -> dict[str, str]:
         return {}
 
+    async def fetch_equity_security_types(self) -> dict[str, str]:
+        return {}
+
+    async def fetch_security_group(self, secid: str) -> str | None:
+        # Бумаги испытаний — акции: вид приходит описанием (FR-060).
+        return "stock_shares"
+
     async def fetch_futures_series(self) -> list[dict[str, object]]:
         return []
 

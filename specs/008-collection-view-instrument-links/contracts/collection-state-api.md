@@ -50,7 +50,7 @@
     "session_date": "2026-09-11",
     "sources": [
       { "source_id": "trading_calendar", "title": "Торговый календарь", "scope": "daily", "state": "done" },
-      { "source_id": "equity_d1", "title": "Котировки акций", "scope": "session", "state": "done", "rows": 243 },
+      { "source_id": "equity_d1", "title": "Котировки доски TQBR", "scope": "session", "state": "done", "rows": 243 },
       { "source_id": "index_constituents", "title": "Состав индекса", "scope": "session", "state": "running", "detail": "1 из 2 индексов" },
       { "source_id": "futures_positions", "title": "Позиции по фьючерсам", "scope": "session", "state": "pending" }
     ]

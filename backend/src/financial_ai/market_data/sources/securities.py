@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 
 from financial_ai.market_data.calendar import moscow_today
-from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.iss.client import IssClient, ResponseContractError
+from financial_ai.market_data.models import KIND_FUND, KIND_SHARE
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
 from financial_ai.market_data.sources.reference import ReferenceEmptyError
@@ -31,6 +32,26 @@ from financial_ai.market_data.sources.reference import ReferenceEmptyError
 logger = logging.getLogger(__name__)
 
 SOURCE_ID = "equity_lot_sizes"
+
+# Вид бумаги по коду биржи (FR-060). `SECTYPE` списка доски: обыкновенная и
+# привилегированная акция, депозитарная расписка — акции; паи биржевых,
+# открытых, интервальных и закрытых ПИФов — фонды. Сверено 2026-09-24 по
+# описаниям бумаг: OKEY (`D`) — `stock_dr`, TBEU (`J`) — `exchange_ppif`.
+SECTYPE_KIND: dict[str, str] = {
+    "1": KIND_SHARE,
+    "2": KIND_SHARE,
+    "D": KIND_SHARE,
+    "9": KIND_FUND,
+    "A": KIND_FUND,
+    "B": KIND_FUND,
+    "J": KIND_FUND,
+}
+# `GROUP` описания бумаги — для той, которой в списке доски уже нет.
+GROUP_KIND: dict[str, str] = {
+    "stock_shares": KIND_SHARE,
+    "stock_dr": KIND_SHARE,
+    "stock_ppif": KIND_FUND,
+}
 
 
 async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) -> int:
@@ -66,10 +87,70 @@ async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) ->
         }
     )
 
+    kinds = await _sync_security_kinds(client, repository, aliases)
+
     logger.info(
-        "справочник бумаг: лотов обновлено %d из %d, ISIN записано %d",
+        "справочник бумаг: лотов обновлено %d из %d, ISIN записано %d, вид записан %d",
         updated,
         len(lots),
         linked,
+        kinds,
     )
     return updated
+
+
+async def _sync_security_kinds(
+    client: IssClient, repository: MarketDataRepository, aliases: dict[str, str]
+) -> int:
+    """Проставить вид бумаги: акция или пай фонда (FR-060).
+
+    С 22.06.2026 фонды торгуются на доске акций, и сбор получает их вместе.
+    Вид берётся у биржи, догадки нет. Нераспознанный вид бумаги, торговавшейся
+    в последней собранной сессии, — отказ справочника с названием бумаги: она
+    кандидат, и догадка молча отправила бы фонд во вход модели. У снятой с
+    торгов — запись в журнале: из набора она выходит сама (FR-060f), а вечный
+    отказ из-за неё повторял бы справочник весь день, каждый день.
+    """
+    codes = await client.fetch_equity_security_types()
+    kinds: dict[str, str] = {}
+    for ticker, code in codes.items():
+        kind = SECTYPE_KIND.get(code)
+        if kind is not None:
+            kinds[aliases.get(ticker, asset_id_for(ticker))] = kind
+    # Незнакомый код не решается здесь: если бумага есть в хранилище, её вид
+    # останется пустым и будет спрошен описанием ниже.
+    written = await repository.update_security_kinds(kinds)
+
+    # Бумаги с историей, которых в списке доски уже нет: их вид — из описания.
+    unknown: dict[str, str] = {}
+    for asset_id, ticker in (await repository.assets_without_kind()).items():
+        try:
+            group = await client.fetch_security_group(ticker)
+        except ResponseContractError as error:
+            # Сломанное описание одной бумаги не обрывает разбор остальных:
+            # недоступность биржи по-прежнему роняет весь справочник.
+            unknown[asset_id] = f"{ticker} ({error})"
+            continue
+        kind = GROUP_KIND.get(group or "")
+        if kind is None:
+            unknown[asset_id] = f"{ticker} (GROUP {group or 'нет'})"
+            continue
+        written += await repository.update_security_kinds({asset_id: kind})
+
+    if unknown:
+        latest = await repository.latest_bar_session()
+        current = (
+            set(await repository.assets_without_kind(on=latest)) & set(unknown)
+            if latest is not None
+            else set()
+        )
+        if current:
+            raise ResponseContractError(
+                "вид бумаги не распознан: " + ", ".join(sorted(unknown[a] for a in current)[:10])
+            )
+        logger.warning(
+            "справочник бумаг: вид снятых с торгов бумаг не распознан, из набора они "
+            "исключаются (FR-060f): %s",
+            ", ".join(sorted(unknown.values())[:10]),
+        )
+    return written

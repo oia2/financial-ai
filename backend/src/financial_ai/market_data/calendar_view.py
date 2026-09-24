@@ -56,11 +56,16 @@ async def build_month(
 
     # Пропуски считаются по тому же правилу, что и полнота сводки.
     missing_by_group: dict[str, set[dt.date]] = {}
+    absent_by_group: dict[str, set[dt.date]] = {}
     for group in groups.GROUPS:
         if not group.has_history:
             continue
-        missing = await completeness.missing_sessions(repository, group, sessions)
+        window = group.trim(sessions)
+        missing = await completeness.missing_sessions(repository, group, window)
         missing_by_group[group.group_id.value] = set(missing)
+        # День до первой сессии группы — не «собрано» и не «пропуск»: группы
+        # тогда не было (фонды на TQBR — с 22.06.2026, FR-060b).
+        absent_by_group[group.group_id.value] = set(sessions) - set(window)
 
     days: list[CalendarDay] = []
     for offset in range((last - first).days + 1):
@@ -80,6 +85,7 @@ async def build_month(
         state = {
             group_id: ("missing" if day in missing else "collected")
             for group_id, missing in missing_by_group.items()
+            if day not in absent_by_group[group_id]
         }
         days.append(CalendarDay(day, kind, state if kind == KIND_SESSION else {}))
 

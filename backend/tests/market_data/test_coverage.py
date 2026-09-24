@@ -399,7 +399,7 @@ async def test_report_carries_no_observation_values(
     assert "SBER" not in rendered
 
 
-async def test_all_five_groups_are_reported(db_session: AsyncSession, settings: Settings) -> None:
+async def test_all_groups_are_reported(db_session: AsyncSession, settings: Settings) -> None:
     await _seed(db_session, quotes=SESSIONS)
 
     report = await coverage.build_report(db_session, settings, ASOF)
@@ -411,6 +411,8 @@ async def test_all_five_groups_are_reported(db_session: AsyncSession, settings: 
         "aggregates",
         "global",
         "positions",
+        "fund_quotes",
+        "fund_aggregates",
         "reference",
     ]
 

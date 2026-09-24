@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
@@ -63,6 +63,9 @@ SeriesKey = tuple[str, str]
 
 # Строка объявления полноты окна: дата сессии и незакрытые за неё источники.
 IncompleteRow = dict[str, str | list[str]]
+# Бумага окна, не вошедшая в набор, и причина (FR-060f).
+ExcludedAsset = dict[str, str]
+EXCLUDED_KIND_UNKNOWN = "kind_unknown"
 SeriesRows = dict[SeriesKey, list[list[str | None]]]
 
 PRICE_FIELDS = ["open", "high", "low", "close", "volume"]
@@ -93,6 +96,9 @@ class Dataset:
     # «окно полно», и от отсутствия высказывания оно отличается.
     incomplete: list[IncompleteRow]
 
+    # Бумаги окна, не вошедшие в набор (FR-060f). Пустой перечень — «исключённых нет».
+    excluded: list[ExcludedAsset] = field(default_factory=list)
+
 
 async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt.date) -> Dataset:
     """Собрать набор входных данных на дату решения.
@@ -111,7 +117,31 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
     price_sessions = await calendar.window(asof_date, settings.market_data_price_window_sessions)
     global_sessions = await calendar.window(asof_date, settings.market_data_global_window_sessions)
 
-    bars = await repository.daily_bars_for_window(price_sessions)
+    # Во вход модели — только акции. С 22.06.2026 паи фондов торгуются на той
+    # же доске и собираются вместе с акциями; модель к ним не готова, и в
+    # набор они не попадают (FR-060c).
+    window_bars = await repository.daily_bars_for_window(price_sessions)
+    shares = await repository.share_asset_ids()
+    funds = await repository.fund_asset_ids()
+    unknown = {bar.asset_id for bar in window_bars} - shares - funds
+    # Бумага без вида, торговавшаяся в дату решения, — кандидат: догадка
+    # отправила бы фонд во вход или убрала бы акцию, и набор не собирается
+    # (FR-060d). Снятая с торгов купленной быть не может: она выходит из
+    # набора, а исключение записывается в манифест и дайджест (FR-060f).
+    candidates = {bar.asset_id for bar in window_bars if bar.session_date == asof_date}
+    if unknown & candidates:
+        raise DatasetError(
+            f"вид бумаги не получен для {len(unknown & candidates)} бумаг, торговавшихся "
+            f"{asof_date}: нужен справочник бумаг"
+        )
+    excluded: list[ExcludedAsset] = [
+        {"asset_id": asset_id, "reason": EXCLUDED_KIND_UNKNOWN} for asset_id in sorted(unknown)
+    ]
+    if excluded:
+        logger.warning(
+            "набор на %s: без вида и снято с торгов, исключено бумаг %d", asof_date, len(excluded)
+        )
+    bars = [bar for bar in window_bars if bar.asset_id in shares]
     if not bars:
         raise DatasetError(f"за окно, оканчивающееся {asof_date}, нет ни одного наблюдения")
 
@@ -134,7 +164,11 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
 
     # Агрегаты идут по окну цен: модель заводит их тем же слоем состояния,
     # что и котировки (`data_plane_step4`), отдельного окна у них нет.
-    aggregate_rows = await repository.aggregates_for_window(price_sessions)
+    aggregate_rows = [
+        row
+        for row in await repository.aggregates_for_window(price_sessions)
+        if row.asset_id in shares
+    ]
 
     # Секторы — справочник без оси сессий: у признаков отраслевой относительной
     # силы и широты нет истории принадлежности, они читают текущее значение.
@@ -172,6 +206,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         aggregates,
         sector_map,
         incomplete,
+        excluded,
     )
     # ``Path.as_uri`` accepts only absolute paths.  Local CLI configuration
     # commonly uses ``./datasets`` while the container uses ``/datasets``;
@@ -198,6 +233,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
                 assets,
                 windows,
                 digest,
+                excluded,
             )
         except OSError as error:
             # Нехватка прав на томе, переполненный диск, недоступный каталог —
@@ -220,6 +256,7 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
         windows=windows,
         path=path,
         incomplete=incomplete,
+        excluded=excluded,
     )
 
 
@@ -337,6 +374,7 @@ def _digest(
     aggregates: SeriesRows,
     sector_map: dict[str, str | None],
     incomplete: list[IncompleteRow],
+    excluded: list[ExcludedAsset] | None = None,
 ) -> str:
     """Дайджест от содержимого.
 
@@ -356,6 +394,11 @@ def _digest(
         # идентификатор позволил бы скрыть различие.
         "incomplete": incomplete,
     }
+    if excluded:
+        # Исключение меняет вход модели и потому входит в дайджест. Пустой
+        # перечень — нет: иначе правило изменило бы дайджест каждого прежнего
+        # набора, ничего в нём не изменив (FR-060f).
+        payload["excluded_assets"] = excluded
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -374,6 +417,7 @@ def _write(
     assets: list[AssetRef],
     windows: dict[str, int],
     digest: str,
+    excluded: list[ExcludedAsset] | None = None,
 ) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -452,6 +496,7 @@ def _write(
                 "digest": f"sha256:{digest}",
                 "windows": windows,
                 "incomplete": incomplete,
+                "excluded_assets": excluded or [],
                 "session_count": len(sessions),
                 "asset_count": len(assets),
                 "assets": [

@@ -46,6 +46,9 @@ async def audit(
     sessions = await repository.sessions_between(date_from, date_till)
     boundary = await repository.coverage_boundary()
     result: list[AuditRow] = []
+    # Источник проверяется один раз: у котировок и агрегатов по две группы —
+    # акций и фондов, — а работа источника одна (FR-060a).
+    audited: set[str] = set()
     for group in groups.GROUPS:
         if not group.has_history or group.session_column is None:
             continue
@@ -53,6 +56,9 @@ async def audit(
         for source_id in group.source_ids:
             if source_ids is not None and source_id not in source_ids:
                 continue
+            if source_id in audited:
+                continue
+            audited.add(source_id)
             present = await repository.sessions_with_observations(
                 group.model,
                 group.session_column,

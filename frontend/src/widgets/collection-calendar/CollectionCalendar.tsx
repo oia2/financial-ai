@@ -17,10 +17,12 @@ import { formatCollectionStart, formatIsoDate } from '@/shared/lib/market-format
 
 /** Названия групп в сведениях о дате. Порядок — как в таблице групп. */
 const GROUP_TITLE: Record<string, string> = {
-  quotes: 'Котировки',
-  aggregates: 'Агрегаты торгов',
+  quotes: 'Котировки акций',
+  aggregates: 'Агрегаты акций',
   global: 'Глобальные ряды',
   positions: 'Позиции по фьючерсам',
+  fund_quotes: 'Котировки фондов',
+  fund_aggregates: 'Агрегаты фондов',
   reference: 'Справочники',
 };
 

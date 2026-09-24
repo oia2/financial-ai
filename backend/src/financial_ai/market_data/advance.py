@@ -259,13 +259,25 @@ async def calendar_is_due(
     ещё раз, если с прошлого запроса наступил порог — прежде чем решать, что
     сегодняшней сессии не было (spec 008, FR-040).
     """
-    last = await repository.last_successful_run_at(trading_calendar.SOURCE_ID)
-    if last is None:
-        return True
-
     moment = now or moscow_now()
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=MOSCOW)
+
+    # Неудачный запрос выдерживает интервал повтора, как и неудачная сессия
+    # (FR-029c). Правила ниже смотрят на последний УСПЕХ, и при недоступной
+    # бирже каждое из них оставалось истинным: календарь спрашивался на каждом
+    # тике — 1440 раз в сутки по шесть попыток клиента (FR-040d).
+    last_run = await repository.latest_source_run(trading_calendar.SOURCE_ID)
+    if last_run is not None and last_run.status != "ok":
+        delay = dt.timedelta(
+            minutes=max(settings.market_data_retry_after_minutes if settings else 0, 1)
+        )
+        if moment - last_run.started_at.astimezone(MOSCOW) < delay:
+            return False
+
+    last = await repository.last_successful_run_at(trading_calendar.SOURCE_ID)
+    if last is None:
+        return True
     asked = last.astimezone(MOSCOW)
 
     if asked.date() < moment.date():

@@ -225,3 +225,29 @@ async def test_version_two_boundary_is_immutable_and_version_one_survives(
 
 async def test_empty_database_has_no_version_two_boundary(db_session: AsyncSession) -> None:
     assert await MarketDataRepository(db_session).coverage_boundary() is None
+
+
+async def test_closed_dates_are_counted_by_the_database(db_session: AsyncSession) -> None:
+    """Дата закрыта, когда доказана КАЖДАЯ обязательная единица, а не часть их.
+
+    Счёт перенесён в базу: сводка больше не поднимает тысячи строк
+    доказательств ради списка дат. Правило при этом прежнее (FR-032f).
+    """
+    repository = MarketDataRepository(db_session)
+    required = frozenset({"IMOEX", "RTSI"})
+    other_day = DAY - dt.timedelta(days=1)
+    for day, keys in ((DAY, ("IMOEX", "RTSI", "extra")), (other_day, ("IMOEX",))):
+        for key in keys:
+            await repository.record_work_evidence(
+                source_id="global_series",
+                session_date=day,
+                work_key=key,
+                result_kind="value",
+                reason_code="verified_response",
+                origin_run_id=None,
+            )
+    await db_session.commit()
+
+    closed = await repository.sessions_with_all_work("global_series", [DAY, other_day], required)
+
+    assert closed == {DAY}

@@ -86,7 +86,7 @@ describe('ход прогона', () => {
     // Поиск ограничен лентой: те же названия источников есть в раскрытии
     // групп сводки.
     const rail = (await screen.findByText('идёт')).closest('.source-rail') as HTMLElement;
-    expect(within(rail).getByText('Агрегаты торгов')).toBeInTheDocument();
+    expect(within(rail).getByText('Агрегаты доски TQBR')).toBeInTheDocument();
     expect(within(rail).getByText('следующий')).toBeInTheDocument();
   });
 

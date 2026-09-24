@@ -85,6 +85,9 @@ class IssClient:
         self.should_stop = should_stop
         self.request_permit = request_permit
         self.metrics = HttpMetrics()
+        # Список бумаг доски — текущее состояние: лоты, ISIN и вид приходят
+        # одним ответом, и спрашивать его трижды за прогон незачем (FR-060).
+        self._equity_listing: dict[str, Any] | None = None
 
     async def __aenter__(self) -> IssClient:
         if self._client is None:
@@ -232,10 +235,7 @@ class IssClient:
         акциях неисполним. Входом модели он не является, поэтому его отсутствие
         не делает дату неготовой.
         """
-        payload = await self._get_json(
-            urls.equity_securities_url(self._config.base_url, self._config.board),
-            {"iss.meta": "off", "iss.only": "securities"},
-        )
+        payload = await self._equity_listing_payload()
         columns, data = _validated_block(
             payload, "securities", required_columns=("SECID", "LOTSIZE")
         )
@@ -269,10 +269,7 @@ class IssClient:
         бумага (spec 008, FR-018). Сверено на живом источнике 2026-09-17:
         доска отдаёт ISIN, у фьючерсов его нет.
         """
-        payload = await self._get_json(
-            urls.equity_securities_url(self._config.base_url, self._config.board),
-            {"iss.meta": "off", "iss.only": "securities"},
-        )
+        payload = await self._equity_listing_payload()
         columns, data = _validated_block(payload, "securities", required_columns=("SECID", "ISIN"))
         rows = _rows_to_dicts(columns, data)
 
@@ -285,6 +282,50 @@ class IssClient:
             if ticker.strip() and isin.strip():
                 isins[ticker.strip().upper()] = isin.strip().upper()
         return isins
+
+    async def fetch_equity_security_types(self) -> dict[str, str]:
+        """Код вида бумаг доски — `SECTYPE` биржи (FR-060).
+
+        С 22.06.2026 на TQBR торгуются и акции, и паи фондов; различить их по
+        наблюдениям нельзя. Смысл кодов разбирает справочник бумаг, клиент
+        отдаёт их как есть.
+        """
+        payload = await self._equity_listing_payload()
+        columns, data = _validated_block(
+            payload, "securities", required_columns=("SECID", "SECTYPE")
+        )
+        types: dict[str, str] = {}
+        for row in _rows_to_dicts(columns, data):
+            ticker = row.get("SECID")
+            code = row.get("SECTYPE")
+            if isinstance(ticker, str) and ticker.strip() and isinstance(code, str):
+                types[ticker.strip().upper()] = code.strip()
+        return types
+
+    async def fetch_security_group(self, secid: str) -> str | None:
+        """Код типа инструмента из описания бумаги — поле `GROUP` (FR-060).
+
+        Нужен бумаге, которой в списке доски уже нет: снятая с торгов остаётся
+        в истории, и её вид иначе не установить. ``None`` — поля в ответе нет.
+        """
+        payload = await self._get_json(
+            urls.security_description_url(self._config.base_url, secid),
+            {"iss.meta": "off", "iss.only": "description"},
+        )
+        columns, data = _validated_block(payload, "description", required_columns=("name", "value"))
+        for row in _rows_to_dicts(columns, data):
+            if row.get("name") == "GROUP":
+                value = row.get("value")
+                return str(value).strip() if value is not None and str(value).strip() else None
+        return None
+
+    async def _equity_listing_payload(self) -> dict[str, Any]:
+        if self._equity_listing is None:
+            self._equity_listing = await self._get_json(
+                urls.equity_securities_url(self._config.base_url, self._config.board),
+                {"iss.meta": "off", "iss.only": "securities"},
+            )
+        return self._equity_listing
 
     async def fetch_emitter_id(self, secid: str) -> str | None:
         """Идентификатор эмитента инструмента.

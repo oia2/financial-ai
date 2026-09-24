@@ -22,8 +22,8 @@ import type {
  * подделать её частично значило бы проверять форму, которой не существует.
  */
 const SOURCES: Record<GroupCoverageDto['group'], [string, string, string][]> = {
-  quotes: [['equity_d1', 'Котировки акций', 'session']],
-  aggregates: [['equity_agg', 'Агрегаты торгов', 'session']],
+  quotes: [['equity_d1', 'Котировки доски TQBR', 'session']],
+  aggregates: [['equity_agg', 'Агрегаты доски TQBR', 'session']],
   global: [
     ['global_series', 'Глобальные ряды', 'session'],
     ['cbr', 'Курсы и ставка ЦБ', 'session'],
@@ -31,6 +31,8 @@ const SOURCES: Record<GroupCoverageDto['group'], [string, string, string][]> = {
     ['index_constituents', 'Состав индекса', 'session'],
   ],
   positions: [['futures_positions', 'Позиции по фьючерсам', 'session']],
+  fund_quotes: [['equity_d1', 'Котировки доски TQBR', 'session']],
+  fund_aggregates: [['equity_agg', 'Агрегаты доски TQBR', 'session']],
   reference: [
     ['equity_sectors', 'Секторы бумаг', 'daily'],
     ['equity_lot_sizes', 'Лоты бумаг', 'daily'],
@@ -83,6 +85,18 @@ export function coverageFixture(overrides: Partial<CoverageDto> = {}): CoverageD
       },
     ],
     ...overrides,
+  };
+}
+
+/** Группа фондов: окно с 22.06.2026, во вход модели не идёт (FR-060). */
+export function fundGroup(
+  group: 'fund_quotes' | 'fund_aggregates',
+  title: string,
+): GroupCoverageDto {
+  return {
+    ...historyGroup(group, title, 68, 68, 0.72),
+    period_from: '2026-06-22',
+    model_input: false,
   };
 }
 
@@ -211,10 +225,15 @@ export function catchupFixture(
               scope: 'daily',
               state: 'done',
             },
-            { source_id: 'equity_d1', title: 'Котировки акций', scope: 'session', state: 'done' },
+            {
+              source_id: 'equity_d1',
+              title: 'Котировки доски TQBR',
+              scope: 'session',
+              state: 'done',
+            },
             {
               source_id: 'equity_agg',
-              title: 'Агрегаты торгов',
+              title: 'Агрегаты доски TQBR',
               scope: 'session',
               state: 'running',
             },

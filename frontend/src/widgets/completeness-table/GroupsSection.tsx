@@ -298,6 +298,8 @@ function subtitleOf(group: GroupCoverageDto, universe: UniverseDto): string {
     if (!isKnown(universe)) return `${count} · состав бумаг не посчитан`;
     return `${count} · фьючерс есть у ${universe.assets_with_futures} из ${universe.assets} бумаг`;
   }
+  // Группа собирается и видна, но во вход модели не идёт (FR-060c).
+  if (group.model_input === false) return `${count} · пока не входит в модель`;
   return count;
 }
 

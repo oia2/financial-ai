@@ -74,6 +74,20 @@ class MarketAsset(Base):
     # не отдал; тогда якорем остаётся тикер, как и раньше.
     isin: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
 
+    # Акция или пай фонда (FR-060). С 22.06.2026 фонды торгуются на той же
+    # доске, что и акции, и различить их по наблюдениям нельзя. NULL — вид ещё
+    # не получен от биржи; во вход модели идут только `share` (FR-060c).
+    security_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("security_kind IN ('share', 'fund')", name="ck_market_asset_security_kind"),
+    )
+
+
+# Вид бумаги (FR-060).
+KIND_SHARE = "share"
+KIND_FUND = "fund"
+
 
 class PriceSeries(Base):
     """Сшиваемый ценовой ряд.

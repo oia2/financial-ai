@@ -266,7 +266,12 @@ async def recent_runs(session: AsyncSession, limit: int = 5) -> list[RunSummary]
             func.min(IngestRun.started_at).label("started_at"),
             func.max(IngestRun.finished_at).label("finished_at"),
             func.min(IngestRun.trigger).label("trigger"),
-            func.count(func.distinct(IngestRun.session_date)).label("sessions"),
+            # Суточный источник пишет исход с датой, но сессию не собирает:
+            # прогон одного справочника показывался «ожидает 1 сессия · точный
+            # итог старой записи недоступен» (FR-056b).
+            func.count(func.distinct(IngestRun.session_date))
+            .filter(IngestRun.source_id.not_in(plan.DAILY_SOURCES))
+            .label("sessions"),
             # Запись ИДУЩЕГО обращения прогон прерванным не делает: исход
             # заводится до обращения и дополняется после (FR-052), и без этого
             # отбора идущий прогон показывался бы «прерванным перезапуском»

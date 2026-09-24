@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,6 +39,9 @@ class FakeRepository:
 
     async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
         return self._last
+
+    async def latest_source_run(self, source_id: str) -> None:
+        return None
 
     async def latest_trading_session(self, not_after: dt.date | None = None) -> dt.date | None:
         # Сегодняшняя сессия уже в календаре: повторный опрос после порога
@@ -84,6 +88,9 @@ class CalendarWithout:
 
     async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
         return self._last
+
+    async def latest_source_run(self, source_id: str) -> None:
+        return None
 
     async def latest_trading_session(self, not_after: dt.date | None = None) -> dt.date | None:
         return self._latest
@@ -147,3 +154,45 @@ async def test_с_порогом_2359_после_полуночи_опрос_н�
     assert not await calendar_is_due(
         CalendarWithout(at(24, 0, 25), wednesday), at(24, 9, 0), default
     )
+
+
+class FailingCalendar:
+    """Биржа недоступна: каждый запрос календаря записывается неудачей."""
+
+    def __init__(self, last_success: dt.datetime, latest: dt.date) -> None:
+        self._last_success = last_success
+        self._latest = latest
+        self.failed_at: dt.datetime | None = None
+
+    async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
+        return self._last_success
+
+    async def latest_source_run(self, source_id: str) -> SimpleNamespace | None:
+        if self.failed_at is None:
+            return None
+        return SimpleNamespace(status="failed", started_at=self.failed_at)
+
+    async def latest_trading_session(self, not_after: dt.date | None = None) -> dt.date | None:
+        return self._latest
+
+
+async def test_недоступная_биржа_не_опрашивается_каждую_минуту() -> None:
+    """Сутки без биржи: календарь — раз в интервал повтора, а не на каждом тике (FR-040d).
+
+    Прежде гейт смотрел только на последний успех и при отказе оставался
+    открытым: 1440 запросов в сутки по шесть попыток клиента каждый.
+    """
+    default = Settings()
+    repository = FailingCalendar(
+        dt.datetime(2026, 9, 23, 23, 59, tzinfo=MOSCOW), dt.date(2026, 9, 23)
+    )
+
+    asked = 0
+    for minute in range(24 * 60):
+        now = dt.datetime(2026, 9, 24, minute // 60, minute % 60, tzinfo=MOSCOW)
+        if await calendar_is_due(repository, now, default):
+            asked += 1
+            repository.failed_at = now
+
+    # Раз в 15 минут: 96 за сутки, а не 1440.
+    assert asked == 24 * 60 // default.market_data_retry_after_minutes

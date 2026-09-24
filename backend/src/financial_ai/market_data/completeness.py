@@ -56,8 +56,12 @@ async def source_windows(
             continue
         if depth not in by_depth:
             by_depth[depth] = frozenset(await calendar.window(asof, depth))
+        own = frozenset(group.trim(sorted(by_depth[depth])))
         for source_id in group.source_ids:
-            windows[source_id] = by_depth[depth]
+            # Объединение, а не последняя группа: у котировок две группы —
+            # акций и фондов, — и окно фондов короче. Присваивание урезало бы
+            # сбор котировок до 22.06.2026 (FR-060b).
+            windows[source_id] = windows.get(source_id, frozenset()) | own
     return windows
 
 
@@ -161,12 +165,7 @@ async def closed_sessions(
     # поздняя неудачная попытка за уже доказанную дату снова открывала её —
     # так Brent оставался «с ошибкой» при собранных значениях (анализ
     # 2026-09-23, A4).
-    evidence = await repository.work_evidence_for_sessions(source_id, window)
-    by_day: dict[dt.date, set[str]] = {}
-    for item in evidence:
-        by_day.setdefault(item.session_date, set()).add(item.work_key)
-    required = required_work_keys(source_id)
-    return {day for day, keys in by_day.items() if required <= keys}
+    return await repository.sessions_with_all_work(source_id, window, required_work_keys(source_id))
 
 
 async def requires_audit_sessions(
@@ -225,7 +224,7 @@ async def incomplete_sessions(
         if depth is None:
             continue
 
-        window = await calendar.window(last_closed, depth)
+        window = group.trim(await calendar.window(last_closed, depth))
         if closed_set is not None:
             window = [day for day in window if day in closed_set]
         if not window:

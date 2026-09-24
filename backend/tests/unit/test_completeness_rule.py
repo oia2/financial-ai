@@ -88,6 +88,15 @@ class FakeRepository:
             for work_key in required_work_keys(source_id)
         ]
 
+    async def sessions_with_all_work(
+        self, source_id: str, sessions: list[dt.date], required_keys: frozenset[str]
+    ) -> set[dt.date]:
+        # То же, что считает база: даты, где доказана каждая обязательная единица.
+        by_day: dict[dt.date, set[str]] = {}
+        for item in await self.work_evidence_for_sessions(source_id, sessions):
+            by_day.setdefault(item.session_date, set()).add(item.work_key)  # type: ignore[attr-defined]
+        return {day for day, keys in by_day.items() if required_keys <= keys}
+
     async def coverage_boundary(self) -> dt.date | None:
         return self._boundary
 

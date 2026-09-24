@@ -26,12 +26,12 @@ ASOF = dt.date(2026, 9, 11)
 
 SECURITIES_PAYLOAD = {
     "securities": {
-        "columns": ["SECID", "SHORTNAME", "LOTSIZE", "ISIN"],
+        "columns": ["SECID", "SHORTNAME", "LOTSIZE", "ISIN", "SECTYPE"],
         "data": [
-            ["SBER", "Сбербанк", 10, "RU0009029540"],
-            ["LKOH", "ЛУКОЙЛ", 1, "RU0007661625"],
+            ["SBER", "Сбербанк", 10, "RU0009029540", "1"],
+            ["LKOH", "ЛУКОЙЛ", 1, "RU0007661625", "1"],
             # Лот не пришёл: строка не должна превратиться в единицу.
-            ["XXXX", "Без лота", None, None],
+            ["XXXX", "Без лота", None, None, "1"],
         ],
     }
 }

@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from financial_ai.config import Settings
@@ -14,15 +16,35 @@ from financial_ai.market_data import groups
 from financial_ai.market_data.groups import GroupId, UnknownGroupError
 
 
-def test_five_groups_are_declared() -> None:
-    """Семейства входов модели, а не отдельные источники."""
+def test_groups_are_declared() -> None:
+    """Семейства входов модели и группы фондов, а не отдельные источники (FR-060a)."""
     assert {group.group_id for group in groups.GROUPS} == {
         GroupId.QUOTES,
         GroupId.AGGREGATES,
         GroupId.GLOBAL,
         GroupId.POSITIONS,
+        GroupId.FUND_QUOTES,
+        GroupId.FUND_AGGREGATES,
         GroupId.REFERENCE,
     }
+
+
+def test_fund_groups_share_sources_and_stay_out_of_the_model() -> None:
+    """Фонды — те же источники доски, окно с 22.06.2026, вход модели — нет (FR-060)."""
+    by_id = groups.BY_ID
+    assert by_id[GroupId.FUND_QUOTES].source_ids == by_id[GroupId.QUOTES].source_ids
+    assert by_id[GroupId.FUND_AGGREGATES].source_ids == by_id[GroupId.AGGREGATES].source_ids
+    for group_id in (GroupId.FUND_QUOTES, GroupId.FUND_AGGREGATES):
+        group = by_id[group_id]
+        assert not group.model_input
+        assert group.available_from == dt.date(2026, 6, 22)
+        assert group.trim([dt.date(2026, 6, 19), dt.date(2026, 6, 22)]) == [dt.date(2026, 6, 22)]
+
+
+def test_fund_groups_are_never_required_by_the_model() -> None:
+    """Даже названная в настройке группа фондов обязательной не становится (FR-060c)."""
+    settings = Settings(daily_ml_required_data_groups=["quotes", "fund_quotes"])
+    assert [group.group_id for group in groups.required(settings)] == [GroupId.QUOTES]
 
 
 def test_every_group_declares_how_to_tell_a_row_is_filled() -> None:

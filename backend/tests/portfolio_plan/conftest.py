@@ -94,6 +94,8 @@ async def seed_market(session: AsyncSession, lots: dict[str, int | None] | None 
 
     await repository.upsert_daily_bars(bars)
     await repository.update_lot_sizes(sizes)
+    # Во вход модели идут только акции (FR-060c).
+    await repository.update_security_kinds(dict.fromkeys(ASSETS, "share"))
 
     quotes = next(g for g in groups.GROUPS if g.group_id.value == "quotes")
     now = dt.datetime.now(dt.UTC)
