@@ -320,6 +320,7 @@ async def test_gap_beyond_the_limit_is_not_collected_even_over_many_ticks(
     monkeypatch.setattr("financial_ai.market_data.scheduler.moscow_now", lambda: evening)
 
     settings = Settings(
+        market_data_ingest_after_close="19:30",
         market_data_price_window_sessions=len(days),
         market_data_catchup_window_sessions=len(days),
         market_data_startup_recovery_max_sessions=3,

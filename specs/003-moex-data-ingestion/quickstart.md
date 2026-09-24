@@ -31,7 +31,7 @@ cp deployments/docker-compose/.env.example deployments/docker-compose/.env
 
 ```env
 MARKET_DATA_ENABLED=true
-MARKET_DATA_INGEST_AFTER_CLOSE=19:30      # время запуска после закрытия, Europe/Moscow
+MARKET_DATA_INGEST_AFTER_CLOSE=23:59      # время запуска после закрытия, Europe/Moscow (spec 008, FR-040c)
 MARKET_DATA_BACKFILL_FROM=                # пусто — вся доступная история
 MARKET_DATA_PRICE_WINDOW_SESSIONS=314
 MARKET_DATA_GLOBAL_WINDOW_SESSIONS=314

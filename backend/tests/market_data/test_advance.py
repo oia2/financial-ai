@@ -35,7 +35,9 @@ FRIDAY_EVENING = dt.datetime(2026, 9, 11, 20, 0)
 
 @pytest.fixture
 def settings() -> Settings:
+    # Порог задан явно: тесты проверяют механизм закрытости, а не умолчание.
     return Settings(
+        market_data_ingest_after_close="19:30",
         market_data_price_window_sessions=len(SESSIONS),
         market_data_catchup_window_sessions=len(SESSIONS),
         market_data_startup_recovery_max_sessions=3,
@@ -145,8 +147,9 @@ def test_malformed_close_time_falls_back_without_crashing() -> None:
     broken = Settings(market_data_ingest_after_close="не время")
     today = dt.date(2026, 9, 11)
 
-    assert advance.session_is_closed(today, broken, dt.datetime(2026, 9, 11, 19, 30))
-    assert not advance.session_is_closed(today, broken, dt.datetime(2026, 9, 11, 12, 0))
+    # Запасное значение — умолчание 23:59: раньше итог дня не опубликован (FR-040c).
+    assert advance.session_is_closed(today, broken, dt.datetime(2026, 9, 11, 23, 59))
+    assert not advance.session_is_closed(today, broken, dt.datetime(2026, 9, 11, 23, 0))
 
 
 # --- отставание (FR-006, FR-008, FR-009) --------------------------------------
@@ -236,6 +239,7 @@ async def test_default_collects_the_whole_gap(
     остатке не теряется (FR-045).
     """
     unlimited = Settings(
+        market_data_ingest_after_close="19:30",
         market_data_price_window_sessions=len(SESSIONS),
         market_data_catchup_window_sessions=len(SESSIONS),
         market_data_startup_recovery_max_sessions=0,

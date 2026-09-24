@@ -319,12 +319,12 @@ async def test_expected_date_comes_from_worker_and_does_not_skip_uncollected_tod
 @pytest.mark.parametrize(
     ("now", "in_calendar", "awaiting"),
     [
-        # 23.09.2026, 19:33 МСК: порог прошёл, биржа день не опубликовала.
-        ("2026-09-23T19:33:00+03:00", False, True),
-        # До порога обещание «после 19:30» ещё верно.
-        ("2026-09-23T18:00:00+03:00", False, False),
+        # После порога 23:59 день не опубликован — ждём публикации.
+        ("2026-09-23T23:59:30+03:00", False, True),
+        # До порога обещание «после 23:59» ещё верно (FR-040c).
+        ("2026-09-23T19:33:00+03:00", False, False),
         # День в календаре: сбор его берёт, ждать публикации нечего.
-        ("2026-09-23T19:33:00+03:00", True, False),
+        ("2026-09-23T23:59:30+03:00", True, False),
     ],
 )
 async def test_expected_session_after_threshold_is_awaiting_publication(

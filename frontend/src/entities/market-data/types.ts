@@ -174,7 +174,7 @@ export interface CoverageDto {
   next_expected_awaiting?: boolean;
   /** Как часто в это время переспрашивается календарь, минут. */
   calendar_retry_minutes?: number;
-  /** Порог сбора текущей сессии по биржевому времени, «19:30». */
+  /** Порог сбора текущей сессии по биржевому времени, «23:59». */
   ingest_after_close: string;
   /** Окно догона — не окно группы: у групп они разные. */
   catchup_window: CatchupWindowDto;

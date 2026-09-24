@@ -308,7 +308,7 @@ def _threshold_time(settings: Settings) -> dt.time:
         hours, minutes = raw.split(":", 1)
         return dt.time(int(hours), int(minutes))
     except (ValueError, IndexError):
-        return dt.time(19, 30)
+        return dt.time(23, 59)
 
 
 async def advance(
