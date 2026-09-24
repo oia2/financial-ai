@@ -5,7 +5,7 @@
  * строке, а не через number (SC-002, FR-016).
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { isNegative, isZero, roundDecimal, shiftDecimal } from '@/shared/lib/decimal';
 import {
@@ -22,24 +22,42 @@ import { formatCollectionStart } from '@/shared/lib/market-format';
 const NBSP = ' ';
 
 describe('дата и время следующего сбора', () => {
-  it('пишет «сегодня» для текущей московской даты', () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date('2026-09-20T21:30:00Z'));
-      expect(formatCollectionStart('2026-09-21', '01:30')).toBe('сегодня после 01:30');
-    } finally {
-      vi.useRealTimers();
-    }
+  const KRASNOYARSK = 'Asia/Krasnoyarsk';
+
+  it('порог после местной полуночи — «завтра», а не «сегодня»', () => {
+    // 24.09.2026, 18:00 МСК = 22:00 в Красноярске. Порог 23:59 МСК — это 03:59
+    // 25.09 по местному времени; экран писал «сегодня после 03:59».
+    const now = new Date('2026-09-24T18:00:00+03:00');
+    expect(formatCollectionStart('2026-09-24', '23:59', now, KRASNOYARSK)).toBe(
+      'завтра после 03:59',
+    );
   });
 
-  it('сохраняет дату для другого торгового дня', () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date('2026-09-20T21:30:00Z'));
-      expect(formatCollectionStart('2026-09-22', '01:30')).toBe('22.09.2026 после 01:30');
-    } finally {
-      vi.useRealTimers();
-    }
+  it('после местной полуночи тот же порог — «сегодня»', () => {
+    const now = new Date('2026-09-24T21:00:00+03:00'); // 01:00 25.09 в Красноярске
+    expect(formatCollectionStart('2026-09-24', '23:59', now, KRASNOYARSK)).toBe(
+      'сегодня после 03:59',
+    );
+  });
+
+  it('в Москве порог того же дня — «сегодня»', () => {
+    const now = new Date('2026-09-24T18:00:00+03:00');
+    expect(formatCollectionStart('2026-09-24', '23:59', now, 'Europe/Moscow')).toBe(
+      'сегодня после 23:59',
+    );
+  });
+
+  it('дальняя дата называется местной датой момента сбора', () => {
+    const now = new Date('2026-09-24T18:00:00+03:00');
+    expect(formatCollectionStart('2026-09-28', '23:59', now, KRASNOYARSK)).toBe(
+      '29.09.2026 после 03:59',
+    );
+  });
+
+  it('без порога — дата сессии', () => {
+    const now = new Date('2026-09-24T18:00:00+03:00');
+    expect(formatCollectionStart('2026-09-24', null, now)).toBe('сегодня');
+    expect(formatCollectionStart('2026-09-21', null, now)).toBe('21.09.2026');
   });
 });
 

@@ -84,7 +84,7 @@ export function CollectionCalendar({
   awaitingPublication?: boolean;
   calendarRetryMinutes?: number | null;
   /** Порог сбора текущей сессии: время и биржевое время. */
-  threshold: { local: string; exchange: string };
+  threshold: { local: string; exchange: string; at: string };
   lastClosed: string | null;
   paused: boolean;
   /** Сессия, которую собирают прямо сейчас. Помечается отдельно (FR-024). */
@@ -146,7 +146,7 @@ export function CollectionCalendar({
               <>{formatCollectionStart(nextSession, null)} — ближайшим прогоном</>
             ) : nextSession || expectedSession ? (
               <>
-                {formatCollectionStart(expectedSession ?? nextSession, threshold.local)}
+                {formatCollectionStart(expectedSession ?? nextSession, threshold.at)}
                 {expectedSession && (
                   <>
                     {' · '}

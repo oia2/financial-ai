@@ -28,22 +28,50 @@ export function formatIsoDate(value: string | null | undefined): string {
   return value.slice(0, 10).split('-').reverse().join('.');
 }
 
-/** Дата сбора с порогом: для московской даты сегодня вместо числа пишется «сегодня». */
+/**
+ * Когда начнётся сбор сессии: «сегодня после 03:59», «завтра после 03:59» или дата.
+ *
+ * `exchangeTime` — порог по биржевому времени («23:59»). Момент сбора — московская
+ * дата сессии плюс порог, а «сегодня» и «завтра» считаются по МЕСТНОЙ дате этого
+ * момента: 23:59 МСК 24.09 — это 03:59 25.09 в Красноярске, и прежнее «сегодня
+ * после 03:59» обещало уже прошедшее утро. Без порога — только дата сессии.
+ */
 export function formatCollectionStart(
   sessionDate: string | null | undefined,
-  localTime: string | null | undefined,
+  exchangeTime: string | null | undefined,
+  now: Date = new Date(),
+  timeZone?: string,
 ): string {
   if (!sessionDate) return DASH;
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Moscow',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
-  const today = `${value('year')}-${value('month')}-${value('day')}`;
-  const date = sessionDate.slice(0, 10) === today ? 'сегодня' : formatIsoDate(sessionDate);
-  return localTime ? `${date} после ${localTime}` : date;
+  const day = sessionDate.slice(0, 10);
+  const localDay = (moment: Date, zone?: string) => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(moment);
+    const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+    return `${value('year')}-${value('month')}-${value('day')}`;
+  };
+
+  const start = exchangeTime ? new Date(`${day}T${exchangeTime}:00+03:00`) : null;
+  if (start === null || Number.isNaN(start.getTime())) {
+    // Без порога — дата сессии; «сегодня» — по московской дате.
+    return day === localDay(now, 'Europe/Moscow') ? 'сегодня' : formatIsoDate(day);
+  }
+
+  const shift = Math.round(
+    (Date.parse(localDay(start, timeZone)) - Date.parse(localDay(now, timeZone))) / 86_400_000,
+  );
+  const word =
+    shift === 0 ? 'сегодня' : shift === 1 ? 'завтра' : formatIsoDate(localDay(start, timeZone));
+  const time = new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone,
+  }).format(start);
+  return `${word} после ${time}`;
 }
 
 /**

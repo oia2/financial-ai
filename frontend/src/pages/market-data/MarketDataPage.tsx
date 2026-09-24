@@ -204,7 +204,7 @@ export function MarketDataPage() {
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
           expectedSession={coverage.data?.next_expected_session ?? null}
-          nextSessionTime={coverage.data ? localThreshold(coverage.data.ingest_after_close) : null}
+          nextSessionTime={coverage.data?.ingest_after_close ?? null}
           nextBlocked={coverage.data?.next_session_blocked === true}
           nextClosed={coverage.data?.next_session_closed === true}
           awaitingPublication={coverage.data?.next_expected_awaiting === true}
@@ -263,6 +263,7 @@ export function MarketDataPage() {
           calendarRetryMinutes={coverage.data.calendar_retry_minutes ?? null}
           threshold={{
             local: localThreshold(coverage.data.ingest_after_close),
+            at: coverage.data.ingest_after_close,
             exchange: `${coverage.data.ingest_after_close} МСК`,
           }}
           lastClosed={coverage.data.asof_date}
