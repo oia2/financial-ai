@@ -42,7 +42,7 @@ from financial_ai.market_data.models import (
     SourceWorkEvidence,
     TradingSession,
 )
-from financial_ai.market_data.plan import DAILY, DAILY_PLAN, FAILURE_UNPUBLISHED
+from financial_ai.market_data.plan import DAILY, DAILY_PLAN, FAILURE_INTERNAL, FAILURE_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -1092,7 +1092,7 @@ class MarketDataRepository:
         return covered
 
     async def attempts_by_session(self, sessions: list[dt.date]) -> dict[dt.date, int]:
-        """Сколько раз сессию пытались собрать. Прогон, а не источник.
+        """Сколько прогонов сессии завершились отказом. Прогон, а не источник.
 
         Считаются различные `run_id`: один заход `ingest_session` пишет по
         строке на источник, и счёт по строкам дал бы десятку за одну попытку.
@@ -1106,12 +1106,20 @@ class MarketDataRepository:
             select(IngestRun.session_date, func.count(func.distinct(IngestRun.run_id)))
             .where(
                 IngestRun.session_date.in_(sessions),
-                # Попыткой считается работа ЗА СЕССИЮ. Календарь и суточные
-                # справочники спрашиваются по своему гейту, а ожидание
-                # публикации задержанного источника — не неудача: прогон, где
-                # ничего другого не было, предел попыток не расходует (FR-032h).
+                # Попытка — прогон, где работа ЗА СЕССИЮ завершилась ОТКАЗОМ
+                # источника или нашей обработки (FR-032j). Прогресс, ожидание
+                # публикации, остановка человеком и обрыв перезапуском предел не
+                # расходуют: прежде попыткой был любой прогон с работой, и при
+                # постепенной публикации разделов пять прогонов с успешными
+                # частями исчерпывали предел раньше, чем выходили позиции.
+                # Календарь и суточные справочники идут по своему гейту.
                 IngestRun.source_id.not_in(_NOT_SESSION_ATTEMPTS),
-                IngestRun.failure_kind.is_distinct_from(FAILURE_UNPUBLISHED),
+                IngestRun.status == "failed",
+                # У старых записей без причины неудача — отказ источника, так
+                # же их читает сводка (FR-033f).
+                func.coalesce(IngestRun.failure_kind, FAILURE_SOURCE).in_(
+                    (FAILURE_SOURCE, FAILURE_INTERNAL)
+                ),
             )
             .group_by(IngestRun.session_date)
         )

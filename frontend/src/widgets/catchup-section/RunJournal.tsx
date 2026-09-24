@@ -8,21 +8,8 @@
  * после перезапуска (FR-005).
  */
 
-import type { LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
-import { formatIsoDate, formatShortStamp } from '@/shared/lib/market-format';
-
-/**
- * Причина пропуска словами.
- *
- * Перечень закрытый, и его объявляет сервер: вторая таблица причин в
- * интерфейсе однажды разошлась бы с первой (FR-002).
- */
-const SKIP_REASON: Record<string, string> = {
-  withheld_until_close: 'отложена до закрытия сессии',
-  retry_delay: 'выдержка после неудачи',
-  attempts_exhausted: 'исчерпан предел попыток',
-  gap_over_limit: 'разрыв больше предела',
-};
+import type { RunSummaryDto } from '@/entities/market-data';
+import { formatShortStamp } from '@/shared/lib/market-format';
 
 const MODE: Record<string, string> = { daily: 'авто', manual: 'ручной' };
 
@@ -45,29 +32,15 @@ function sessionsLine(run: RunSummaryDto): string {
   return parts.join(' · ');
 }
 
-export function RunJournal({
-  runs,
-  events = [],
-  eventsTotal = 0,
-  skips = [],
-  skipsTotal = 0,
-}: {
-  runs: RunSummaryDto[];
-  /** Изменения состава инструментов: появление, смена и исчезновение фьючерса. */
-  events?: LinkEventDto[];
-  /** Сколько изменений состава всего: списки ограничены, и об остатке надо сказать. */
-  eventsTotal?: number;
-  /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
-  skips?: RunsDto['skips'];
-  skipsTotal?: number;
-}) {
-  if (runs.length === 0 && events.length === 0 && skips.length === 0) return null;
+export function RunJournal({ runs }: { runs: RunSummaryDto[] }) {
+  if (runs.length === 0) return null;
 
+  // Только прогоны. Списки пропущенных сессий и изменений состава убраны
+  // решением владельца (FR-024g): они копили сотни давно закрытых записей.
+  // Причина пропуска остаётся в календаре по дню (FR-002).
   return (
     <details className="run-journal" data-od-id="run-journal">
-      <summary>
-        Последние прогоны <span className="quiet">· из журнала сбора, переживает перезапуск</span>
-      </summary>
+      <summary>Последние прогоны</summary>
       <ol>
         {runs.map((run) => (
           <li key={run.run_id}>
@@ -84,63 +57,6 @@ export function RunJournal({
           </li>
         ))}
       </ol>
-
-      {skips.length > 0 && (
-        <>
-          {/*
-            Причина пропуска живёт в хранилище, а не в памяти сборщика: без неё
-            человек видит дыру и не знает, ждать ему или вмешиваться (FR-002).
-          */}
-          <p className="journal-heading">
-            Пропущенные сессии
-            {skipsTotal > skips.length && (
-              <span className="quiet">
-                {' '}
-                · показаны последние {skips.length} из {skipsTotal}
-              </span>
-            )}
-          </p>
-          <ol>
-            {skips.map((skip) => (
-              <li key={`${skip.session_date}-${skip.decided_at}`}>
-                <span className="mono">{formatIsoDate(skip.session_date)}</span>
-                <span>{SKIP_REASON[skip.reason] ?? skip.reason}</span>
-                <span className="journal-outcome">{skip.detail ?? ''}</span>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-
-      {events.length > 0 && (
-        <>
-          {/*
-            Изменение состава инструментов названо отдельно от прогонов: без
-            этого рост или убыль числа собранных бумаг выглядели бы пропуском
-            сбора, а не появлением и исчезновением инструментов (FR-016).
-          */}
-          <p className="journal-heading">
-            Состав инструментов
-            {eventsTotal > events.length && (
-              <span className="quiet">
-                {' '}
-                · показаны последние {events.length} из {eventsTotal}
-              </span>
-            )}
-          </p>
-          <ol>
-            {events.map((event) => (
-              <li key={`${event.at}-${event.ticker}`}>
-                <span className="mono">{formatShortStamp(event.at)}</span>
-                <span>{event.ticker}</span>
-                <span className={`journal-outcome${event.kind === 'closed' ? ' error' : ''}`}>
-                  {event.detail}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
     </details>
   );
 }

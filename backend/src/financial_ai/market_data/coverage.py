@@ -519,6 +519,11 @@ async def build_report(
     expected_session = max(now.date(), asof_date + dt.timedelta(days=1))
     while expected_session.weekday() >= 5:
         expected_session += dt.timedelta(days=1)
+    awaiting = (
+        expected_session == now.date()
+        and session_is_closed(expected_session, settings, now)
+        and not await repository.is_trading_session(expected_session)
+    )
 
     return {
         "asof_date": asof_date.isoformat(),
@@ -532,6 +537,11 @@ async def build_report(
         "next_session": next_session.isoformat() if next_session else None,
         # Оценка по будням, пока биржевой календарь ещё не подтвердил дату.
         "next_expected_session": expected_session.isoformat(),
+        # Порог сегодняшней сессии прошёл, а календарь её ещё не подтвердил:
+        # идёт ожидание публикации, и «после {порог}» обещало бы наступившее
+        # время (FR-054a). Сравнивает сервер: время порога живёт в его настройке.
+        "next_expected_awaiting": awaiting,
+        "calendar_retry_minutes": settings.market_data_retry_after_minutes,
         # Старые сессии требуют ручного повтора; новые идут по расписанию.
         "next_session_blocked": next_blocked,
         # Названная сессия уже закрыта: ждать её закрытия нечего, сбор возьмёт

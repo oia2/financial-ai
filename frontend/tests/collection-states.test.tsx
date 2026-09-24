@@ -437,31 +437,11 @@ describe('прогон закончился', () => {
     expect(screen.queryByRole('button', { name: 'Остановить прогон' })).not.toBeInTheDocument();
   });
 
-  it('причина пропуска переживает перезапуск сборщика', async () => {
-    // Ход прогона живёт в памяти и исчезает вместе с процессом; причина
-    // приходит из хранилища, поэтому остаётся на экране (FR-002, SC-002).
-    renderWith(
-      catchupFixture('idle', { sessions: { ...catchupFixture('idle').sessions, requested: 0 } }),
-      [FINISHED_RUN],
-      [],
-      [
-        {
-          session_date: '2026-09-15',
-          reason: 'attempts_exhausted',
-          detail: 'три попытки подряд без данных',
-          decided_at: '2026-09-17T15:02:41Z',
-        },
-      ],
-    );
-
-    expect(await screen.findByText('Пропущенные сессии')).toBeInTheDocument();
-    expect(screen.getByText('исчерпан предел попыток')).toBeInTheDocument();
-    expect(screen.getByText('три попытки подряд без данных')).toBeInTheDocument();
-  });
-
-  it('изменение состава инструментов названо, а не спрятано в числах', async () => {
-    // Иначе рост или убыль числа собранных бумаг выглядели бы пропуском
-    // сбора, а не появлением и исчезновением инструментов (FR-016).
+  it('журнал — только прогоны: без старых пропусков, состава и служебной подписи', async () => {
+    // Решение владельца 2026-09-24 (FR-024g): списки «Пропущенные сессии» и
+    // «Состав инструментов» показывали сотни давно закрытых записей, а подпись
+    // «из журнала сбора, переживает перезапуск» объясняла устройство, а не
+    // данные. Причина пропуска остаётся в календаре по дню (FR-002).
     renderWith(
       catchupFixture('finished'),
       [FINISHED_RUN],
@@ -474,11 +454,21 @@ describe('прогон закончился', () => {
           detail: 'появился фьючерс SGZH_F',
         },
       ],
+      [
+        {
+          session_date: '2026-09-15',
+          reason: 'attempts_exhausted',
+          detail: 'три попытки подряд без данных',
+          decided_at: '2026-09-17T15:02:41Z',
+        },
+      ],
     );
 
-    expect(await screen.findByText('Состав инструментов')).toBeInTheDocument();
-    expect(screen.getByText('SGZH')).toBeInTheDocument();
-    expect(screen.getByText('появился фьючерс SGZH_F')).toBeInTheDocument();
+    expect(await screen.findByText('Последние прогоны')).toBeInTheDocument();
+    expect(screen.queryByText('Пропущенные сессии')).not.toBeInTheDocument();
+    expect(screen.queryByText('Состав инструментов')).not.toBeInTheDocument();
+    expect(screen.queryByText(/переживает перезапуск/)).not.toBeInTheDocument();
+    expect(screen.queryByText('появился фьючерс SGZH_F')).not.toBeInTheDocument();
   });
 });
 
@@ -499,6 +489,7 @@ describe('следующий сбор', () => {
     next: string | null,
     blocked: boolean,
     expected: string | null = null,
+    awaiting = false,
   ) {
     server.use(
       http.get('*/api/market-data/catchup', () => HttpResponse.json(catchupFixture('finished'))),
@@ -508,6 +499,8 @@ describe('следующий сбор', () => {
             next_session: next,
             next_session_blocked: blocked,
             next_expected_session: expected,
+            next_expected_awaiting: awaiting,
+            calendar_retry_minutes: 15,
           }),
         ),
       ),
@@ -555,6 +548,22 @@ describe('следующий сбор', () => {
     expect(document.querySelector('.schedule-facts')?.textContent).not.toContain(
       'ближайший торговый день',
     );
+  });
+
+  it('после порога без опубликованного дня прошедшее время не обещается', async () => {
+    // 23.09.2026 в 23:33 по местному времени строка всё ещё обещала «сегодня
+    // после 23:30»: порог прошёл, биржа день не опубликовала (FR-054a).
+    renderWithCoverage(null, false, '2099-01-05', true);
+    await waitFor(() => {
+      expect(document.querySelector('.run-next')?.textContent).toContain('ждём публикации биржей');
+    });
+    const line = document.querySelector('.run-next')?.textContent ?? '';
+    const schedule = document.querySelector('.schedule-facts li strong')?.textContent ?? '';
+    for (const text of [line, schedule]) {
+      expect(text).toContain('ждём публикации биржей');
+      expect(text).toContain('календарь проверяется каждые 15 мин');
+      expect(text).not.toMatch(/после \d\d:\d\d/);
+    }
   });
 
   it('старый недобор не заменяет расписание новой сессии', async () => {

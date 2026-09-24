@@ -26,6 +26,7 @@ from financial_ai.market_data.calendar import moscow_today
 from financial_ai.market_data.iss.client import IssClient
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import asset_id_for
+from financial_ai.market_data.sources.reference import ReferenceEmptyError
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,11 @@ async def sync_lot_sizes(client: IssClient, repository: MarketDataRepository) ->
     """
     lots = await client.fetch_equity_lot_sizes()
     if not lots:
-        logger.warning("размеры лотов: биржа вернула пустой перечень")
-        return 0
+        # Торгуемые бумаги без лотов не бывают: пустой перечень — отказ
+        # источника, а не проверенный справочник. Прежде он возвращал ноль и
+        # получал доказательство полноты, которое засчитывала готовность ML
+        # и которое подавляло повтор до следующих суток (FR-033l).
+        raise ReferenceEmptyError("размеры лотов: биржа вернула пустой перечень")
 
     # Ключ — СУЩНОСТЬ, а не имя. Обновление по несуществующему ключу не
     # затрагивает ни одной строки и молчит: у переименованной бумаги размер

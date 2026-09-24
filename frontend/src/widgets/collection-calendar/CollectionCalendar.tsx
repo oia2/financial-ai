@@ -64,6 +64,8 @@ export function CollectionCalendar({
   expectedSession,
   nextBlocked = false,
   nextClosed = false,
+  awaitingPublication = false,
+  calendarRetryMinutes = null,
   threshold,
   lastClosed,
   paused,
@@ -78,6 +80,9 @@ export function CollectionCalendar({
   nextBlocked?: boolean;
   /** Названная сессия давно закрыта: сбор возьмёт её ближайшим прогоном. */
   nextClosed?: boolean;
+  /** Порог прошёл, биржа день ещё не опубликовала (FR-054a). */
+  awaitingPublication?: boolean;
+  calendarRetryMinutes?: number | null;
   /** Порог сбора текущей сессии: время и биржевое время. */
   threshold: { local: string; exchange: string };
   lastClosed: string | null;
@@ -125,6 +130,18 @@ export function CollectionCalendar({
               'автосбор на паузе'
             ) : nextBlocked && !expectedSession ? (
               'нет автосбора — нужен ручной сбор'
+            ) : awaitingPublication ? (
+              <>
+                сегодня — ждём публикации биржей
+                {calendarRetryMinutes ? (
+                  <>
+                    {' · '}
+                    <span className="msk">
+                      календарь проверяется каждые {calendarRetryMinutes} мин
+                    </span>
+                  </>
+                ) : null}
+              </>
             ) : nextClosed && nextSession && !expectedSession ? (
               <>{formatCollectionStart(nextSession, null)} — ближайшим прогоном</>
             ) : nextSession || expectedSession ? (

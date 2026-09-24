@@ -70,3 +70,43 @@ async def test_вчерашний_опрос_устарел() -> None:
     вчера = moment(20) - dt.timedelta(days=1)
 
     assert await calendar_is_due(FakeRepository(вчера), moment(1), Settings())
+
+
+class CalendarWithout:
+    """Календарь, в котором последняя сессия — ``latest``."""
+
+    def __init__(self, last: dt.datetime, latest: dt.date) -> None:
+        self._last = last
+        self._latest = latest
+
+    async def last_successful_run_at(self, source_id: str) -> dt.datetime | None:
+        return self._last
+
+    async def latest_trading_session(self, not_after: dt.date | None = None) -> dt.date | None:
+        return self._latest
+
+
+async def test_вчерашний_день_после_полуночи_переспрашивается() -> None:
+    """Ночь на 24.09.2026: 23.09 опубликован после полуночи (FR-040b).
+
+    Последний опрос — в 00:00:52, и 24-го правило ждало порога 19:30 ради
+    нового дня: 23.09 в 08:37 был опубликован, но не собирался.
+    """
+    asked = dt.datetime(2026, 9, 24, 0, 0, 52, tzinfo=MOSCOW)
+    repository = CalendarWithout(asked, dt.date(2026, 9, 22))
+
+    assert not await calendar_is_due(
+        repository, dt.datetime(2026, 9, 24, 0, 10, tzinfo=MOSCOW), Settings()
+    )
+    assert await calendar_is_due(
+        repository, dt.datetime(2026, 9, 24, 8, 37, tzinfo=MOSCOW), Settings()
+    )
+
+
+async def test_подтверждённый_вчерашний_день_до_порога_не_переспрашивается() -> None:
+    asked = dt.datetime(2026, 9, 24, 0, 30, tzinfo=MOSCOW)
+    repository = CalendarWithout(asked, dt.date(2026, 9, 23))
+
+    assert not await calendar_is_due(
+        repository, dt.datetime(2026, 9, 24, 12, tzinfo=MOSCOW), Settings()
+    )

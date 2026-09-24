@@ -316,6 +316,41 @@ async def test_expected_date_comes_from_worker_and_does_not_skip_uncollected_tod
     assert report["next_session_blocked"] is False
 
 
+@pytest.mark.parametrize(
+    ("now", "in_calendar", "awaiting"),
+    [
+        # 23.09.2026, 19:33 МСК: порог прошёл, биржа день не опубликовала.
+        ("2026-09-23T19:33:00+03:00", False, True),
+        # До порога обещание «после 19:30» ещё верно.
+        ("2026-09-23T18:00:00+03:00", False, False),
+        # День в календаре: сбор его берёт, ждать публикации нечего.
+        ("2026-09-23T19:33:00+03:00", True, False),
+    ],
+)
+async def test_expected_session_after_threshold_is_awaiting_publication(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    now: str,
+    in_calendar: bool,
+    awaiting: bool,
+) -> None:
+    """После порога без опубликованного дня не обещается прошедшее время (FR-054a)."""
+    day = dt.date(2026, 9, 22)
+    repository = MarketDataRepository(db_session)
+    await repository.add_trading_sessions([day, dt.date(2026, 9, 23)] if in_calendar else [day])
+    for group in groups.GROUPS:
+        for source in group.source_ids:
+            await record(repository, source, day=day)
+    await repository.commit()
+    monkeypatch.setattr(coverage, "moscow_now", lambda: dt.datetime.fromisoformat(now))
+
+    report = await coverage.build_report(db_session, Settings(), day)
+
+    assert report["next_expected_session"] == "2026-09-23"
+    assert report["next_expected_awaiting"] is awaiting
+    assert report["calendar_retry_minutes"] == Settings().market_data_retry_after_minutes
+
+
 async def test_latest_calendar_day_is_already_closed_on_weekend(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

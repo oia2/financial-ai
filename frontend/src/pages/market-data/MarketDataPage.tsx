@@ -201,16 +201,14 @@ export function MarketDataPage() {
           stale={workerDown || disconnected}
           state={catchup.data}
           runs={runs.data?.runs ?? []}
-          events={runs.data?.events ?? []}
-          eventsTotal={runs.data?.events_total ?? 0}
-          skips={runs.data?.skips ?? []}
-          journalSkipsTotal={runs.data?.skips_total ?? 0}
           paused={collectionPaused}
           nextSession={coverage.data?.next_session ?? null}
           expectedSession={coverage.data?.next_expected_session ?? null}
           nextSessionTime={coverage.data ? localThreshold(coverage.data.ingest_after_close) : null}
           nextBlocked={coverage.data?.next_session_blocked === true}
           nextClosed={coverage.data?.next_session_closed === true}
+          awaitingPublication={coverage.data?.next_expected_awaiting === true}
+          calendarRetryMinutes={coverage.data?.calendar_retry_minutes ?? null}
           emptyStorage={emptyStorage}
           nothingToCatchUp={control.nothingToCatchUp}
           notice={
@@ -261,6 +259,8 @@ export function MarketDataPage() {
           expectedSession={coverage.data.next_expected_session ?? null}
           nextBlocked={coverage.data.next_session_blocked === true}
           nextClosed={coverage.data.next_session_closed === true}
+          awaitingPublication={coverage.data.next_expected_awaiting === true}
+          calendarRetryMinutes={coverage.data.calendar_retry_minutes ?? null}
           threshold={{
             local: localThreshold(coverage.data.ingest_after_close),
             exchange: `${coverage.data.ingest_after_close} МСК`,

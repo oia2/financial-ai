@@ -647,21 +647,24 @@ async def catch_up(
 
     run_id = run_id or str(uuid.uuid4())
 
-    # Явно выбранные справочники — раз за запуск и до дат: у них нет оси
-    # сессий, и список дат их не касается (FR-033g). ``source_ids=None`` —
-    # прежний посессионный план без справочников.
-    if source_ids is not None and source_ids & plan.REFERENCE_SOURCES:
-        await refresh_references(
-            session,
-            settings,
-            source_ids,
-            run_id=run_id,
-            client=client,
-            on_source=on_source,
-            should_stop=should_stop,
-        )
-
+    # Явно выбранные справочники — раз за запуск: у них нет оси сессий, и
+    # список дат их не касается (FR-033g). ``source_ids=None`` — прежний
+    # посессионный план без справочников. Без дат они — вся работа запуска;
+    # с датами — после цикла сессий: справочник дополняет известные активы, и
+    # на пустом хранилище, спрошенный до котировок, не записывал ни одного
+    # лота, объявляя себя проверенным до следующих суток (FR-033m).
+    wants_references = source_ids is not None and bool(source_ids & plan.REFERENCE_SOURCES)
     if not result.requested:
+        if wants_references and source_ids is not None:
+            await refresh_references(
+                session,
+                settings,
+                source_ids,
+                run_id=run_id,
+                client=client,
+                on_source=on_source,
+                should_stop=should_stop,
+            )
         return result
 
     logger.info("догон: к сбору сессий %d", len(result.requested))
@@ -718,12 +721,23 @@ async def catch_up(
             if day in windows.get(source_id, frozenset({day}))
         )
 
-    async def persist_interrupted_plan(statuses: dict[str, str]) -> None:
+    # Итог даты у диапазонного источника — по доказательствам ЭТОЙ даты, а не
+    # по общему статусу диапазона: неуспех на одной дате прежде переносился на
+    # все, и журнал объявлял несобранными даты, закрытые в сводке (FR-033n).
+    range_closed: dict[str, set[dt.date]] = {}
+
+    def range_statuses(day: dt.date) -> dict[str, str]:
+        return {
+            source_id: STATUS_OK if day in range_closed.get(source_id, set()) else outcome.status
+            for source_id, outcome in range_outcomes.items()
+        }
+
+    async def persist_interrupted_plan() -> None:
         """Сохранить остановленный план для журнала и будущего продолжения."""
         for day in result.requested:
             if day in result.outcomes:
                 continue
-            folded = plan.fold_session_outcome(sources_for(day), statuses)
+            folded = plan.fold_session_outcome(sources_for(day), range_statuses(day))
             result.outcomes[day] = folded.outcome
             result.interrupted.append(day)
             await repository.record_session_outcome(
@@ -750,11 +764,15 @@ async def catch_up(
             should_stop=should_stop,
             windows=windows,
         )
+        global_group = next(g for g in groups.GROUPS if global_series.SOURCE_ID in g.source_ids)
+        for source_id in range_outcomes:
+            range_closed[source_id] = await completeness.closed_sessions(
+                repository, global_group, source_id, result.requested
+            )
 
         if should_stop is not None and should_stop():
             logger.info("догон остановлен до опознания бумаг")
-            statuses = {outcome.source_id: outcome.status for outcome in range_outcomes.values()}
-            await persist_interrupted_plan(statuses)
+            await persist_interrupted_plan()
             return result
 
         # Опознание бумаг — ДО сессий и НЕЗАВИСИМО от выбора источников.
@@ -783,12 +801,27 @@ async def catch_up(
         # выглядела зависшей (FR-058h).
         if should_stop is not None and should_stop():
             logger.info("догон остановлен до сверки связей")
-            await persist_interrupted_plan(
-                {outcome.source_id: outcome.status for outcome in range_outcomes.values()}
-            )
+            await persist_interrupted_plan()
             return result
 
         if prepare_assets and (source_ids is None or positions.SOURCE_ID in source_ids):
+            # Связи строятся по составу доски. На пустом хранилище котировок
+            # нет, связей не возникало, и позиции первого прохода падали все
+            # (FR-033m). Котировки последней запрошенной сессии — работа этого
+            # же плана: собранные здесь, в цикле они повторно не спрашиваются.
+            if await repository.latest_observed_session() is None and (
+                source_ids is None or equity_d1.SOURCE_ID in source_ids
+            ):
+                last = result.requested[-1]
+                await run_source(
+                    repository,
+                    run_id,
+                    equity_d1.SOURCE_ID,
+                    last,
+                    lambda: equity_d1.sync_equity_daily(iss, repository, last),
+                    trigger=TRIGGER_CATCHUP,
+                )
+                await session.commit()
             asked_on = await calendar.latest_session(moscow_today()) or result.requested[-1]
             confirmed = await repository.latest_link_start()
             if confirmed is not None and asked_on < confirmed:
@@ -839,8 +872,8 @@ async def catch_up(
                 in_window=sources_for(day),
             )
             statuses = {
-                outcome.source_id: outcome.status
-                for outcome in (*range_outcomes.values(), *outcomes)
+                **range_statuses(day),
+                **{outcome.source_id: outcome.status for outcome in outcomes},
             }
             folded = plan.fold_session_outcome(sources_for(day), statuses)
             result.outcomes[day] = folded.outcome
@@ -862,6 +895,19 @@ async def catch_up(
 
             if on_session_done is not None:
                 on_session_done(day, INTERRUPTED if folded.interrupted else folded.outcome)
+
+        if wants_references and source_ids is not None:
+            # После сессий: активы уже заведены котировками (FR-033m).
+            # Остановку справочники проверяют сами и после неё не спрашиваются.
+            await refresh_references(
+                session,
+                settings,
+                source_ids,
+                run_id=run_id,
+                client=iss,
+                on_source=on_source,
+                should_stop=should_stop,
+            )
     finally:
         if owns_positions:
             await pos_client.__aexit__(None, None, None)
@@ -1651,6 +1697,7 @@ async def refresh_references(
     client: IssClient | None = None,
     on_source: Callable[[str, str, SourceOutcome | None], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    trigger: str = TRIGGER_CATCHUP,
 ) -> list[SourceOutcome]:
     """Обновить выбранные справочники один раз за ручной запуск (FR-033g).
 
@@ -1701,7 +1748,7 @@ async def refresh_references(
                     source_id,
                     asof,
                     action,
-                    trigger=TRIGGER_CATCHUP,
+                    trigger=trigger,
                     on_source=on_source,
                 )
             )
@@ -1710,6 +1757,37 @@ async def refresh_references(
         if owns_client:
             await iss.__aexit__(None, None, None)
     return outcomes
+
+
+async def references_to_retry(
+    repository: MarketDataRepository,
+    settings: Settings,
+    now: dt.datetime,
+) -> frozenset[str]:
+    """Справочники, которые ежедневный цикл должен спросить сам (FR-033k).
+
+    Не проверенный сегодня справочник спрашивается и без сессионной работы:
+    прежде его спрашивал только сбор сессии, и упавший справочник при полном
+    окне ждал следующей сессии, держа готовность ML (FR-033j). После неудачи —
+    с той же выдержкой, что и сессии: тик раз в минуту не должен превращаться
+    в поток обращений к неотвечающему источнику.
+    """
+    delay = dt.timedelta(minutes=settings.market_data_retry_after_minutes)
+    moment = now if now.tzinfo is not None else now.replace(tzinfo=MOSCOW)
+    wanted: set[str] = set()
+    for source_id in plan.REFERENCE_SOURCES:
+        if not await reference_is_due(repository, source_id, moment.astimezone(MOSCOW).date()):
+            continue
+        latest = await repository.latest_source_run(source_id)
+        if (
+            latest is not None
+            and latest.finished_at is not None
+            and latest.status != STATUS_OK
+            and moment - latest.finished_at < delay
+        ):
+            continue
+        wanted.add(source_id)
+    return frozenset(wanted)
 
 
 async def reference_is_due(

@@ -15,7 +15,7 @@
  *  - причина прерывания берётся из ответа сервера, а не формулируется здесь.
  */
 
-import type { CatchupStateDto, LinkEventDto, RunsDto, RunSummaryDto } from '@/entities/market-data';
+import type { CatchupStateDto, RunSummaryDto } from '@/entities/market-data';
 import {
   formatAgo,
   formatDuration,
@@ -41,16 +41,14 @@ const PAST_WORD: Record<string, string> = {
 export function CatchupSection({
   state,
   runs,
-  events = [],
-  eventsTotal = 0,
-  skips = [],
-  journalSkipsTotal = 0,
   paused,
   nextSession,
   expectedSession,
   nextSessionTime,
   nextBlocked = false,
   nextClosed = false,
+  awaitingPublication = false,
+  calendarRetryMinutes = null,
   emptyStorage,
   nothingToCatchUp,
   notice,
@@ -63,12 +61,6 @@ export function CatchupSection({
 }: {
   state: CatchupStateDto;
   runs: RunSummaryDto[];
-  /** Изменения состава инструментов из журнала. */
-  events?: LinkEventDto[];
-  eventsTotal?: number;
-  /** Причины пропусков из хранилища: они переживают перезапуск сборщика. */
-  skips?: RunsDto['skips'];
-  journalSkipsTotal?: number;
   /** Пауза автосбора. Состояние страницы, а не прогона. */
   paused: boolean;
   /** Сессия, которую возьмёт следующий сбор, по торговому календарю. */
@@ -85,6 +77,9 @@ export function CatchupSection({
   nextBlocked?: boolean;
   /** Названная сессия уже закрыта: ждать нечего, возьмём ближайшим прогоном. */
   nextClosed?: boolean;
+  /** Порог прошёл, биржа день ещё не опубликовала (FR-054a). */
+  awaitingPublication?: boolean;
+  calendarRetryMinutes?: number | null;
   emptyStorage: boolean;
   /** Сервер ответил, что пропущенных сессий нет: запуск не предлагается (FR-038). */
   nothingToCatchUp: boolean;
@@ -254,21 +249,27 @@ export function CatchupSection({
           <b>
             {paused || (nextBlocked && !expectedSession)
               ? 'не будет'
-              : expectedSession
-                ? formatCollectionStart(expectedSession, nextSessionTime)
-                : nextClosed && nextSession
-                  ? `${formatCollectionStart(nextSession, null)} — ближайшим прогоном`
-                  : formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}
+              : awaitingPublication
+                ? 'сегодня — ждём публикации биржей'
+                : expectedSession
+                  ? formatCollectionStart(expectedSession, nextSessionTime)
+                  : nextClosed && nextSession
+                    ? `${formatCollectionStart(nextSession, null)} — ближайшим прогоном`
+                    : formatCollectionStart(nextSession ?? expectedSession, nextSessionTime)}
           </b>
           {paused
             ? ', пока автосбор на паузе'
             : nextBlocked && !expectedSession
               ? ', нужен ручной сбор'
-              : expectedSession || nextSession === null
-                ? expectedSession
-                  ? ', дата уточняется по календарю биржи'
-                  : ', ожидаем обновления календаря биржи'
-                : ''}
+              : awaitingPublication
+                ? calendarRetryMinutes
+                  ? `, календарь проверяется каждые ${calendarRetryMinutes} мин`
+                  : ''
+                : expectedSession || nextSession === null
+                  ? expectedSession
+                    ? ', дата уточняется по календарю биржи'
+                    : ', ожидаем обновления календаря биржи'
+                  : ''}
           {!paused && expectedSession && nextClosed && nextSession && (
             <>. Повтор за {formatIsoDate(nextSession)} — ближайшим прогоном</>
           )}
@@ -407,15 +408,7 @@ export function CatchupSection({
       */}
       <EventLog log={state.log} />
 
-      {past && (
-        <RunJournal
-          runs={runs}
-          events={events}
-          eventsTotal={eventsTotal}
-          skips={skips}
-          skipsTotal={journalSkipsTotal}
-        />
-      )}
+      {past && <RunJournal runs={runs} />}
     </section>
   );
 }

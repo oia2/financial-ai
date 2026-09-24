@@ -451,7 +451,10 @@ async def test_calendar_is_asked_again_until_today_appears(
 ) -> None:
     """22.09 календарь спросили в 19:30 один раз, и сессия вечером не собралась."""
     repository = MarketDataRepository(db_session)
-    days = [dt.date(2026, 9, 21)] + ([now.date()] if has_today else [])
+    # В субботу подтверждена пятница: закрытых будних дней без подтверждения
+    # нет, и переспрашивать нечего (FR-040b).
+    last_known = dt.date(2026, 9, 25) if now.weekday() >= 5 else dt.date(2026, 9, 21)
+    days = [last_known] + ([now.date()] if has_today else [])
     await repository.add_trading_sessions(days)
     asked = now.replace(hour=19, minute=30, second=50)
     await repository.record_run(

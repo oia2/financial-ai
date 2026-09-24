@@ -280,12 +280,22 @@ async def calendar_is_due(
 
     # Одного опроса после порога мало: 22.09.2026 календарь спросили в 19:30,
     # биржа день ещё не опубликовала, и до следующих суток его больше не
-    # спрашивали — сессия вечером не собралась. После порога в будний день,
-    # пока сегодняшней даты в календаре нет, календарь переспрашивается с
-    # интервалом повтора (FR-040, уточнение 2026-09-23).
-    if moment < threshold or moment.weekday() >= 5:
-        return False
-    if await repository.latest_trading_session(moment.date()) == moment.date():
+    # спрашивали (FR-040, уточнение 2026-09-23).
+    #
+    # И «пока нет сегодняшней даты» — тоже мало: 23.09.2026 биржа опубликовала
+    # день уже после полуночи, а 24-го правило ждало порога 19:30 ради НОВОГО
+    # дня, и вчерашний так и не собирался до вечера. Правило одно: пока
+    # закрытый будний день после последней сессии календаря не подтверждён,
+    # календарь переспрашивается с интервалом повтора — какой бы это ни был
+    # день (FR-040b). Праздник стоит одного лёгкого обращения за интервал,
+    # пока не появится следующая сессия.
+    latest = await repository.latest_trading_session(moment.date())
+    if latest is None:
+        return True
+    expected = latest + dt.timedelta(days=1)
+    while expected.weekday() >= 5:
+        expected += dt.timedelta(days=1)
+    if not session_is_closed(expected, settings, moment.astimezone(MOSCOW)):
         return False
     delay = dt.timedelta(minutes=max(settings.market_data_retry_after_minutes, 1))
     return moment - asked >= delay
@@ -370,6 +380,19 @@ async def advance(
 
     pending, last_closed = await pending_sessions(session, settings, now)
     if not pending:
+        # Сессионной работы нет, но справочник, не проверенный сегодня, ждать
+        # следующей сессии не должен: он входит в обязательный вход модели
+        # (FR-033j, FR-033k). С сессионной работой его спрашивает сбор сессии.
+        retry = await ingest.references_to_retry(repository, settings, now or moscow_now())
+        if retry:
+            await ingest.refresh_references(
+                session,
+                settings,
+                retry,
+                run_id=run_id,
+                should_stop=should_stop,
+                trigger=ingest.TRIGGER_DAILY,
+            )
         return AdvanceResult(last_closed_session=last_closed)
 
     # Два правила вместо одного, и порядок здесь — их следствие.
