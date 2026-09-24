@@ -287,8 +287,19 @@ async def _ingest_session(
             result.outcomes.append(calendar_outcome)
             await session.commit()
 
+        # Гейт закрытости — в самой точке сбора, а не только в планировщиках
+        # (FR-029b). Прежде его держали ``advance`` и ``catch_up``, и
+        # ``run --session`` посреди торгов сохранял незавершённый дневной бар с
+        # доказательством полноты: после закрытия обычный сбор пропускал
+        # источник как уже собранный.
+        from financial_ai.market_data.advance import session_is_closed
+
         if session_date is None:
             session_date = await calendar.latest_session(moscow_today())
+            if session_date is not None and not session_is_closed(session_date, settings):
+                # Сегодняшняя дата уже в календаре, но сессия ещё идёт:
+                # «последняя завершённая» — предыдущая.
+                session_date = await calendar.latest_session(session_date - dt.timedelta(days=1))
             result.session_date = session_date
 
         if session_date is None:
@@ -306,6 +317,19 @@ async def _ingest_session(
             result.outcomes.append(outcome)
             await _record(repository, run_id, outcome, session_date)
             await session.commit()
+            return result
+
+        if not session_is_closed(session_date, settings):
+            # Не записывается в журнал: это не попытка сбора, а отказ её
+            # начинать. Сессия соберётся обычным путём после порога.
+            logger.info("сбор: сессия %s ещё не закрылась, пропуск", session_date)
+            result.outcomes.append(
+                SourceOutcome(
+                    source_id=equity_d1.SOURCE_ID,
+                    status=STATUS_SKIPPED,
+                    failure_reason="сессия ещё не закрылась",
+                )
+            )
             return result
 
         # План сессии — посессионные источники В СВОЁМ ОКНЕ (FR-033c): старая
@@ -1240,9 +1264,12 @@ async def _sync_cbr_range(
             unfinished.append(cbr.KEY_RATE_SERIES_ID)
         else:
             written += await repository.upsert_global_values(cbr.KEY_RATE_SERIES_ID, key_rate)
-            wanted = set(key_todo) if key_todo is not None else set(key_rate)
+            # Доказывает дата со значением, а не дата в таблице: пустая ячейка
+            # ставки — не опубликованное значение (FR-032i).
+            valued = {day for day, value in key_rate.items() if value is not None}
+            wanted = set(key_todo) if key_todo is not None else valued
             evidence.extend(
-                WorkEvidence(day, cbr.KEY_RATE_SERIES_ID) for day in sorted(set(key_rate) & wanted)
+                WorkEvidence(day, cbr.KEY_RATE_SERIES_ID) for day in sorted(valued & wanted)
             )
             # Пустая таблица ставки доказательством не является: ставка
             # действует каждый день, и её отсутствие за дату значит «ещё не
@@ -1269,8 +1296,15 @@ async def _sync_cbr_range(
             required_series = {
                 f"{cbr.ZCYC_SERIES_PREFIX}{term}" for term in cbr.REQUIRED_ZCYC_TERMS
             }
+            # Каждая обязательная точка — со ЗНАЧЕНИЕМ. Пересечение ключей дат
+            # принимало кривую из четырёх пустых точек за полученную.
             curve_dates = (
-                set.intersection(*(set(zcyc.get(series_id, {})) for series_id in required_series))
+                set.intersection(
+                    *(
+                        {day for day, value in zcyc.get(series_id, {}).items() if value is not None}
+                        for series_id in required_series
+                    )
+                )
                 if required_series
                 else set()
             )

@@ -212,3 +212,98 @@ async def test_загрузка_переименованной_бумаги_пр
 
     bars = await repository.daily_bars_for_window(DAYS)
     assert {bar.asset_id for bar in bars} == {"EQ_AST_MULTOLD"}
+
+
+# --- охваченный период (ревью 2026-09-24, R4) ---------------------------------
+
+
+class RangeIss(FakeIss):
+    """Запоминает запрошенные диапазоны, а не только бумаги."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ranges: list[tuple[str, str, str]] = []
+
+    async def fetch_security_history(
+        self, secid: str, date_from: str, date_till: str, columns: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        self.ranges.append((secid, date_from, date_till))
+        return await super().fetch_security_history(secid, date_from, date_till, columns)
+
+
+def _from(day: dt.date) -> Settings:
+    return Settings(market_data_backfill_from=day.isoformat())
+
+
+async def test_exact_repeat_does_no_work(db_session: AsyncSession) -> None:
+    await backfill.backfill_equity(db_session, _from(DAYS[1]), RangeIss(), ["SBER"], till=DAYS[-1])
+
+    again = RangeIss()
+    progress = await backfill.backfill_equity(
+        db_session, _from(DAYS[1]), again, ["SBER"], till=DAYS[-1]
+    )
+
+    assert again.ranges == []
+    assert progress.remaining == 0
+
+
+async def test_earlier_start_loads_only_the_uncovered_head(db_session: AsyncSession) -> None:
+    """Прежде доказательство ``ticker:SBER`` закрывало любой диапазон, и более
+    ранний ``--from`` не делал ни одного запроса."""
+    repository = MarketDataRepository(db_session)
+    await backfill.backfill_equity(db_session, _from(DAYS[1]), RangeIss(), ["SBER"], till=DAYS[-1])
+    assert {bar.session_date for bar in await repository.daily_bars_for_window(DAYS)} == set(
+        DAYS[1:]
+    )
+
+    earlier = RangeIss()
+    progress = await backfill.backfill_equity(
+        db_session, _from(DAYS[0]), earlier, ["SBER"], till=DAYS[-1]
+    )
+
+    assert earlier.ranges == [("SBER", DAYS[0].isoformat(), DAYS[0].isoformat())]
+    assert progress.remaining == 0
+    assert {bar.session_date for bar in await repository.daily_bars_for_window(DAYS)} == set(DAYS)
+
+
+async def test_later_end_loads_only_the_uncovered_tail(db_session: AsyncSession) -> None:
+    await backfill.backfill_equity(db_session, _from(DAYS[0]), RangeIss(), ["SBER"], till=DAYS[1])
+
+    later = RangeIss()
+    await backfill.backfill_equity(db_session, _from(DAYS[0]), later, ["SBER"], till=DAYS[-1])
+
+    assert later.ranges == [("SBER", DAYS[-1].isoformat(), DAYS[-1].isoformat())]
+
+
+async def test_legacy_evidence_without_start_proves_no_range(db_session: AsyncSession) -> None:
+    """Доказательство прежнего формата начала не хранит и покрытием не считается."""
+    repository = MarketDataRepository(db_session)
+    await repository.record_work_evidence(
+        source_id=backfill.HISTORY_SOURCE_ID,
+        session_date=DAYS[-1],
+        work_key="ticker:SBER",
+        result_kind="value",
+        reason_code="history_loaded",
+        origin_run_id=None,
+    )
+    await db_session.commit()
+
+    iss = RangeIss()
+    await backfill.backfill_equity(db_session, _from(DAYS[0]), iss, ["SBER"], till=DAYS[-1])
+
+    assert iss.ranges == [("SBER", DAYS[0].isoformat(), DAYS[-1].isoformat())]
+
+
+def test_uncovered_subtracts_proved_spans() -> None:
+    d = dt.date
+    spans = [(d(2025, 1, 1), d(2025, 6, 30)), (d(2025, 9, 1), d(2025, 12, 31))]
+
+    assert backfill.uncovered(spans, d(2025, 1, 1), d(2025, 12, 31)) == [
+        (d(2025, 7, 1), d(2025, 8, 31))
+    ]
+    assert backfill.uncovered(spans, d(2024, 1, 1), d(2026, 1, 31)) == [
+        (d(2024, 1, 1), d(2024, 12, 31)),
+        (d(2025, 7, 1), d(2025, 8, 31)),
+        (d(2026, 1, 1), d(2026, 1, 31)),
+    ]
+    assert backfill.uncovered(spans, d(2025, 2, 1), d(2025, 3, 1)) == []

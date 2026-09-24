@@ -156,10 +156,15 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
     # `fiz_long = 100` при фактических 125148), и отдельной серией
     # «бумага — unknown» они доходили до модели. В хранилище они остаются как
     # история происхождения, во вход — нет (FR-051a).
+    #
+    # Состав активов один для всех частей набора — тот же, что у котировок и
+    # агрегатов. Прежде бумага из ``excluded_assets`` пропадала из котировок,
+    # но оставалась в позициях и секторах, и манифест утверждал исключение,
+    # которого в файлах не было (FR-060f).
     position_rows = [
         row
         for row in await repository.positions_for_window(position_sessions)
-        if row.contract_code != UNKNOWN_CONTRACT
+        if row.contract_code != UNKNOWN_CONTRACT and row.asset_id in shares
     ]
 
     # Агрегаты идут по окну цен: модель заводит их тем же слоем состояния,
@@ -172,7 +177,11 @@ async def build_dataset(session: AsyncSession, settings: Settings, asof_date: dt
 
     # Секторы — справочник без оси сессий: у признаков отраслевой относительной
     # силы и широты нет истории принадлежности, они читают текущее значение.
-    sector_map = await repository.sectors()
+    sector_map = {
+        asset_id: sector
+        for asset_id, sector in (await repository.sectors()).items()
+        if asset_id in shares
+    }
 
     prices = _serialize_prices(bars, price_sessions)
     aggregates = _serialize_aggregates(aggregate_rows, price_sessions)

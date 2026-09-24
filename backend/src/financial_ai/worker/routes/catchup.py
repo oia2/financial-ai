@@ -95,7 +95,7 @@ async def start_catchup(payload: CatchupRequest, request: Request) -> Any:
     stopped = _stopped_run(request) if payload.resume else None
 
     try:
-        if stopped is not None and stopped.unfinished:
+        if stopped is not None and stopped.resumable:
             state = await runner.resume(stopped)
             resumed = True
         else:

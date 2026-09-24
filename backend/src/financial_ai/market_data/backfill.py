@@ -35,6 +35,48 @@ EARLIEST_DATE = dt.date(1990, 1, 1)
 # (FR-032d), и в расчёт полноты групп это доказательство не входит.
 HISTORY_SOURCE_ID = "equity_history"
 
+# Ключ доказательства — бумага и НАЧАЛО загруженного диапазона, дата
+# доказательства — его конец. Прежний ключ ``ticker:<бумага>`` начала не хранил,
+# и любая прежняя загрузка считалась загрузкой любого диапазона: повтор с более
+# ранним ``--from`` не делал ни одного запроса (ревью 2026-09-24, R4). Такой ключ
+# никакого начала не подтверждает и в покрытие не входит.
+_SPAN_PREFIX = "range:"
+
+
+def span_key(ticker: str, start: dt.date) -> str:
+    return f"{_SPAN_PREFIX}{ticker}:{start.isoformat()}"
+
+
+def _parse_span(work_key: str, till: dt.date) -> tuple[str, dt.date, dt.date] | None:
+    if not work_key.startswith(_SPAN_PREFIX):
+        return None
+    ticker, _, raw = work_key.removeprefix(_SPAN_PREFIX).rpartition(":")
+    try:
+        return ticker, dt.date.fromisoformat(raw), till
+    except ValueError:
+        return None
+
+
+def uncovered(
+    spans: list[tuple[dt.date, dt.date]], start: dt.date, end: dt.date
+) -> list[tuple[dt.date, dt.date]]:
+    """Части ``[start, end]``, не покрытые доказанными диапазонами."""
+    gaps: list[tuple[dt.date, dt.date]] = []
+    cursor = start
+    for span_from, span_till in sorted(spans):
+        if span_till < cursor:
+            continue
+        if span_from > end:
+            break
+        if span_from > cursor:
+            gaps.append((cursor, span_from - dt.timedelta(days=1)))
+        cursor = max(cursor, span_till + dt.timedelta(days=1))
+        if cursor > end:
+            return gaps
+    if cursor <= end:
+        gaps.append((cursor, end))
+    return gaps
+
 
 class BackfillProgress:
     """Что уже загружено. Основа возобновляемости."""
@@ -93,9 +135,10 @@ async def backfill_equity(
 ) -> BackfillProgress:
     """Загрузить историю котировок по каждой бумаге.
 
-    Возобновляемость — по доказательству выполненной работы: бумага, история
-    которой загружена, отмечается в таблице доказательств и при повторном
-    запуске пропускается. Прежде признаком служило присутствие бумаги в
+    Возобновляемость — по доказательству выполненной работы: загруженный
+    диапазон бумаги отмечается в таблице доказательств, и повторный запуск
+    спрашивает только непокрытый остаток запрошенного диапазона — при точном
+    повторе ни одного запроса. Прежде признаком служило присутствие бумаги в
     справочнике активов, и после одного обычного сбора загрузка пропускала
     бумагу целиком, не спросив её историю ни разу (FR-033h, анализ A3).
 
@@ -109,10 +152,13 @@ async def backfill_equity(
         logger.warning("первичная загрузка: закрытых сессий в календаре нет")
         return BackfillProgress(completed=set(), total=len(tickers))
 
-    completed = {
-        key.removeprefix("ticker:")
-        for key in await repository.work_keys_for_source(HISTORY_SOURCE_ID)
-    }
+    spans: dict[str, list[tuple[dt.date, dt.date]]] = {}
+    for work_key, till_date in await repository.work_evidence_dates(HISTORY_SOURCE_ID):
+        parsed = _parse_span(work_key, till_date)
+        if parsed is not None:
+            spans.setdefault(parsed[0], []).append((parsed[1], parsed[2]))
+    remainder = {ticker: uncovered(spans.get(ticker, []), start, end) for ticker in tickers}
+    completed = {ticker for ticker, gaps in remainder.items() if not gaps}
     progress = BackfillProgress(completed=completed, total=len(tickers))
     started = dt.datetime.now(dt.UTC)
 
@@ -127,32 +173,40 @@ async def backfill_equity(
         if ticker in completed:
             continue
 
-        try:
-            rows = await client.fetch_security_history(
-                ticker, start.isoformat(), end.isoformat(), equity_d1.COLUMNS
-            )
-        except IssError as error:
-            # Одна недоступная бумага не должна отменять уже загруженные:
-            # прерывание переживается, потеря — нет.
-            logger.warning("первичная загрузка: %s не загружена (%s)", ticker, error)
-            continue
+        written = 0
+        failed = False
+        for gap_from, gap_till in remainder[ticker]:
+            try:
+                rows = await client.fetch_security_history(
+                    ticker, gap_from.isoformat(), gap_till.isoformat(), equity_d1.COLUMNS
+                )
+            except IssError as error:
+                # Одна недоступная бумага не должна отменять уже загруженные:
+                # прерывание переживается, потеря — нет.
+                logger.warning("первичная загрузка: %s не загружена (%s)", ticker, error)
+                failed = True
+                break
 
-        written = await _store_history(repository, ticker, rows, end)
-        written_total += written
-        await repository.record_work_evidence(
-            source_id=HISTORY_SOURCE_ID,
-            session_date=end,
-            work_key=f"ticker:{ticker}",
-            result_kind=RESULT_VALUE if written else RESULT_CONFIRMED_ABSENCE,
-            reason_code="history_loaded" if written else "verified_empty_history",
-            origin_run_id=run_id,
-        )
-        # Первичная загрузка записывает свой исход наравне с остальным сбором.
-        # Не ради отчётности: по этой таблице отвечают на вопрос «собиралось ли
-        # что-нибудь после такого-то момента», и молчаливая запись мимо неё
-        # означала бы «ничего не собирали» при переписанной истории.
-        await _record_backfill(repository, run_id, written_total, started)
-        await session.commit()
+            gap_written = await _store_history(repository, ticker, rows, gap_from, gap_till)
+            written += gap_written
+            written_total += gap_written
+            await repository.record_work_evidence(
+                source_id=HISTORY_SOURCE_ID,
+                session_date=gap_till,
+                work_key=span_key(ticker, gap_from),
+                result_kind=RESULT_VALUE if gap_written else RESULT_CONFIRMED_ABSENCE,
+                reason_code="history_loaded" if gap_written else "verified_empty_history",
+                origin_run_id=run_id,
+            )
+            # Первичная загрузка записывает свой исход наравне с остальным
+            # сбором. Не ради отчётности: по этой таблице отвечают на вопрос
+            # «собиралось ли что-нибудь после такого-то момента», и молчаливая
+            # запись мимо неё означала бы «ничего не собирали» при переписанной
+            # истории.
+            await _record_backfill(repository, run_id, written_total, started)
+            await session.commit()
+        if failed:
+            continue
 
         completed.add(ticker)
         logger.info(
@@ -208,13 +262,14 @@ async def _store_history(
     repository: MarketDataRepository,
     ticker: str,
     rows: list[dict[str, object]],
+    start: dt.date,
     end: dt.date,
 ) -> int:
-    """Разложить историю одной бумаги по датам и сохранить — не позже ``end``."""
+    """Разложить историю одной бумаги по датам и сохранить — в ``[start, end]``."""
     by_date: dict[dt.date, dict[str, object]] = {}
     for row in rows:
         parsed = trading_calendar.parse_date(row.get("TRADEDATE"))
-        if parsed is not None and parsed <= end:
+        if parsed is not None and start <= parsed <= end:
             by_date[parsed] = row
 
     if not by_date:

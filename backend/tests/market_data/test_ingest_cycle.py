@@ -15,7 +15,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from financial_ai.config import Settings
-from financial_ai.market_data import ingest
+from financial_ai.market_data import advance, completeness, ingest
+from financial_ai.market_data.calendar import MOSCOW
 from financial_ai.market_data.iss.client import IssError
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources import equity_d1
@@ -57,7 +58,9 @@ class FakeIss(NoInstrumentChanges):
     async def fetch_security_history(
         self, secid: str, date_from: str, date_till: str, columns: tuple[str, ...]
     ) -> list[dict[str, object]]:
-        return [{"TRADEDATE": d.isoformat()} for d in self.calendar_dates]
+        return [
+            {"SECID": secid, "TRADEDATE": d.isoformat(), "CLOSE": "1"} for d in self.calendar_dates
+        ]
 
     async def fetch_session_rows(
         self, session_date: str, columns: tuple[str, ...]
@@ -332,3 +335,65 @@ async def test_ingest_session_stops_between_sources(
 
     # План сессии — десять источников; до конца он не дошёл.
     assert len(result.outcomes) < 10
+
+
+# --- гейт закрытости сессии ----------------------------------------------------
+
+
+def _at(day: dt.date, hour: int, minute: int = 0) -> dt.datetime:
+    return dt.datetime.combine(day, dt.time(hour, minute), tzinfo=MOSCOW)
+
+
+async def test_open_session_is_not_collected_by_explicit_date(
+    db_session: AsyncSession,
+    settings: Settings,
+    cbr_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-029b: ``run --session`` посреди торгов не пишет бар и не закрывает источник.
+
+    Прежде гейт жил только в планировщиках, и прямой сбор сохранял незавершённый
+    бар с доказательством полноты — после порога сессия уже не добиралась.
+    """
+    settings = Settings(market_data_ingest_after_close="23:59")
+    repository = MarketDataRepository(db_session)
+
+    monkeypatch.setattr(advance, "moscow_now", lambda: _at(SESSION, 10))
+    early = FakeIss()
+    result = await ingest.ingest_session(
+        db_session, settings, SESSION, client=early, cbr_client=cbr_client
+    )
+    assert early.quote_calls == []
+    assert await repository.count_daily_bars(SESSION) == 0
+    assert result.session_outcome is None
+    assert [(o.source_id, o.status) for o in result.outcomes][-1] == (
+        equity_d1.SOURCE_ID,
+        ingest.STATUS_SKIPPED,
+    )
+    assert equity_d1.SOURCE_ID not in await completeness.closed_sources_for(repository, SESSION)
+
+    # После порога та же команда собирает сессию: отказ ничего не «закрыл».
+    monkeypatch.setattr(advance, "moscow_now", lambda: _at(SESSION, 23, 59))
+    late = FakeIss()
+    await ingest.ingest_session(db_session, settings, SESSION, client=late, cbr_client=cbr_client)
+    assert late.quote_calls == [SESSION.isoformat()]
+    assert await repository.count_daily_bars(SESSION) == 1
+
+
+async def test_run_without_date_takes_last_closed_session(
+    db_session: AsyncSession,
+    settings: Settings,
+    cbr_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сегодняшняя дата уже в календаре, но сессия идёт: берётся предыдущая."""
+    settings = Settings(market_data_ingest_after_close="23:59")
+    today = SESSION + dt.timedelta(days=3)
+    monkeypatch.setattr(advance, "moscow_now", lambda: _at(today, 10))
+    monkeypatch.setattr(ingest, "moscow_today", lambda: today)
+
+    iss = FakeIss(calendar_dates=[SESSION, today])
+    result = await ingest.ingest_session(db_session, settings, client=iss, cbr_client=cbr_client)
+
+    assert result.session_date == SESSION
+    assert today.isoformat() not in iss.quote_calls

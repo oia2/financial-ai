@@ -51,8 +51,8 @@ def _repository() -> Mock:
     return repository
 
 
-def _row(day: dt.date) -> dict[str, object]:
-    return {"SECID": "IMOEX", "TRADEDATE": day.isoformat(), "CLOSE": Decimal("3200.55")}
+def _row(day: dt.date, secid: str = "IMOEX") -> dict[str, object]:
+    return {"SECID": secid, "TRADEDATE": day.isoformat(), "CLOSE": Decimal("3200.55")}
 
 
 # --- Глобальные ряды ---------------------------------------------------------
@@ -95,7 +95,7 @@ async def test_all_series_failing_is_a_failure_with_nothing_written() -> None:
 
 async def test_all_series_succeeding_closes_the_source() -> None:
     """Вся применимая работа обработана — источник закрыт, исключения нет."""
-    client = _client([[_row(DAY)] for _ in SPECS])
+    client = _client([[_row(DAY, spec.secid)] for spec in SPECS])
     repository = _repository()
 
     result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
@@ -193,7 +193,7 @@ async def test_both_parts_collected_closes_cbr(monkeypatch: pytest.MonkeyPatch) 
 
 async def test_missing_date_inside_range_remains_unproved() -> None:
     next_day = DAY + dt.timedelta(days=3)
-    client = _client([[_row(DAY)] for _ in SPECS])
+    client = _client([[_row(DAY, spec.secid)] for spec in SPECS])
     repository = _repository()
 
     result = await global_series.sync_iss_series_range(
@@ -212,7 +212,15 @@ async def test_missing_date_inside_range_remains_unproved() -> None:
 
 async def test_fetch_failure_stays_a_source_failure() -> None:
     """Несостоявшееся обращение — отказ источника, а не ожидание публикации."""
-    client = _client([[_row(DAY)], IssError("нет ответа"), [_row(DAY)], [_row(DAY)], [_row(DAY)]])
+    client = _client(
+        [
+            [_row(DAY)],
+            IssError("нет ответа"),
+            [_row(DAY, "RGBI")],
+            [_row(DAY, "RVI")],
+            [_row(DAY, "USD000UTSTOM")],
+        ]
+    )
 
     result = await global_series.sync_iss_series_range(client, _repository(), DAY, DAY, SPECS)
 
@@ -256,3 +264,81 @@ async def test_empty_tqbr_board_is_awaiting_publication(
     assert result.complete is False
     assert result.evidence == ()
     assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+# --- Обязательные значения глобальных рядов (R2 ревью 2026-09-24) -----------
+
+
+async def test_series_without_value_is_not_proved() -> None:
+    """``CLOSE=null`` за сессию — «ещё не опубликовано», а не полученный ряд.
+
+    Словарь ``{дата: None}`` непуст, и прежде все пять рядов получали
+    доказательство без единого числа (FR-032i).
+    """
+    client = _client(
+        [[{"SECID": spec.secid, "TRADEDATE": DAY.isoformat(), "CLOSE": None}] for spec in SPECS]
+    )
+
+    result = await global_series.sync_iss_series_range(client, _repository(), DAY, DAY, SPECS)
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+@pytest.mark.parametrize("secid", [None, "", "SBER"])
+async def test_row_of_another_security_is_not_written_as_the_series(secid: object) -> None:
+    """Строка с чужим или пустым SECID не становится значением ряда (FR-032e)."""
+    client = _client(
+        [[{"SECID": secid, "TRADEDATE": DAY.isoformat(), "CLOSE": "123.45"}] for _ in SPECS]
+    )
+    repository = _repository()
+
+    result = await global_series.sync_iss_series_range(client, repository, DAY, DAY, SPECS)
+
+    assert result.complete is False
+    assert result.evidence == ()
+    assert result.failure_kind == plan.FAILURE_SOURCE
+    repository.upsert_global_values.assert_not_awaited()
+
+
+async def test_curve_with_empty_required_points_is_not_proved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Каждая обязательная точка ЗКЦ — со значением, а не просто с датой."""
+    monkeypatch.setattr(cbr, "fetch_key_rate", AsyncMock(return_value={DAY: Decimal("16.5")}))
+    monkeypatch.setattr(
+        cbr,
+        "fetch_zcyc",
+        AsyncMock(
+            return_value={f"CBR_ZCYC_{term}": {DAY: None} for term in cbr.REQUIRED_ZCYC_TERMS}
+        ),
+    )
+
+    result = await ingest._sync_cbr_range(
+        _repository(), DAY, DAY, client=None, should_stop=None, required_dates=(DAY,)
+    )
+
+    assert result.complete is False
+    assert {item.work_key for item in result.evidence} == {cbr.KEY_RATE_SERIES_ID}
+    assert result.failure_kind == plan.FAILURE_UNPUBLISHED
+
+
+async def test_key_rate_without_value_is_not_proved(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cbr, "fetch_key_rate", AsyncMock(return_value={DAY: None}))
+    monkeypatch.setattr(
+        cbr,
+        "fetch_zcyc",
+        AsyncMock(
+            return_value={
+                f"CBR_ZCYC_{term}": {DAY: Decimal("15.1")} for term in cbr.REQUIRED_ZCYC_TERMS
+            }
+        ),
+    )
+
+    result = await ingest._sync_cbr_range(
+        _repository(), DAY, DAY, client=None, should_stop=None, required_dates=(DAY,)
+    )
+
+    assert result.complete is False
+    assert {item.work_key for item in result.evidence} == {"CBR_ZCYC_CURVE"}

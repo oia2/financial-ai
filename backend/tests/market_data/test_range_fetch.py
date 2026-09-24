@@ -48,7 +48,9 @@ class CountingIss(NoInstrumentChanges):
         **kwargs: object,
     ) -> list[dict[str, object]]:
         self.history_calls.append((secid, date_from, date_till))
-        return [{"TRADEDATE": d.isoformat(), "CLOSE": "3200.5"} for d in self.sessions]
+        return [
+            {"SECID": secid, "TRADEDATE": d.isoformat(), "CLOSE": "3200.5"} for d in self.sessions
+        ]
 
     async def fetch_session_rows(
         self, session_date: str, columns: tuple[str, ...]

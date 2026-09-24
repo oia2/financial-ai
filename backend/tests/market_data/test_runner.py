@@ -677,3 +677,48 @@ def test_без_порядка_сбора_продолжение_идёт_по_�
     state.outcomes[SESSIONS[0]] = "collected"
 
     assert state.unfinished == sorted(SESSIONS)[1:]
+
+
+# --- остаток плана включает справочники (ревью 2026-09-24, R5) ---------------
+
+
+def test_недоработанный_справочник_остаётся_продолжению() -> None:
+    """У запуска одних справочников дат нет, и остаток по датам был пуст."""
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL)
+    state.note_source("equity_sectors", "done")
+
+    assert state.unfinished == []
+    assert state.unfinished_references == ["equity_lot_sizes"]
+    assert state.resumable is True
+
+
+def test_справочник_после_последней_сессии_остаётся_продолжению() -> None:
+    """Смешанный прогон: даты закрыты, последний справочник не доработан."""
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, requested=list(SESSIONS[:1]))
+    state.outcomes[SESSIONS[0]] = "collected"
+    state.note_source("equity_sectors", "done")
+    state.note_source("equity_lot_sizes", "running")
+
+    assert state.unfinished == []
+    assert state.unfinished_references == ["equity_lot_sizes"]
+
+
+def test_доведённые_невыбранные_и_упавшие_справочники_продолжению_не_достаются() -> None:
+    """Обратная форма: неудачу доберёт суточный гейт, невыбранный не в плане."""
+    from financial_ai.market_data import plan as plan_module
+    from financial_ai.market_data.runner import CatchupState
+
+    state = CatchupState(mode=plan_module.MODE_MANUAL, omitted={"equity_lot_sizes"})
+    state.note_source("equity_sectors", "failed")
+
+    assert state.unfinished_references == []
+    assert state.resumable is False
+
+    daily = CatchupState(mode=plan_module.MODE_DAILY)
+    assert daily.unfinished_references == []

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from financial_ai.market_data.interrupt import SourceStoppedError
-from financial_ai.market_data.iss.client import IssClient
+from financial_ai.market_data.iss.client import IssClient, ResponseContractError
 from financial_ai.market_data.plan import FAILURE_SOURCE, FAILURE_UNPUBLISHED
 from financial_ai.market_data.repository import MarketDataRepository
 from financial_ai.market_data.sources.equity_d1 import to_decimal
@@ -128,7 +128,12 @@ async def sync_iss_series_range(
             continue
         if values:
             written += await repository.upsert_global_values(spec.series_id, values)
-            for day in sorted(set(values) & set(todo) if required else set(values)):
+            # Доказательство — только дата с ПРИМЕНИМЫМ значением. Ряды
+            # источника обязательны для модели, и ``CLOSE=null`` за сессию —
+            # «ещё не опубликовано», а не значение: прежде словарь
+            # ``{дата: None}`` непуст, и ряд без числа объявлялся полным.
+            valued = {day for day, value in values.items() if value is not None}
+            for day in sorted(valued & set(todo) if required else valued):
                 evidence.append(WorkEvidence(day, spec.series_id))
         # Пустой ответ и недостающая в ответе дата доказательства не получают:
         # ряды этого источника существуют в каждую торговую сессию, и отсутствие
@@ -192,7 +197,7 @@ async def _fetch_series(
         )
         # Разбор — внутри той же защиты: испорченное значение одного ряда
         # оставляет незавершённым этот ряд, а не весь источник (FR-032e).
-        return rows_to_values(rows, spec.value_column)
+        return rows_to_values(rows, spec.value_column, secid=spec.secid)
     except SourceStoppedError:
         raise
     except Exception as error:
@@ -200,14 +205,22 @@ async def _fetch_series(
 
 
 def rows_to_values(
-    rows: list[dict[str, object]], value_column: str
+    rows: list[dict[str, object]], value_column: str, secid: str | None = None
 ) -> dict[dt.date, Decimal | None]:
     """Преобразовать ответ биржи в значения по датам.
 
     Пропуск остаётся пропуском: отсутствие значения не заменяется нулём.
+
+    С ``secid`` каждая строка обязана принадлежать запрошенной бумаге. Иначе
+    строка с чужим или пустым идентификатором записывалась под именем
+    запрошенного ряда: число без источника становилось IMOEX (FR-032e).
     """
     values: dict[dt.date, Decimal | None] = {}
     for row in rows:
+        if secid is not None:
+            got = row.get("SECID")
+            if not isinstance(got, str) or got.strip().upper() != secid.upper():
+                raise ResponseContractError(f"строка ряда {secid} с чужой бумагой: {got!r}")
         day = parse_date(row.get("TRADEDATE"))
         if day is None:
             continue

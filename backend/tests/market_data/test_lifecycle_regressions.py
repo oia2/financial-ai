@@ -409,7 +409,8 @@ class _HistoryClient:
         self.asked.append(secid)
         future = self.end + dt.timedelta(days=1)
         return [
-            {"TRADEDATE": day.isoformat(), "CLOSE": "10"} for day in (SESSIONS[0], self.end, future)
+            {"SECID": secid, "TRADEDATE": day.isoformat(), "CLOSE": "10"}
+            for day in (SESSIONS[0], self.end, future)
         ]
 
 

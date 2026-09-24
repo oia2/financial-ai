@@ -610,3 +610,58 @@ async def test_продолжение_сохраняет_режим_прогон
     assert runner.status()["mode"] == plan.MODE_DAILY
     # И работа шла ежедневным путём, по непройденной сессии.
     assert visited == MISSING[1:]
+
+
+async def test_остановленный_запуск_справочников_продолжается_тем_же_прогоном(
+    db_session: AsyncSession,
+    worker_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Отрасли получены, лоты нет — продолжение доделывает лоты ТЕМ ЖЕ прогоном.
+
+    Прежде остаток плана считался только по датам, у запуска справочников он
+    пуст, и маршрут вместо продолжения заводил новый прогон с новым журналом
+    (ревью 2026-09-24, R5; FR-058b).
+    """
+    import asyncio
+
+    await _seed(db_session, COLLECTED)
+    runner = _install_runner()
+
+    async def sectors_then_stop(session, settings, asof_date, *args, **kwargs):  # type: ignore[no-untyped-def]
+        on_source = kwargs["on_source"]
+        should_stop = kwargs["should_stop"]
+        on_source("equity_sectors", "ok", None)
+        for _ in range(100):
+            if should_stop():
+                break
+            await asyncio.sleep(0.01)
+        return ingest.CatchupResult()
+
+    monkeypatch.setattr(ingest, "catch_up", sectors_then_stop)
+    await worker_client.post("/internal/catchup", json={"groups": ["reference"]})
+    await asyncio.sleep(0.02)
+    await worker_client.delete("/internal/catchup")
+    await _wait_idle(runner)
+    run_id = runner.state.run_id
+    assert runner.state.unfinished_references == ["equity_lot_sizes"]
+
+    asked: dict[str, object] = {}
+
+    async def lots(session, settings, asof_date, *args, **kwargs):  # type: ignore[no-untyped-def]
+        asked.update(kwargs)
+        kwargs["on_source"]("equity_lot_sizes", "ok", None)
+        return ingest.CatchupResult()
+
+    monkeypatch.setattr(ingest, "catch_up", lots)
+    response = await worker_client.post("/internal/catchup", json={"resume": True})
+    await _wait_idle(runner)
+
+    assert response.json()["resumed"] is True
+    assert runner.state.run_id == run_id
+    assert asked["sessions"] == []
+    source_ids = asked["source_ids"]
+    assert isinstance(source_ids, frozenset)
+    assert "equity_lot_sizes" in source_ids
+    assert "equity_sectors" not in source_ids
+    assert runner.state.unfinished_references == []

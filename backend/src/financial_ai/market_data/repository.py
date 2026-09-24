@@ -889,17 +889,19 @@ class MarketDataRepository:
         )
         return await self._session.scalar(statement) is not None
 
-    async def work_keys_for_source(self, source_id: str) -> set[str]:
-        """Все доказанные единицы работы источника действующей версии."""
-        rows = await self._session.scalars(
-            select(SourceWorkEvidence.work_key)
-            .where(
+    async def work_evidence_dates(self, source_id: str) -> list[tuple[str, dt.date]]:
+        """Доказанные единицы работы источника с датой доказательства.
+
+        Нужно работе без оси сессий, у которой дата — граница охваченного
+        периода: история бумаги доказывается диапазоном, а не ключом (FR-033h).
+        """
+        rows = await self._session.execute(
+            select(SourceWorkEvidence.work_key, SourceWorkEvidence.session_date).where(
                 SourceWorkEvidence.source_id == source_id,
                 SourceWorkEvidence.coverage_version == CURRENT_COVERAGE_VERSION,
             )
-            .distinct()
         )
-        return set(rows.all())
+        return [(row[0], row[1]) for row in rows.all()]
 
     async def work_evidence(
         self,

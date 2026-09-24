@@ -26,7 +26,7 @@ from financial_ai.daily_ml import readiness
 from financial_ai.market_data import completeness, coverage, ingest
 from financial_ai.market_data.iss.client import ResponseContractError
 from financial_ai.market_data.models import MarketAsset
-from financial_ai.market_data.repository import DailyBar, MarketDataRepository
+from financial_ai.market_data.repository import DailyBar, MarketDataRepository, PositionRow
 from financial_ai.market_data.sources import securities
 from financial_ai.market_data.verification import required_work_keys
 from financial_ai.ranking.dataset import DatasetError, build_dataset
@@ -196,6 +196,45 @@ async def test_delisted_asset_of_unknown_kind_leaves_the_dataset_on_record(
     assert manifest["excluded_assets"] == [{"asset_id": "EQ_AST_OLDX", "reason": "kind_unknown"}]
     earlier = json.loads((before.path / "manifest.json").read_text(encoding="utf-8"))
     assert earlier["excluded_assets"] == []
+
+
+async def test_excluded_asset_is_absent_from_every_dataset_file(
+    db_session: AsyncSession, settings: Settings
+) -> None:
+    """Исключение из манифеста выполнено во ВСЕХ файлах набора (FR-060f).
+
+    Прежде снятая бумага без вида пропадала из котировок, но оставалась в
+    позициях и секторах. Проверяются записанные файлы, а не списки манифеста.
+    """
+    repository = await _seed(db_session)
+    await _delisted(repository)
+    for ticker in ("SBER", "OLDX"):
+        await repository.upsert_positions(
+            [
+                PositionRow(
+                    asset_id=f"EQ_AST_{ticker}",
+                    session_date=day,
+                    fiz_long=Decimal("1"),
+                    fiz_short=Decimal("2"),
+                    jur_long=Decimal("3"),
+                    jur_short=Decimal("4"),
+                    contract_code=f"{ticker}_F",
+                )
+                for day in SESSIONS[-2:]
+            ]
+        )
+    await repository.upsert_sectors({"EQ_AST_SBER": "финансы", "EQ_AST_OLDX": "финансы"})
+    await db_session.commit()
+
+    dataset = await build_dataset(db_session, settings, ASOF)
+
+    assert dataset.excluded == [{"asset_id": "EQ_AST_OLDX", "reason": "kind_unknown"}]
+    for path in sorted(dataset.path.glob("*.json")):
+        if path.name == "manifest.json":
+            continue
+        assert "EQ_AST_OLDX" not in path.read_text(encoding="utf-8"), path.name
+    assert "EQ_AST_SBER" in (dataset.path / "positions.json").read_text(encoding="utf-8")
+    assert "EQ_AST_SBER" in (dataset.path / "sectors.json").read_text(encoding="utf-8")
 
 
 async def test_asset_without_kind_holds_only_the_dates_it_traded(

@@ -92,7 +92,7 @@ class DelayedIss(NoInstrumentChanges):
     async def fetch_security_history(
         self, secid: str, date_from: str, date_till: str, columns: tuple[str, ...]
     ) -> list[dict[str, object]]:
-        return [{"TRADEDATE": d.isoformat()} for d in self.calendar]
+        return [{"SECID": secid, "TRADEDATE": d.isoformat(), "CLOSE": "1"} for d in self.calendar]
 
     async def fetch_session_rows(
         self, session_date: str, columns: tuple[str, ...]

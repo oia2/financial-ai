@@ -184,6 +184,35 @@ class CatchupState:
         plan = self.order or self.requested
         return [day for day in plan if self.outcomes.get(day) in (None, "partial")]
 
+    @property
+    def unfinished_references(self) -> list[str]:
+        """Выбранные суточные справочники, не доработанные до исхода.
+
+        Остаток плана — не только даты. У запуска одних справочников дат нет,
+        а у смешанного они бывают закрыты, когда идёт последний справочник: в
+        обоих случаях остановка оставляла работу, которую продолжение не
+        видело, и вместо продолжения заводился новый прогон с новым журналом
+        (ревью 2026-09-24, R5; FR-058b).
+
+        Неудачный справочник сюда не входит по той же причине, что и
+        несобранная сессия: его доберёт обычный суточный гейт. Ежедневный
+        прогон справочники спрашивает внутри сессии, и их остаток — это
+        остаток его сессий.
+        """
+        if self.mode != plan_module.MODE_MANUAL:
+            return []
+        return [
+            source_id
+            for source_id in sorted(plan_module.REFERENCE_SOURCES)
+            if source_id not in self.omitted
+            and self.sources.get(source_id, ("pending", None))[0] not in ("done", "failed")
+        ]
+
+    @property
+    def resumable(self) -> bool:
+        """Есть ли у остановленного прогона работа для продолжения."""
+        return bool(self.unfinished or self.unfinished_references)
+
     def note_source(self, source_id: str, state: str, detail: str | None = None) -> None:
         """Отметить состояние источника и момент последнего ответа.
 
@@ -449,8 +478,9 @@ class CatchupRunner:
         await ownership.acquire()
         try:
             pending = stopped.unfinished
-            if not pending:
-                raise NothingToCatchUpError("непройденных сессий в прогоне нет")
+            references = stopped.unfinished_references
+            if not pending and not references:
+                raise NothingToCatchUpError("непройденной работы в прогоне нет")
             selected = groups.resolve(stopped.group_ids or None)
         except BaseException:
             await ownership.release()
@@ -475,14 +505,22 @@ class CatchupRunner:
             sources=dict(stopped.sources),
             omitted=set(stopped.omitted),
             log=list(stopped.log),
-            current=stopped.current or pending[0],
+            current=stopped.current or (pending[0] if pending else None),
             run_id=stopped.run_id,
             started_at=stopped.started_at or dt.datetime.now(dt.UTC),
         )
-        self._state.note_event(f"Прогон продолжен · осталось сессий {len(pending)}")
+        left = f"осталось сессий {len(pending)}"
+        if references:
+            left += f", справочников {len(references)}"
+        self._state.note_event(f"Прогон продолжен · {left}")
 
+        # Доведённый справочник не переспрашивается: план продолжения — те же
+        # посессионные источники и только недоработанные справочники.
+        session_sources = groups.source_ids_for(selected) - plan_module.REFERENCE_SOURCES
+        source_ids = session_sources | frozenset(references)
         self._task = asyncio.create_task(
-            self._run(selected, sessions=pending, ownership=ownership), name="market-data-catchup"
+            self._run(selected, sessions=pending, source_ids=source_ids, ownership=ownership),
+            name="market-data-catchup",
         )
         return self._state.snapshot()
 
@@ -573,10 +611,11 @@ class CatchupRunner:
         self,
         selected: tuple[groups.SourceGroup, ...],
         sessions: list[dt.date] | None = None,
+        source_ids: frozenset[str] | None = None,
         ownership: MarketDataRunLock | None = None,
     ) -> None:
         try:
-            await self._run_owned(selected, sessions)
+            await self._run_owned(selected, sessions, source_ids)
         finally:
             if ownership is not None:
                 await ownership.release()
@@ -585,6 +624,7 @@ class CatchupRunner:
         self,
         selected: tuple[groups.SourceGroup, ...],
         sessions: list[dt.date] | None = None,
+        source_ids: frozenset[str] | None = None,
     ) -> None:
         """Тело фоновой задачи.
 
@@ -607,7 +647,9 @@ class CatchupRunner:
                     self._settings,
                     plan_sessions[-1] if plan_sessions else moscow_today(),
                     sessions=plan_sessions,
-                    source_ids=groups.source_ids_for(selected),
+                    source_ids=(
+                        source_ids if source_ids is not None else groups.source_ids_for(selected)
+                    ),
                     on_session_start=self._on_session_start,
                     on_session_done=self._on_session_done,
                     on_source=self._on_source,
